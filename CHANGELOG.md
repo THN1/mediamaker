@@ -1,5 +1,9 @@
 # Changes
 
+## 0.3 (in progress)
+
+- Version number set to 0.3-dev.
+
 ## 0.2
 
 Second frozen state: English throughout, save as MP4/AVI with progress and cancel, batch scripts, dialogs with tabs, options in one place.
