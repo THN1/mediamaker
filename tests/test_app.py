@@ -1533,10 +1533,16 @@ def test_option_changes(tmp, videos):
     from PySide6.QtWidgets import QFormLayout, QTabWidget
     dialogs.edit_pairs(None, "Options", pairs, {}, {}, OPTION_GROUPS)
     tabs = QTabWidget.instances[-1]
-    pages = [(label, [l._args[0] for l, e in next(f for f in QFormLayout.instances if f._args and f._args[0] is page).rows])
-             for page, label in tabs.tabs_]
+    from PySide6.QtWidgets import QVBoxLayout
+    def page_layouts(page):
+        outer = next(v for v in QVBoxLayout.instances if v._args and v._args[0] is page)
+        form = next(layout for layout, _ in outer.added_ if isinstance(layout, QFormLayout))
+        return outer, form
+    pages = [(label, [l._args[0] for l, e in page_layouts(page)[1].rows]) for page, label in tabs.tabs_]
     check(pages == [("Borders", ["crop"]), ("Seeking", ["pause"]), ("Audio/Subtitles", ["audio"]), ("Other", ["unknown"])],
           f"one tab per group, only groups with keys, the rest on 'Other': {pages}")
+    check(all(page_layouts(page)[0].called("addStretch") == [(1,)] and "AlignTop" in repr(page_layouts(page)[1].called("setLabelAlignment")[0][0])
+              for page, _ in tabs.tabs_), "the rows of every page sit at the top: stretch below them, labels aligned to the top")
     check(tabs.currentIndex() == 0, "the first tab is shown first")
     shown_dialogs = []
     QDialog.on_exec = shown_dialogs.append

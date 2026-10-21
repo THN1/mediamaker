@@ -187,7 +187,14 @@ def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, g
         sections = Sections()
         for heading, keys in group_plan(pairs, groups):
             page = QtWidgets.QWidget()
-            add_rows(QtWidgets.QFormLayout(page), keys)
+            # The rows sit at the top of the page: a stretch below them takes the free space (otherwise a page with a single
+            # multi-line field, e.g. path_map, gets all of it and the row ends up in the middle).
+            outer = QtWidgets.QVBoxLayout(page)
+            form = QtWidgets.QFormLayout()
+            form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
+            add_rows(form, keys)
+            outer.addLayout(form)
+            outer.addStretch(1)
             sections.add(heading, page)
         sections.fit(dialog)
         sections.set_current(start)

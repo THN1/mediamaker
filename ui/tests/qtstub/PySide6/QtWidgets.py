@@ -489,6 +489,11 @@ class QSizePolicy(Base):
 
 class QVBoxLayout(Base):
     methods = {"addLayout", "addWidget", "addStretch", "setSpacing", "setContentsMargins"}
+    instances = []
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        QVBoxLayout.instances.append(self)
 
     def addWidget(self, widget, stretch=0):
         self.__dict__.setdefault("added_", []).append((widget, stretch))
@@ -510,6 +515,7 @@ class QButtonGroup(Base):
 
 class QFormLayout(Base):
     instances = []
+    methods = {"setLabelAlignment"}
 
     def __init__(self, *a, **k):
         super().__init__(*a, **k)

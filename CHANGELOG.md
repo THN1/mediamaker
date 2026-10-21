@@ -5,6 +5,8 @@
 - Version number set to 0.2-dev.
 - All comments, docstrings, messages, tests and documentation are now in English (the generated user interface files were
   regenerated; their code is unchanged).
+- Fix: on a page of the options dialog with a single multi-line field (Batch: `path_map`) the row was shown in the middle; the rows of
+  every page now sit at the top.
 - New INI key `dialog_style=list` shows the pages of the options and Media info dialogs as a list on the left instead of tabs
   (`tabs` is the default).
 - The batch script `MediaMaker.sh` is in `.gitignore` (it is a personal file next to the INI file), and the INI key `batch` sets another
