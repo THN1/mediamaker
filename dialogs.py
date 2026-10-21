@@ -1,6 +1,7 @@
 """Own dialogs (Qt): editing of key-value pairs for profile and options."""
 from __future__ import annotations
 
+import re
 import textwrap
 from typing import Optional
 
@@ -51,55 +52,77 @@ def wrap_tooltip(text: str, width: int = TOOLTIP_WIDTH) -> str:
                      for line in text.split("\n"))
 
 
-def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, groups=None) -> Optional[dict]:
+def group_plan(pairs: dict, groups) -> list:
+    """[(heading, [keys])] of the tabs: the groups with the keys that are present, then the keys of no group under "Other"."""
+    plan = [(heading, [k for k in keys if k in pairs]) for heading, keys in groups]
+    rest = [k for k in pairs if not any(k in keys for _, keys in groups)]
+    if rest:
+        plan.append(("Other", rest))
+    return [(heading, keys) for heading, keys in plan if keys]
+
+
+def tab_of_error(errors: list, pairs: dict, groups) -> int:
+    """Index of the tab that holds the first key named in the error messages (messages look like '"crop" must be ...')."""
+    for message in errors:
+        m = re.search(r'"(\w+)"', message)
+        if m:
+            for i, (_, keys) in enumerate(group_plan(pairs, groups)):
+                if m.group(1) in keys:
+                    return i
+    return 0
+
+
+def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, groups=None, start: int = 0) -> Optional[dict]:
     """Shows one row per key (caption with explanation, input field, a selection list for suggestions).
 
         Returns: the changed values as a dictionary or None on cancel. Replaces frmProfile from VB6, without enlarging the window
         by hand at run time: a layout takes care of the arrangement; long values (e.g. the description)
         wrap in a multi-line field so that the dialog stays narrow.
 
-        groups = ((heading, (key, ...)), ...) arranges the rows under headings; keys that do not occur in any group
-        follow at the end under "Other". Without groups all rows appear in the order of `pairs`.
+        groups = ((heading, (key, ...)), ...) puts the rows on tabs along the top, one tab per group; keys that do not occur in any
+        group follow at the end on the tab "Other"; `start` is the tab shown first. Without groups all rows appear in one list in
+        the order of `pairs` (the profile).
     """
     dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle(title)
     layout = QtWidgets.QVBoxLayout(dialog)
-    form = QtWidgets.QFormLayout()
     getters = {}
+
+    def add_rows(form, keys):
+        for key in keys:
+            value = pairs[key]
+            tip = wrap_tooltip(tooltips.get(key, ""))
+            label = QtWidgets.QLabel(key)
+            if key in presets:
+                editor = QtWidgets.QComboBox()
+                editor.setEditable(True)
+                editor.addItems(presets[key])
+                editor.setCurrentText(value)
+                editor.setMinimumWidth(FIELD_WIDTH)
+                getters[key] = editor.currentText
+            elif key in LONG_TEXT_KEYS or QtWidgets.QLabel(value).fontMetrics().horizontalAdvance(value) > FIELD_WIDTH - 12:
+                editor = WrappedEdit(value, dialog.accept)
+                getters[key] = editor.value
+            else:
+                editor = QtWidgets.QLineEdit(value)
+                editor.setMinimumWidth(FIELD_WIDTH)
+                getters[key] = editor.text
+            label.setToolTip(tip)
+            editor.setToolTip(tip)
+            form.addRow(label, editor)
+
     if groups:
-        grouped = [(heading, [k for k in keys if k in pairs]) for heading, keys in groups]
-        rest = [k for k in pairs if not any(k in keys for _, keys in groups)]
-        if rest:
-            grouped.append(("Other", rest))
-        plan = [(heading, keys) for heading, keys in grouped if keys]
+        tabs = QtWidgets.QTabWidget()
+        for heading, keys in group_plan(pairs, groups):
+            page = QtWidgets.QWidget()
+            add_rows(QtWidgets.QFormLayout(page), keys)
+            tabs.addTab(page, heading)
+        tabs.setCurrentIndex(max(0, start))
+        layout.addWidget(tabs)
     else:
-        plan = [(None, list(pairs))]
-    rows = [(heading if i == 0 else None, key) for heading, keys in plan for i, key in enumerate(keys)]
-    for heading, key in rows:
-        value = pairs[key]
-        if heading is not None:
-            caption = QtWidgets.QLabel(f"<b>{heading}</b>")
-            form.addRow(caption)
-        tip = wrap_tooltip(tooltips.get(key, ""))
-        label = QtWidgets.QLabel(key)
-        if key in presets:
-            editor = QtWidgets.QComboBox()
-            editor.setEditable(True)
-            editor.addItems(presets[key])
-            editor.setCurrentText(value)
-            editor.setMinimumWidth(FIELD_WIDTH)
-            getters[key] = editor.currentText
-        elif key in LONG_TEXT_KEYS or QtWidgets.QLabel(value).fontMetrics().horizontalAdvance(value) > FIELD_WIDTH - 12:
-            editor = WrappedEdit(value, dialog.accept)
-            getters[key] = editor.value
-        else:
-            editor = QtWidgets.QLineEdit(value)
-            editor.setMinimumWidth(FIELD_WIDTH)
-            getters[key] = editor.text
-        label.setToolTip(tip)
-        editor.setToolTip(tip)
-        form.addRow(label, editor)
-    layout.addLayout(form)
+        form = QtWidgets.QFormLayout()
+        add_rows(form, list(pairs))
+        layout.addLayout(form)
     button = QtWidgets.QDialogButtonBox.StandardButton
     buttons = QtWidgets.QDialogButtonBox(button.Ok | button.Cancel)
     buttons.accepted.connect(dialog.accept)

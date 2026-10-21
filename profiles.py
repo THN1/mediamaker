@@ -69,12 +69,12 @@ def _float(value: str) -> Optional[float]:
 REMOVED_OPTIONS = {"focus", "pad"}            # focus: no effect; pad: now belongs to the profile
 HIDDEN_OPTIONS = {"logo_edge", "logo_conf", "cut_diff"}   # for advanced users only, they are only in the INI file
 
-# grouping of the options dialog: (heading, keys)
+# grouping of the options dialog: (tab, keys)
 OPTION_GROUPS = (
-    ("Border detection", ("crop", "blackness", "allowance", "border_tol")),
-    ("Seeking commercials", ("pause", "overlap", "step_end", "step_next", "cut_window", "logo_rewind")),
-    ("Audio and subtitles", ("audio", "multilanguage", "subtitle", "aflags")),
-    ("Batch file", ("path_map",)),
+    ("Borders", ("crop", "blackness", "allowance", "border_tol")),
+    ("Seeking", ("pause", "overlap", "step_end", "step_next", "cut_window", "logo_rewind")),
+    ("Audio/Subtitles", ("audio", "multilanguage", "subtitle", "aflags")),
+    ("Batch", ("path_map",)),
     ("Technical", ("floor", "detect")),
 )
 

@@ -5,6 +5,11 @@
 - Version number set to 0.2-dev.
 - All comments, docstrings, messages, tests and documentation are now in English (the generated user interface files were
   regenerated; their code is unchanged).
+- The options dialog shows the groups as tabs along the top (Borders, Seeking, Audio/Subtitles, Batch, Technical) instead of one long list;
+  after an invalid value it comes back on the tab with that value. The grouping is defined in the program (`OPTION_GROUPS` in `profiles.py`),
+  the INI file still holds the plain `key="value"` list.
+- Fix: a double click on an existing file in the Save dialog did nothing in the KDE dialog. The dialog now asks itself before overwriting
+  (the option `DontConfirmOverwrite` is no longer used); MediaMaker only asks when it had to add the extension.
 - The harmless warning `kf.kio.widgets.kdirmodel: No node found for item ...` of the KDE file dialog is no longer printed on the console.
 - **Save as MP4 / Save as AVI** (Ctrl+S / Ctrl+V): the container follows from the extension of the target file (ffmpeg chooses it; mkv is
   also allowed in the MP4 dialog). The run goes on in the background with a progress bar (percent and remaining time) in the main

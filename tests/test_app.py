@@ -391,23 +391,23 @@ def test_profiles(tmp, videos):
     # edit profile: first invalid, then valid; cancel changes nothing
     answers = [dict(win.profile, scale="abc"), dict(win.profile, scale="1920:1080", bv="5000k")]
     seen = []
-    win.edit_pairs = lambda title, pairs, groups=None: (seen.append((title, dict(pairs))), answers.pop(0))[1]
+    win.edit_pairs = lambda title, pairs, groups=None, start=0: (seen.append((title, dict(pairs))), answers.pop(0))[1]
     win.mnuProfile_Click()
     check(len(win.messages) == 1 and "width:height" in win.messages[0], f"error message: {win.messages}")
     check(seen[1][1]["scale"] == "abc", "dialog appears again with the entered values")
     check(win.profile["scale"] == "1920:1080" and win.lblText[1].text() == "5000k", "profile edited")
-    win.edit_pairs = lambda title, pairs, groups=None: None
+    win.edit_pairs = lambda title, pairs, groups=None, start=0: None
     win.mnuProfile_Click()
     check(win.profile["scale"] == "1920:1080", "cancel changes nothing")
     # options
-    win.edit_pairs = lambda title, pairs, groups=None: dict(pairs, crop="70", floor="1")
+    win.edit_pairs = lambda title, pairs, groups=None, start=0: dict(pairs, crop="70", floor="1")
     win.mnuOptions_Click()
     check(win.options["crop"] == "70" and win.options["floor"] == "1" and win.options["blackness"] == "12", "options changed")
     check(Settings(os.path.join(workdir, "MediaMaker.ini")).options["crop"] == "70", "options in the INI file")
-    win.edit_pairs = lambda title, pairs, groups=None: dict(pairs, crop="abc")
+    win.edit_pairs = lambda title, pairs, groups=None, start=0: dict(pairs, crop="abc")
     n_msgs = len(win.messages)
     answers2 = [dict(win.options, crop="abc"), None]
-    win.edit_pairs = lambda title, pairs, groups=None: answers2.pop(0)
+    win.edit_pairs = lambda title, pairs, groups=None, start=0: answers2.pop(0)
     win.mnuOptions_Click()
     check(len(win.messages) == n_msgs + 1 and win.options["crop"] == "70", "invalid option is rejected")
     # save profile under a name
@@ -1513,7 +1513,7 @@ def test_option_changes(tmp, videos):
     check(Settings(ini).profile["pad"] == "True" and "pad" not in Settings(ini).options, "existing pad in the profile wins")
     # options dialog: grouped, without hidden keys; saving keeps hidden values
     shown = []
-    win.edit_pairs = lambda title, pairs, groups=None: (shown.append((title, list(pairs), groups)), dict(pairs, border_tol="5"))[1]
+    win.edit_pairs = lambda title, pairs, groups=None, start=0: (shown.append((title, list(pairs), groups)), dict(pairs, border_tol="5"))[1]
     win.mnuOptions_Click()
     title, keys, groups = shown[-1]
     check(title == "Options" and groups == OPTION_GROUPS and not (set(keys) & HIDDEN_OPTIONS) and "pad" not in keys and "focus" not in keys
@@ -1521,7 +1521,7 @@ def test_option_changes(tmp, videos):
     st = Settings(ini)
     check(st.options["border_tol"] == "5" and st.options["logo_edge"] == "20" and "focus" not in st.options, "saved: change and hidden value")
     # profile dialog shows pad; saving writes it into the profile
-    win.edit_pairs = lambda title, pairs, groups=None: (shown.append((title, list(pairs), groups)), dict(pairs, pad="False"))[1]
+    win.edit_pairs = lambda title, pairs, groups=None, start=0: (shown.append((title, list(pairs), groups)), dict(pairs, pad="False"))[1]
     win.mnuProfile_Click()
     check(shown[-1][1][:4] == ["description", "scale", "sws_flags", "pad"] and shown[-1][2] is None and Settings(ini).profile["pad"] == "False",
           "profile dialog with pad")
@@ -1530,14 +1530,33 @@ def test_option_changes(tmp, videos):
     from PySide6.QtWidgets import QDialog
     QDialog.exec_result, QDialog.on_exec = 1, None
     pairs = {"audio": "1", "pause": "160", "unknown": "x", "crop": "72"}
+    from PySide6.QtWidgets import QFormLayout, QTabWidget
     dialogs.edit_pairs(None, "Options", pairs, {}, {}, OPTION_GROUPS)
-    from PySide6.QtWidgets import QFormLayout
-    rows = [(l._args[0], e is None) for l, e in QFormLayout.instances[-1].rows]
-    check(rows == [("<b>Border detection</b>", True), ("crop", False), ("<b>Seeking commercials</b>", True), ("pause", False),
-                   ("<b>Audio and subtitles</b>", True), ("audio", False), ("<b>Other</b>", True), ("unknown", False)],
-          f"headings and order: {rows}")
+    tabs = QTabWidget.instances[-1]
+    pages = [(label, [l._args[0] for l, e in next(f for f in QFormLayout.instances if f._args and f._args[0] is page).rows])
+             for page, label in tabs.tabs_]
+    check(pages == [("Borders", ["crop"]), ("Seeking", ["pause"]), ("Audio/Subtitles", ["audio"]), ("Other", ["unknown"])],
+          f"one tab per group, only groups with keys, the rest on 'Other': {pages}")
+    check(tabs.currentIndex() == 0, "the first tab is shown first")
+    dialogs.edit_pairs(None, "Options", pairs, {}, {}, OPTION_GROUPS, 2)
+    check(QTabWidget.instances[-1].currentIndex() == 2, "start tab")
     dialogs.edit_pairs(None, "Profile", {"scale": "720:576", "fps": "25.000"}, {}, {})
-    check([l._args[0] for l, e in QFormLayout.instances[-1].rows] == ["scale", "fps"], "without groups: as before")
+    check([l._args[0] for l, e in QFormLayout.instances[-1].rows] == ["scale", "fps"] and len(QTabWidget.instances) == 2, "without groups: one list, no tabs")
+    # keys of all options: the tabs are Borders, Seeking, Audio/Subtitles, Batch, Technical
+    all_keys = {k: d[k] for k in d if k not in HIDDEN_OPTIONS}
+    check([h for h, _ in dialogs.group_plan(all_keys, OPTION_GROUPS)] == ["Borders", "Seeking", "Audio/Subtitles", "Batch", "Technical"], "tabs of the options dialog")
+    check(dialogs.tab_of_error(['"step_end" must be a whole number between 1 and 3600.'], all_keys, OPTION_GROUPS) == 1
+          and dialogs.tab_of_error(['"path_map" must be a list of source=target pairs'], all_keys, OPTION_GROUPS) == 3
+          and dialogs.tab_of_error(["something without a key"], all_keys, OPTION_GROUPS) == 0, "tab of an invalid value")
+    # invalid value: the dialog comes again with the entered values, on the tab with the wrong value
+    win.edit_pairs = lambda title, pairs, groups=None, start=0: (tabs_shown.append(start), answers_tabs.pop(0))[1]
+    tabs_shown, answers_tabs = [], []
+    bad = dict(win.options)
+    for k in HIDDEN_OPTIONS:
+        bad.pop(k, None)
+    answers_tabs[:] = [dict(bad, step_end="0"), dict(bad, path_map="abc"), dict(bad)]
+    win.mnuOptions_Click()
+    check(tabs_shown == [0, 1, 3], f"after an error the dialog opens on the tab with the wrong value: {tabs_shown}")
     print("Rearrangement and new parameters: OK (pad in the profile, focus dropped, search values, grouping, migration)")
 
 
@@ -1633,14 +1652,14 @@ def test_main_window_size_and_profile_click(tmp, videos):
     check(len(constraint) == 1 and repr(constraint[0][0]).endswith("SetFixedSize"), f"main window cannot be resized: {constraint}")
     check(win.called("setWindowFlag") and "WindowMaximizeButtonHint" in repr(win.called("setWindowFlag")[0][0]), "no maximize button")
     seen = []
-    win.edit_pairs = lambda title, pairs, groups=None: (seen.append(title), None)[1]
+    win.edit_pairs = lambda title, pairs, groups=None, start=0: (seen.append(title), None)[1]
     labels = [("lblLabel", i) for i in range(6)] + [("lblText", i) for i in range(6)]
     for name, i in labels:
         getattr(win, name)[i]._vb_filter.handlers["click"]()
     check(seen == ["Profile"] * 12, f"every caption and value opens the profile editor: {len(seen)} calls")
     check(win.profile["scale"] and win.lblText[2].text() == win.profile["scale"], "cancelling the editor changes nothing")
     seen.clear()
-    win.edit_pairs = lambda title, pairs, groups=None: (seen.append(title), dict(pairs, scale="1280:720"))[1]
+    win.edit_pairs = lambda title, pairs, groups=None, start=0: (seen.append(title), dict(pairs, scale="1280:720"))[1]
     win.lblText[2]._vb_filter.handlers["click"]()
     check(win.profile["scale"] == "1280:720" and win.lblText[2].text() == "1280:720", "a change in the editor is taken over and shown")
     print("Main window: OK (fixed size, no maximize button, profile editor opens on a click on the profile frame)")
@@ -1827,6 +1846,15 @@ def test_batch_file(tmp, videos):
     print("Batch file: OK (names, mapping, script and job, bash run, masks, old steps, menu)")
 
 
+def ask_save_file_options_ok() -> bool:
+    """The real file dialog call must not switch off the overwrite check of the dialog (a double click on an existing file
+    then did nothing in the KDE dialog)."""
+    import inspect
+    import mediamaker
+    source = inspect.getsource(mediamaker.frmMain.ask_save_file)
+    return "getSaveFileName" in source and "DontConfirmOverwrite" not in source
+
+
 def test_save_video(tmp, videos):
     """Save as MP4 / AVI with the real ffmpeg: file dialog, overwriting, progress bar, cancel, errors."""
     import render
@@ -1882,12 +1910,10 @@ def test_save_video(tmp, videos):
     check(enabled(win.mnuCancel)[-2:] == [True, False] and enabled(win.mnuSaveMP4)[-2:] == [False, True] and enabled(win.mnuSaveAVI)[-2:] == [False, True]
           and enabled(win.mnuBatch)[-2:] == [False, True], "menus: Cancel save only while saving, Save and Batch blocked meanwhile")
     check(not [d for d in os.listdir(tempfile.gettempdir()) if d.startswith("mediamaker_") and os.listdir(os.path.join(tempfile.gettempdir(), d))] , "no temporary files left")
-    # --- overwriting: No -> ask again (suggestion is the chosen name), Cancel -> nothing, Yes -> saved again
+    # --- overwriting: the file dialog itself asks about an existing file (also on a double click on it); MediaMaker only asks when it
+    #     had to add the extension, because then the dialog could not know the name that is really written
     win.messages.clear()
     asked.clear()
-    answers["file"], answers["ask3"] = result, ["no"]
-    names = iter([result, os.path.join(out_dir, "other")])
-    win.ask_save_file = lambda title, suggestion, filters: (asked.append(suggestion), next(names))[1]
     fake_runs = []
     def fake(cmd, total, on_progress, cwd=None, cancel=None):
         fake_runs.append((cmd, cwd, sorted(os.listdir(cwd))))
@@ -1895,20 +1921,31 @@ def test_save_video(tmp, videos):
         on_progress(Progress(50.0, total / 2, total, 1.0, 1.0, 10.0, None))
         return RunResult(0, False, 1.0, "")
     win._render_fn = fake
+    ask_calls = []
+    win.ask3 = lambda text: (ask_calls.append(text), answers["ask3"].pop(0))[1]
+    win.ask_save_file = lambda title, suggestion, filters: (asked.append(suggestion), next(names))[1]
+    names = iter([result])
     win.mnuSaveMP4_Click()
-    check(asked == [os.path.join(videos, "output.mp4"), result] and fake_runs[-1][0][-1] == os.path.join(out_dir, "other.mp4"),
-          f"overwrite? No: the dialog comes again with that name, then the new name is used: {asked}")
+    check(fake_runs[-1][0][-1] == result and ask_calls == [], "existing file chosen with its extension (dialog confirmed): saved without asking again")
     check(any(t == "Saving to target output file...  50.0 %   remaining 0:10" for _, t in bars), f"percent and remaining time in the bar: {bars[-3:]}")
+    check(ask_save_file_options_ok(), "the file dialog is called without options that disable its own overwrite check")
+    stem = os.path.join(out_dir, "film")                          # film.mp4 exists (result)
     asked.clear()
-    names = iter([result])
-    answers["ask3"] = ["cancel"]
-    runs = len(fake_runs)
+    names = iter([stem, os.path.join(out_dir, "other")])
+    answers["ask3"] = ["no"]
     win.mnuSaveMP4_Click()
-    check(len(fake_runs) == runs, "overwrite? Cancel: nothing is saved")
-    names = iter([result])
+    check(len(ask_calls) == 1 and ask_calls[0].startswith(result + " already exists") and asked == [os.path.join(videos, "output.mp4"), result]
+          and fake_runs[-1][0][-1] == os.path.join(out_dir, "other.mp4"),
+          f"extension added and that file exists, No: the dialog comes again with that name, then the new name is used: {asked}")
+    runs = len(fake_runs)
+    names = iter([stem])
+    answers["ask3"] = ["cancel"]
+    win.mnuSaveMP4_Click()
+    check(len(fake_runs) == runs, "extension added and that file exists, Cancel: nothing is saved")
+    names = iter([stem])
     answers["ask3"] = ["yes"]
     win.mnuSaveMP4_Click()
-    check(len(fake_runs) == runs + 1 and fake_runs[-1][0][-1] == result, "overwrite? Yes: saved")
+    check(len(fake_runs) == runs + 1 and fake_runs[-1][0][-1] == result, "extension added and that file exists, Yes: saved")
     # --- extensions: mkv is allowed for MP4, AVI adds .avi
     names = iter([os.path.join(out_dir, "a.mkv")])
     win.mnuSaveMP4_Click()

@@ -163,10 +163,10 @@ class frmMain(frmMainBase):
         button = QtWidgets.QMessageBox.StandardButton
         return QtWidgets.QMessageBox.question(self, "MediaMaker", text, button.Yes | button.No) == button.Yes
 
-    def edit_pairs(self, title: str, pairs: dict, groups=None) -> Optional[dict]:
+    def edit_pairs(self, title: str, pairs: dict, groups=None, start: int = 0) -> Optional[dict]:
         import dialogs
         tooltips = {key: self.settings.tooltip(key) for key in pairs}
-        return dialogs.edit_pairs(self, title, pairs, tooltips, PRESETS, groups)
+        return dialogs.edit_pairs(self, title, pairs, tooltips, PRESETS, groups, start)
 
     def inform(self, text: str) -> None:
         QtWidgets.QMessageBox.information(self, "MediaMaker", text)
@@ -178,9 +178,8 @@ class frmMain(frmMainBase):
         return {button.Yes: "yes", button.No: "no"}.get(answer, "cancel")
 
     def ask_save_file(self, title: str, suggestion: str, filters: str) -> str:
-        """File dialog for saving; an existing file is not confirmed here (the caller asks, as VB6 did)."""
-        name, _ = QtWidgets.QFileDialog.getSaveFileName(self, title, suggestion, filters,
-                                                        options=QtWidgets.QFileDialog.Option.DontConfirmOverwrite)
+        """File dialog for saving. The dialog itself asks before an existing file is overwritten (this also makes a double click\n        on an existing file work like the Save button)."""
+        name, _ = QtWidgets.QFileDialog.getSaveFileName(self, title, suggestion, filters)
         return name
 
     def ask_int(self, title: str, label: str, value: int, low: int, high: int) -> Optional[int]:
@@ -357,8 +356,9 @@ class frmMain(frmMainBase):
     # ------------------------------------------------------------------ Profile and options
     def _edit_validated(self, title: str, values: dict, validate, groups=None) -> Optional[dict]:
         """Edit dialog that appears again with the entered values if values are invalid."""
+        start = 0
         while True:
-            result = self.edit_pairs(title, values, groups)
+            result = self.edit_pairs(title, values, groups, start=start) if start else self.edit_pairs(title, values, groups)
             if result is None:
                 return None
             errors = validate(result)
@@ -366,6 +366,9 @@ class frmMain(frmMainBase):
                 return result
             self.msg("\n".join(errors))
             values = result
+            if groups:
+                import dialogs
+                start = dialogs.tab_of_error(errors, values, groups)        # show the tab with the wrong value again
 
     def mnuProfile_Click(self):
         result = self._edit_validated("Profile", self.profile, validate_profile)
@@ -731,15 +734,18 @@ class frmMain(frmMainBase):
         self.save_video("avi")
 
     def choose_output(self, kind: str) -> Optional[str]:
-        """File dialog with the suggested name; asks before overwriting (No: choose again). None = cancelled."""
+        """File dialog with the suggested name. None = cancelled.
+
+        The dialog asks itself before an existing file is overwritten. Only if the extension had to be added here, the file the
+        dialog saw is not the one that is written, so an existing file of that name is asked about (No: choose again)."""
         title, filters, allowed = self.SAVE_KINDS[kind]
         suggestion = batch.suggest_name(self.last_file(), kind, self.multiple())
         while True:
-            name = self.ask_save_file(title, suggestion, filters)
-            if not name:
+            chosen = self.ask_save_file(title, suggestion, filters)
+            if not chosen:
                 return None
-            name = batch.with_extension(name, allowed, kind)
-            if os.path.exists(name):
+            name = batch.with_extension(chosen, allowed, kind)
+            if name != chosen and os.path.exists(name):
                 answer = self.ask3(f"{name} already exists.\n\nOverwrite?")
                 if answer == "no":
                     suggestion = name

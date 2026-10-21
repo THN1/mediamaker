@@ -267,6 +267,26 @@ class QTabBar(QWidget):
         self.cur_ = i
 
 
+class QTabWidget(QWidget):
+    instances = []
+    methods = set()
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.tabs_ = []
+        QTabWidget.instances.append(self)
+
+    def addTab(self, page, label):
+        self.tabs_.append((page, label))
+        return len(self.tabs_) - 1
+
+    def setCurrentIndex(self, i):
+        self.cur_ = i
+
+    def currentIndex(self):
+        return self.__dict__.get("cur_", 0)
+
+
 class QHeaderView(Base):
     ResizeMode = EnumGroup("QHeaderView.ResizeMode", {"Stretch", "Interactive", "Fixed", "ResizeToContents"})
     methods = {"setStretchLastSection", "setMinimumSectionSize", "setSectionResizeMode"}
