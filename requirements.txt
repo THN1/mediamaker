@@ -1,0 +1,5 @@
+# Python-Pakete (unter Arch/EndeavourOS gibt es sie auch als Systempakete: python-pyside6, python-vlc, python-numpy, python-pillow)
+PySide6
+python-vlc
+numpy
+Pillow

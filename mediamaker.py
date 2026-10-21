@@ -1,0 +1,1084 @@
+"""MediaMaker: Hauptfenster mit Öffnen, Analysieren, Segmentliste und Vorschau.
+
+Aufruf:  python3 mediamaker.py [Datei.ts ...]
+
+Die Prozedurnamen entsprechen denen des VB6-Programms (OpenVideo, lvwSegments_Click, Slider1_Change, cmdPos_Click, ...),
+damit sich der Code an der Vorlage messen lässt. Die Oberfläche (ui_frmMain.py) wird von frm2qt.py erzeugt.
+"""
+from __future__ import annotations
+
+import dataclasses
+import os
+import sys
+import time
+from fractions import Fraction
+from typing import Callable, Optional
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _add_ui_paths() -> None:
+    """Sucht die erzeugte Oberfläche (ui_frmMain.py) und vbqt.py in den üblichen Ordnern."""
+    for base in (HERE, os.path.join(HERE, "ui"), os.path.join(HERE, "generated"), os.path.join(HERE, "ui", "generated")):
+        if os.path.isdir(base) and base not in sys.path:
+            sys.path.append(base)
+
+
+_add_ui_paths()
+
+from PySide6 import QtCore, QtGui, QtWidgets                         # noqa: E402
+
+from cutlist import Segment, resolve_source                          # noqa: E402
+from frames import grab_numbered                                     # noqa: E402
+import timeline as tl                                                # noqa: E402
+import dialogs                                                       # noqa: E402
+import mediainfo                                                     # noqa: E402
+import info                                                          # noqa: E402
+import logo as logo_module                                           # noqa: E402
+import seek                                                          # noqa: E402
+from player import debug_log                                         # noqa: E402
+from border import border_at                                         # noqa: E402
+from logo import bottom_line_average, confidence_at                  # noqa: E402
+from mediaprobe import MediaInfo, ProbeError, count_video_packets, first_frame_number, probe as full_probe  # noqa: E402
+from profiles import (HIDDEN_OPTIONS, OPTION_GROUPS, PRESETS, REMOVED_OPTIONS, default_name, normalize_bitrate,  # noqa: E402
+                      ordered_profile, profile_from_segment, valid_profile_name, validate_options, validate_profile,
+                      weighted_bitrate)
+from project import format_hms, load_segments, save_segments, segment_row, timeof  # noqa: E402
+from settings import Settings, default_options                       # noqa: E402
+import vbqt                                                          # noqa: E402
+from ui_frmMain import frmMainBase                                   # noqa: E402
+
+VERSION = "0.1"
+# Sichtbar sind nur "#" (schmal), "Title", "First" und "Last"; alle anderen Spalten haben die Breite 0 (wie in VB6).
+# Sichtbare Spalten der Schnittliste: Nummer des Eintrags (feste Breite wie in VB6), Dateiname/Titel (füllt den Rest und gibt
+# so weit nach, wie die übrigen Spalten Platz brauchen), erstes und letztes Bild, Dauer des Segments. Die Breiten der letzten
+# drei ergeben sich aus der Schrift: sechsstellige Bildnummern, hh:mm:ss.
+NUMBER_COLUMN_WIDTH = 32                                 # Spalte 0 bleibt unverändert
+STRETCH_COLUMN = 2
+COLUMN_SAMPLES = {3: "000000", 4: "000000", 5: "00:00:00"}   # Spalte -> längster zu erwartender Inhalt
+COLUMN_PADDING = 20                                      # Platz für Rand und Sortiersymbol
+OPEN_FILTERS = ("MPEG transport stream (*.ts);;MP4 video file (*.mp4);;MPEG A/V stream (*.m2t);;"
+                "DVD Video Container Object (*_1.vob);;A/V Interleave file (*.avi);;All files (*)")
+
+
+def quick_probe(path: str) -> MediaInfo:
+    """Schnelle Analyse: liest nur Anfang und Ende der Datei (wichtig bei Netzlaufwerken). Die Bildanzahl wird aus
+    Dauer und Bildrate geschätzt und später im Hintergrund exakt gezählt."""
+    return full_probe(path, exact_frames=False)
+
+
+class FrameCounter(QtCore.QThread):
+    """Zählt die Bilder einer Datei im Hintergrund (liest die ganze Datei einmal)."""
+
+    counted = QtCore.Signal(str, int, int, float)          # Pfad, Bilder, verworfene Pakete, PTS des ersten Keyframes
+
+    def __init__(self, path: str, count_fn):
+        super().__init__()
+        self.path, self.count_fn = path, count_fn
+        self._proc = None
+        self.cancelled = False
+
+    def _remember(self, proc) -> None:
+        self._proc = proc
+        if self.cancelled:
+            proc.terminate()
+
+    def cancel(self) -> None:
+        self.cancelled = True
+        if self._proc is not None and self._proc.poll() is None:
+            self._proc.terminate()
+
+    def run(self) -> None:
+        try:
+            frames, dropped, key_pts = self.count_fn(self.path, on_start=self._remember)
+        except ProbeError:
+            return                                          # abgebrochen oder Datei nicht lesbar: Schätzung bleibt
+        if not self.cancelled:
+            self.counted.emit(self.path, frames, dropped, key_pts)
+
+
+class frmMain(frmMainBase):
+    def __init__(self, settings: Settings, player, project_path: str, probe: Callable[..., MediaInfo] = quick_probe,
+                 fresh: bool = False, count_fn=count_video_packets, thumb_fn=grab_numbered, border_fn=border_at,
+                 conf_fn=confidence_at, avg_fn=bottom_line_average, first_fn=first_frame_number, parent=None):
+        self.fresh = fresh                      # True: Schnittliste leeren statt die letzte zu laden
+        self.settings = settings
+        self.player = player
+        self.project_path = project_path
+        self._probe = probe
+        self._count_fn = count_fn
+        self._counters: list[FrameCounter] = []
+        self._thumb_fn = thumb_fn
+        self._border_fn = border_fn
+        self._conf_fn = conf_fn
+        self._avg_fn = avg_fn
+        self._first_fn = first_fn
+        self._seek_worker = None
+        self._logo_refs: dict = {}              # Maske -> Referenzlogo (LogoRef)
+        self.delogo_refs: dict = {}             # delogo-Rechteck -> Referenzlogo (wird beim Festlegen des Rechtecks gesetzt)
+        self._thumb_loaders: list = []
+        self._thumb_token = 0
+        self.thumb_cache: dict = {}             # (Pfad, Bildnummer) -> QImage der Zeitleiste
+        self.thumb_missing: set = set()         # (Pfad, Bildnummer) ohne Bild (vor dem Anfang, hinter dem Ende)
+        self.timeline_center: Optional[int] = None
+        self._mouse_x = 0
+        self._clock = time.monotonic
+        self._ignore_time_until = 0.0           # nach show_at: Zeitmeldungen von VLC kurz ignorieren
+        self._thumbs_busy = False               # Vorschaubilder werden gerade geladen
+        self._thumb_error_shown = False
+        self._counting: set = set()             # Dateien, deren Bilder gerade gezählt werden
+        self.segments: list[Segment] = []
+        self.current = -1                       # Index des geladenen Segments (0-basiert), -1 = keines
+        self.last_frame: Optional[int] = None   # entspricht lblInfo.Tag in VB6
+        self.timeline_mode: Optional[str] = None  # "A" oder "B" (Marker, an dem die Zeitleiste hängt)
+        self._bold_row = -1
+        super().__init__(parent)
+        vbqt.on_click(self.lblInfo, self.lblInfo_Click)               # VB6 hatte dafür kein Ereignis
+        self.lblInfo.setToolTip("Click to jump to a frame number")
+        player.attach(self.VLC)
+        player.playing.connect(self.VLC_MediaPlayerPlaying)
+        player.paused.connect(self.VLC_MediaPlayerPaused)
+        player.stopped.connect(self.VLC_MediaPlayerStopped)
+        player.ended.connect(self.VLC_MediaPlayerEndReached)
+        player.time_changed.connect(self.VLC_MediaPlayerTimeChanged)
+
+    # ------------------------------------------------------------------ Meldungen (für Tests ersetzbar)
+    def msg(self, text: str) -> None:
+        QtWidgets.QMessageBox.warning(self, "MediaMaker", text)
+
+    def ask(self, text: str) -> bool:
+        button = QtWidgets.QMessageBox.StandardButton
+        return QtWidgets.QMessageBox.question(self, "MediaMaker", text, button.Yes | button.No) == button.Yes
+
+    def edit_pairs(self, title: str, pairs: dict, groups=None) -> Optional[dict]:
+        import dialogs
+        tooltips = {key: self.settings.tooltip(key) for key in pairs}
+        return dialogs.edit_pairs(self, title, pairs, tooltips, PRESETS, groups)
+
+    def ask_int(self, title: str, label: str, value: int, low: int, high: int) -> Optional[int]:
+        import dialogs
+        return dialogs.ask_int_box(self, title, label, value, low, high)
+
+    def ask_text(self, title: str, label: str, default: str = "") -> Optional[str]:
+        import dialogs
+        return dialogs.ask_text_box(self, title, label, default)
+
+    def wait_dialog(self, message: str, on_cancel):
+        import dialogs
+        dialog = dialogs.WaitDialog(self, message, on_cancel)
+        dialog.show()
+        return dialog
+
+    def busy(self, on: bool) -> None:
+        """Sanduhr während längerer Arbeiten (das Zählen der Bilder liest die ganze Datei einmal)."""
+        app = QtWidgets.QApplication
+        if on:
+            app.setOverrideCursor(QtGui.QCursor(QtCore.Qt.CursorShape.WaitCursor))
+        else:
+            app.restoreOverrideCursor()
+        app.processEvents()
+
+    def choose_file(self) -> str:
+        start = os.path.dirname(self.settings.last) if self.settings.last else ""
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open video", start, OPEN_FILTERS)
+        return path
+
+    # ------------------------------------------------------------------ Hilfen
+    @property
+    def profile(self) -> dict:
+        return ordered_profile(self.settings.profile)
+
+    @property
+    def options(self) -> dict:
+        opts = default_options()
+        opts.update(self.settings.options)
+        for key in REMOVED_OPTIONS - {"pad"}:                         # "pad" bleibt lesbar (alte INI-Dateien), s. migrate_settings
+            opts.pop(key, None)
+        return opts
+
+    def migrate_settings(self) -> None:
+        """Alte INI-Dateien: "pad" wandert aus den Optionen ins Profil (nur falls dort noch nicht gesetzt), "focus" entfällt.
+        Die Datei wird nur geschrieben, wenn sich etwas ändert."""
+        raw = self.settings.options
+        changed = False
+        if "pad" in raw:
+            if "pad" not in self.settings.profile:
+                self.settings.update_profile({"pad": raw["pad"]})
+            del raw["pad"]
+            changed = True
+        if "focus" in raw:
+            del raw["focus"]
+            changed = True
+        if changed:
+            self.settings.set_options(raw)
+            self.settings.save()
+
+    @property
+    def segment(self) -> Optional[Segment]:
+        return self.segments[self.current] if 0 <= self.current < len(self.segments) else None
+
+    def t2f(self, ms: int) -> int:
+        """Zeit (ms) -> Bildnummer, wie t2f() in VB6."""
+        return int(ms * self.segment.fps / 1000 + Fraction(1, 2))
+
+    def f2t(self, frame: int) -> int:
+        """Bildnummer -> Zeit (ms), wie f2t() in VB6."""
+        return int(frame * 1000 / self.segment.fps + Fraction(1, 2))
+
+    def _save(self) -> None:
+        save_segments(self.project_path, self.segments)
+
+    # ------------------------------------------------------------------ Start
+    def Form_Load(self):
+        self.setWindowTitle(f"MediaMaker {VERSION}")
+        self.migrate_settings()
+        if self.fresh:
+            self.segments = []                  # neuer Auftrag: die gespeicherte Liste wird verworfen
+            self._save()
+        else:
+            self.segments = load_segments(self.project_path)
+            moved = False
+            for s in self.segments:
+                found = resolve_source(s.path)           # KDE-Netzlaufwerke: das Verzeichnis kio-fuse-... ändert sich
+                if found != s.path:
+                    s.path, moved = found, True
+                if not os.path.exists(s.path):
+                    self.msg(f"File {s.path} not found.")
+            moved = self.upgrade_legacy(self.segments) or moved
+            if moved:
+                self._save()
+        self.setup_columns()
+        self.picTimeline.paint_hook = self.timeline_paint
+        self.place_cut_line()
+        self.refresh_list()
+        self.refresh_profile_menu()
+        self.lblText_Upd()
+        self.vscVolume_Scroll()
+
+    def setup_columns(self) -> None:
+        metrics = self.lvwSegments.fontMetrics()
+        widths = {col: (metrics.horizontalAdvance(COLUMN_SAMPLES[col]) + COLUMN_PADDING if col in COLUMN_SAMPLES else 0)
+                  for col in range(19) if col != STRETCH_COLUMN}
+        widths[0] = NUMBER_COLUMN_WIDTH
+        self.lvwSegments.set_columns(widths, stretch_column=STRETCH_COLUMN)
+
+    def upgrade_legacy(self, segments: list) -> bool:
+        """Listen aus älteren Versionen kennen das erste Videobild nicht (first_frame = 0, die Gesamtzahl zählt nur die Bilder).
+        Hier wird es nachgetragen: Nummer des ersten Bildes ermitteln, Gesamtzahl und Ende um diesen Betrag erhöhen (die Marker
+        selbst bleiben stehen, nur ein Beginn vor dem ersten Bild rückt auf dieses). Es werden nur die ersten Pakete gelesen."""
+        changed = False
+        for seg in segments:
+            if seg.first_frame != 0 or not os.path.exists(seg.path):
+                continue
+            try:
+                first = self._first_fn(seg.path, seg.fps)
+            except Exception:
+                continue
+            if first <= 0:
+                continue
+            old_total = seg.total_frames
+            seg.first_frame = first
+            seg.total_frames = old_total + first
+            seg.end = seg.total_frames if seg.end == old_total else seg.end
+            seg.start = max(seg.start, first)
+            seg.end = max(seg.end, seg.start + 1)
+            changed = True
+        return changed
+
+    def refresh_list(self) -> None:
+        self.lvwSegments.set_rows([segment_row(s, i) for i, s in enumerate(self.segments, 1)])
+        self._bold_row = -1
+        if 0 <= self.current < len(self.segments):
+            self.lvwSegments.select_row(self.current)
+            self.highlight()
+
+    def Form_Unload(self):
+        """Fenster wird geschlossen: Zählungen abbrechen und die Wiedergabe sauber beenden, bevor Qt die Videofläche
+        abbaut. (Ein Thread, der beim Beenden noch läuft, würde das Programm abstürzen lassen.)"""
+        workers = self._counters + self._thumb_loaders + ([self._seek_worker] if self._seek_worker else [])
+        for worker in workers:
+            worker.cancel()
+        for worker in workers:
+            worker.wait(5000)
+        self.player.shutdown()
+
+    def lblText_Upd(self) -> None:
+        total = sum(s.frames / float(s.fps) for s in self.segments)
+        self.lblText[0].setText(format_hms(total))
+        for index, key in enumerate(("bv", "scale", "fps", "ar", "ba"), start=1):
+            self.lblText[index].setText(self.profile.get(key, ""))
+        self.Frame1.setToolTip(dialogs.wrap_tooltip(self.profile.get("description", "")))
+
+    def lblSegment_Upd(self) -> None:
+        """Speichert die Liste und zeigt Dauer und Gesamtlänge neu an (wie in VB6)."""
+        if self.segment is not None:
+            self.lvwSegments.set_row(self.current, segment_row(self.segment, self.current + 1))
+        self._save()
+        self.lblText_Upd()
+
+    def highlight(self) -> None:
+        """Der Titel des geladenen Segments steht fett."""
+        if self._bold_row >= 0:
+            self.lvwSegments.set_bold(self._bold_row, 2, False)
+        if self.current >= 0:
+            self.lvwSegments.set_bold(self.current, 2, True)
+            self._bold_row = self.current
+
+    # ------------------------------------------------------------------ Profil und Optionen
+    def _edit_validated(self, title: str, values: dict, validate, groups=None) -> Optional[dict]:
+        """Bearbeiten-Dialog, der bei fehlerhaften Werten mit den eingegebenen Werten erneut erscheint."""
+        while True:
+            result = self.edit_pairs(title, values, groups)
+            if result is None:
+                return None
+            errors = validate(result)
+            if not errors:
+                return result
+            self.msg("\n".join(errors))
+            values = result
+
+    def mnuProfile_Click(self):
+        result = self._edit_validated("Profile", self.profile, validate_profile)
+        if result is not None:
+            self.settings.set_profile(result)
+            self.settings.save()
+            self.lblText_Upd()
+
+    def mnuOptions_Click(self):
+        shown = {k: v for k, v in self.options.items() if k not in HIDDEN_OPTIONS}
+        result = self._edit_validated("Options", shown, validate_options, OPTION_GROUPS)
+        if result is not None:
+            # Was nur in der INI-Datei steht (versteckte Schlüssel), bleibt erhalten; entfallene Schlüssel verschwinden.
+            merged = {k: v for k, v in self.settings.options.items() if k not in REMOVED_OPTIONS}
+            merged.update(result)
+            self.settings.set_options(merged)
+            self.settings.save()
+
+    def refresh_profile_menu(self) -> None:
+        """Füllt das Menü "Load profile" mit den benannten Profilen der INI-Datei (VB6: GetAllProfiles)."""
+        names = list(self.settings.profiles)
+        menu = self.mnuLoadProfile
+        menu.clear()
+        self.profile_actions = []
+        for name in names:
+            action = menu.addAction(name)
+            action.triggered.connect(lambda checked=False, n=name: self.load_profile(n))
+            self.profile_actions.append(action)
+        menu.setEnabled(bool(names))
+
+    def load_profile(self, name: str) -> None:
+        profile = self.settings.profiles.get(name)
+        if profile is None:
+            self.msg(f'There is no profile named "{name}".')
+            return
+        self.settings.set_profile(profile)
+        self.settings.save()
+        self.lblText_Upd()
+
+    def mnuProfileList_Click(self, index: int = 0):
+        """Platzhalter-Eintrag aus dem Formular (VB6 lädt die Einträge zur Laufzeit); die Liste baut refresh_profile_menu."""
+
+    def mnuSaveProfile_Click(self):
+        default = default_name(self.profile)
+        while True:
+            name = self.ask_text("Save profile", "Save current profile under the following name:", default)
+            if name is None:
+                return
+            name = name.strip()
+            error = valid_profile_name(name)
+            if error:
+                self.msg(error)
+                default = name
+                continue
+            if name in self.settings.profiles and not self.ask(
+                    f'Do you want to overwrite (replace) the existing profile named "{name}"?'):
+                default = name
+                continue                                                # anderen Namen wählen oder abbrechen
+            self.settings.save_profile(name, self.profile)
+            self.settings.save()
+            self.refresh_profile_menu()
+            return
+
+    def mnuReuse_Click(self):
+        """Werte der Zieldatei aus dem (einzigen) geladenen Video übernehmen und im Profil speichern."""
+        if len(self.segments) != 1:
+            self.msg("This function should only be used when there is one and only one segment in the list.")
+            return
+        seg = self.segments[0]
+        self.settings.update_profile(profile_from_segment(seg))
+        self.settings.save()
+        self.lblText_Upd()
+        self.msg(f'The settings for the output file have been copied from "{seg.name}" and saved in the current profile.')
+
+    def _calc_bitrate(self, kind: str, key: str, title: str) -> None:
+        if not self.segments:
+            self.msg("There are no segments in the list.")
+            return
+        average = weighted_bitrate(self.segments, kind)
+        text = self.ask_text(title, f"The average {kind} bitrate has been calculated to {average}k bits/s and will be "
+                             "saved in your current profile accordingly; you can still adjust it here, or hit cancel "
+                             "to keep the old value:", str(average))
+        if not text:
+            return
+        value = normalize_bitrate(text)
+        if value is None:
+            self.msg(f'"{text}" is not a valid bitrate.')
+            return
+        self.settings.update_profile({key: value})
+        self.settings.save()
+        self.lblText_Upd()
+
+    def mnuCalcVideo_Click(self):
+        self._calc_bitrate("video", "bv", "Estimate video kb/s")
+
+    def mnuCalcAudio_Click(self):
+        self._calc_bitrate("audio", "ba", "Estimate audio kb/s")
+
+    # ------------------------------------------------------------------ Öffnen und Analysieren
+    def mnuOpen_Click(self):
+        path = self.choose_file()
+        if not path:
+            return
+        if path.lower().endswith(".vob"):
+            folder, name = os.path.split(path)
+            for i in range(1, 11):                                   # VTS_01_1.VOB ... VTS_01_9.VOB
+                part = os.path.join(folder, f"{name[:7]}{i}.VOB")
+                if not os.path.exists(part):
+                    break
+                self.OpenVideo(part)
+        else:
+            self.OpenVideo(path)
+
+    def lvwSegments_OLEDragDrop(self, files):
+        for f in files:
+            self.OpenVideo(f)
+
+    def OpenVideo(self, fn: str) -> bool:
+        fn = os.path.abspath(os.path.expanduser(fn))             # immer mit vollständigem Pfad speichern
+        self.busy(True)
+        try:
+            info = self._probe(fn)
+        except ProbeError as e:
+            self.busy(False)
+            self.msg(f"File {fn} does not exist or could not be analyzed: {e}")
+            return False
+        self.busy(False)
+        profile, opts = self.profile, self.options
+        audio = info.audio
+        if not audio:
+            self.msg(f"There is no audio stream in file \"{fn}\".")
+            return False
+        if len(audio) > 1:
+            # mehrere Tonspuren: die n-te mit dem Codec des Profils (acodec_in) wählen; die Nummer ist der Stream-Index
+            wanted = profile.get("acodec_in", "")
+            same = [a for a in audio if a.codec == wanted]
+            if not same:
+                self.msg(f"There is no audio stream of type \"{wanted}\" in file \"{fn}\"; please chose a different "
+                         "value for \"acodec_in\" in the profile.")
+                return False
+            n = int(opts.get("audio", 1))
+            if n > len(same):
+                self.msg(f"Warning: there is no audio track \"{n}\" in the source video; the value has been changed "
+                         "to \"1\" and saved in the options.")
+                n = 1
+                self.settings.set_option("audio", 1)
+                self.settings.save()
+            chosen, selector = same[n - 1], str(same[n - 1].index)
+        else:
+            chosen, selector = audio[0], "a"
+        v = info.video
+        try:
+            first = self._first_fn(fn, v.fps)               # Nummer des ersten Videobildes (Ton beginnt oft früher)
+        except Exception:
+            first = 0
+        total = first + v.frames
+        self.segments.append(Segment(
+            index=len(self.segments) + 1, path=fn, name=os.path.basename(fn), start=first, end=total,
+            total_frames=total, fps=v.fps, width=v.width, height=v.height, vbitrate_kbit=v.bitrate // 1000,
+            abitrate_kbit=chosen.bitrate // 1000, audio_sel=selector, crop_top=0, crop_bottom=0, crop_left=0,
+            crop_right=0, sample_rate=chosen.sample_rate, mask="", first_frame=first))
+        self.settings.last = fn
+        self.refresh_list()
+        self._save()
+        self.lblText_Upd()
+        self.current = len(self.segments) - 1
+        self.lvwSegments.select_row(self.current)
+        self.lvwSegments_Click()
+        if v.frames_source != "nb_frames":                            # Bildanzahl nur geschätzt: exakt nachzählen
+            self.start_count(fn)
+        return True
+
+    def update_title(self) -> None:
+        """Fenstertitel mit Hinweis auf laufende Arbeiten im Hintergrund."""
+        work = (["counting frames"] if self._counting else []) + (["loading thumbnails"] if self._thumbs_busy else [])
+        self.setWindowTitle(f"MediaMaker {VERSION}" + (f"  -  {', '.join(work)} ..." if work else ""))
+
+    # ------------------------------------------------------------------ Bilder zählen (Hintergrund)
+    def start_count(self, path: str) -> None:
+        counter = FrameCounter(path, self._count_fn)
+        counter.counted.connect(self.frames_counted)
+        self._counters.append(counter)
+        self._counting.add(path)
+        self.update_title()
+        counter.start()
+
+    def frames_counted(self, path: str, frames: int, dropped: int, key_pts: float) -> None:
+        """Exaktes Ergebnis der Zählung: Gesamtzahl der Bilder und, wo der Benutzer nichts geändert hat, das Ende."""
+        changed = False
+        for i, seg in enumerate(self.segments):
+            total = seg.first_frame + frames                              # Nummer hinter dem letzten Videobild
+            if seg.path != path or seg.total_frames == total:
+                continue
+            old = seg.total_frames
+            seg.total_frames = total
+            seg.end = total if seg.end == old else min(seg.end, total)
+            seg.start = min(seg.start, max(seg.end - 1, seg.first_frame))
+            self.lvwSegments.set_row(i, segment_row(seg, i + 1))
+            if i == self.current:
+                self.Slider1.blockSignals(True)
+                self.Slider1.setRange(seg.first_frame, total)
+                self.Slider1.setTickInterval(max(frames // 20, 1))
+                self.Slider1.blockSignals(False)
+            changed = True
+        if changed:
+            self._save()
+            self.lblText_Upd()
+        self._counting.discard(path)
+        self.update_title()
+
+    # ------------------------------------------------------------------ Auswahl und Vorschau
+    def lvwSegments_Click(self):
+        row = self.lvwSegments.current_row()
+        if row < 0 or row >= len(self.segments):
+            return
+        self.current = row
+        seg = self.segment
+        self.player.stop()
+        self.highlight()
+        self.timeline_mode = self.timeline_center = None
+        if not os.path.exists(seg.path):
+            self.msg(f"File {seg.path} does not exist.")
+            return
+        self.player.load(seg.path, (seg.width, seg.height))
+        self.player.set_aspect("16:9")
+        self.Slider1.blockSignals(True)
+        self.Slider1.setRange(seg.first_frame, seg.total_frames)
+        self.Slider1.setTickInterval(max((seg.total_frames - seg.first_frame) // 20, 1))
+        self.Slider1.setValue(seg.first_frame)
+        self.Slider1.blockSignals(False)
+        self._show_frame_info(seg.first_frame)
+        self.vscVolume_Scroll()
+        self.cmdPos_Click(9)                                          # zu Marker A; zeigt das Bild und hält an
+
+    def lblInfo_Click(self):
+        """Klick auf die Bildnummer: Eingabe einer Bildnummer, zu der gesprungen wird."""
+        seg = self.segment
+        if seg is None:
+            return
+        low, high = 0, seg.total_frames - seg.first_frame               # angezeigte Nummern: erstes Bild = 0
+        current = min(max(self.shown(self.last_frame) if self.last_frame is not None else low, low), high)
+        entered = self.ask_int("Go to frame", f"Frame number ({low} to {high}):", current, low, high)
+        if entered is None:
+            return
+        frame = entered + seg.first_frame
+        if self.Slider1.value() == frame:
+            self.show_frame(frame)                                    # gleiche Stelle: Bild trotzdem neu anzeigen
+        else:
+            self._go(frame)
+
+    def shown(self, frame: int) -> int:
+        """Bildnummer, wie sie angezeigt wird: gezählt ab dem ersten dekodierbaren Videobild (das hat die Nummer 0)."""
+        seg = self.segment
+        return frame - (seg.first_frame if seg else 0)
+
+    def _show_frame_info(self, frame: int) -> None:
+        seg = self.segment
+        self.last_frame = frame
+        self.lblInfo.setText(f"Frame {self.shown(frame)}")
+        self.lblTime.setText("Time " + timeof(self.shown(frame), seg.fps if seg else Fraction(25)))
+
+    def Slider1_Change(self):
+        if self.segment is None:
+            return
+        value = self.Slider1.value()
+        self.player.set_time(self.f2t(value))
+        self._show_frame_info(value)
+
+    def vscVolume_Scroll(self):
+        self.player.set_volume(int((self.vscVolume.maximum() - self.vscVolume.value()) / 5))
+
+    # ------------------------------------------------------------------ Navigation
+    def show_frame(self, frame: int) -> None:
+        """Standbild an der Stelle `frame` anzeigen. Die Zeitmeldungen, die VLC beim Starten noch von der alten Stelle
+        schickt, würden sonst die Anzeige und den Schieber auf diese zurücksetzen."""
+        self._ignore_time_until = self._clock() + 1.5
+        self.player.show_at(self.f2t(frame))
+
+    def _go(self, frame: int) -> None:
+        self.Slider1.setValue(max(self.Slider1.minimum(), min(self.Slider1.maximum(), int(frame))))
+
+    def cmdPos_Click(self, index: int):
+        seg = self.segment
+        if seg is None:
+            return
+        fps = float(seg.fps)
+        slider = self.Slider1
+        if index == 0:
+            self._go(slider.minimum())
+        elif index == 1:
+            self._go(slider.value() - round(5 * fps))
+        elif index == 2:
+            self._go(slider.value() - 1)
+        elif index == 3:
+            if self.player.is_playing:
+                self.player.pause()
+            elif self.player.has_media:
+                self._ignore_time_until = 0.0                         # der Benutzer startet: Zeitmeldungen gelten wieder
+                self.player.play()
+        elif index == 4:
+            self._go(slider.value() + 1)
+        elif index == 5:
+            self._go(slider.value() + round(5 * fps))
+        elif index == 6:
+            self._go(slider.maximum())
+        elif index == 7:                                              # aktuelles Bild = Beginn des Segments (Marker A)
+            if self.last_frame is None:
+                self.msg("Could not get the desired frame position.")
+            elif self.last_frame >= seg.end:                          # Beginn muss vor dem Ende liegen (mind. 1 Bild)
+                QtWidgets.QApplication.beep()
+            else:
+                seg.start = self.last_frame
+                self.lblSegment_Upd()
+                self.cmdPos_Click(9)
+        elif index == 8:                                              # aktuelles Bild = Ende des Segments (Marker B)
+            if self.last_frame is None:
+                self.msg("Could not get the desired frame position.")
+            elif self.last_frame <= seg.start:                        # Ende muss hinter dem Beginn liegen
+                QtWidgets.QApplication.beep()
+            else:
+                seg.end = self.last_frame
+                self.lblSegment_Upd()
+                self.cmdPos_Click(10)
+        elif index in (9, 10):
+            frame = seg.start if index == 9 else seg.end
+            self.timeline_mode = "A" if index == 9 else "B"
+            self._timeline_hint = ("Click timeline to adjust left (low) segment limit" if index == 9
+                                   else "Click timeline to adjust right (high) segment limit")
+            self.picTimeline.setToolTip(self._timeline_hint)
+            if self.Slider1.value() == frame:
+                self.show_frame(frame)                                # Bild anzeigen, auch wenn sich der Wert nicht ändert
+                self._show_frame_info(frame)
+            else:
+                self._go(frame)
+                self.show_frame(frame)
+                self._show_frame_info(frame)
+            self.timeline_refresh()
+        elif index == 11:                                             # Marker zurücksetzen
+            if self.ask("Do you want to reset the markers to their default values?"):
+                seg.start, seg.end = seg.first_frame, seg.total_frames
+                self.lblSegment_Upd()
+        self.Slider1.setFocus()
+
+    # ------------------------------------------------------------------ Information (Übersicht über alle Segmente)
+    def mnuInfo_Click(self):
+        """Alle Segmente mit ihrer Lage im fertigen Film, Gesamtlänge und voraussichtlicher Größe (VB6: File -> Information)."""
+        if not self.segments:
+            self.msg("There are no segments in the list.")
+            return
+        locale = getattr(QtCore, "QLocale", None)
+        number = (lambda n: locale().toString(int(n))) if locale else (lambda n: f"{n:,}")
+        rows, summary = info.build_info(self.segments, self.profile, number)
+        self.show_info(rows, summary)
+
+    def show_info(self, rows: list, summary: str) -> None:
+        from info_dialog import frmInfo
+        frmInfo(rows, summary, self).exec()
+
+    # ------------------------------------------------------------------ Media info
+    def mnuMediaInfo_Click(self):
+        """Eigenschaften der Datei des gewählten Segments (Strg+K): Abschnitte wie General, Video, Audio und MediaMaker."""
+        seg = self.segment
+        if seg is None:
+            return
+        self.busy(True)
+        try:
+            sections = mediainfo.build_sections(seg.path, seg)
+        except Exception as e:
+            self.busy(False)
+            self.msg(f"Media info could not be collected:\n{e}")
+            return
+        self.busy(False)
+        self.show_media_info(seg.name, sections)
+        self.lvwSegments.setFocus()
+
+    def show_media_info(self, title: str, sections: list) -> None:
+        from mediainfo_dialog import frmMediaInfo
+        frmMediaInfo(title, sections, self).exec()
+
+    # ------------------------------------------------------------------ Segmente löschen, verschieben, duplizieren
+    def multiple(self) -> bool:
+        """Stammen die Segmente aus mehr als einer Quelldatei?"""
+        return len({s.path for s in self.segments}) > 1
+
+    def cmdCommand_Click(self, index: int):
+        if self.segment is None:
+            return
+        if index == 0:
+            self.delete_segment()
+        elif index in (1, 2):
+            self.move_segment(-1 if index == 1 else 1)
+        elif index == 3:
+            if self.segments and self.ask("Clear all segments from list?"):
+                self.mnuClose_Click()
+        elif index == 4:
+            self.duplicate_segment()
+        else:
+            self.msg("This function (cropping, logo) has not been ported yet.")
+            return
+        self.lvwSegments.setFocus()
+
+    def delete_segment(self) -> None:
+        self.player.stop()
+        del self.segments[self.current]
+        self.current = -1
+        self.timeline_mode = self.timeline_center = None
+        self.picTimeline.update()
+        self.refresh_list()
+        self._save()
+        self.lblText_Upd()
+
+    def move_segment(self, step: int) -> None:
+        new = self.current + step
+        if not 0 <= new < len(self.segments):
+            return
+        self.segments[self.current], self.segments[new] = self.segments[new], self.segments[self.current]
+        self.current = new
+        self.refresh_list()
+        self._save()
+
+    def mnuClose_Click(self):
+        """Alle Segmente entfernen (VB6: Close all)."""
+        self.player.stop()
+        self.segments, self.current = [], -1
+        self.timeline_mode = self.timeline_center = None
+        self.Slider1.blockSignals(True)
+        self.Slider1.setValue(self.Slider1.minimum())
+        self.Slider1.blockSignals(False)
+        self.picTimeline.update()
+        self.refresh_list()
+        self._save()
+        self.lblText_Upd()
+
+    def duplicate_segment(self) -> None:
+        """Neues Segment hinter dem aktuellen: beginnt am Ende des aktuellen und übernimmt Beschnitt und Logo. Danach wird um
+        die Mindestlänge einer Werbung (Option pause) vorgesprungen und nach dem Beginn des Films gesucht."""
+        seg = self.segment
+        if seg.end >= seg.total_frames:
+            self.msg("There is nothing left behind the end of this segment; marker B is already at the end of the video.")
+            return
+        new = dataclasses.replace(seg, index=len(self.segments) + 1, start=seg.end, end=seg.total_frames)
+        self.segments.append(new)
+        self.current = len(self.segments) - 1
+        self.refresh_list()
+        self._save()
+        self.lblText_Upd()
+        self.lvwSegments.select_row(self.current)
+        self.lvwSegments_Click()                                     # Vorschau laden, Marker A zeigen
+        pause = int(self.options.get("pause", 160))
+        target = min(new.total_frames, new.start + round(pause * float(new.fps)))
+        self._go(target)
+        self.show_frame(target)
+        # In VB6 wurde nur gesucht, wenn alle Segmente aus derselben Datei stammen. Hier wird immer gesucht: Stehen noch
+        # Segmente anderer Dateien in der Liste (z. B. von früheren Tests), sollte das nicht verhindern, dass das neue
+        # Segment seinen Filmbeginn findet.
+        debug_log(f"Duplizieren: Suche nach dem Filmbeginn ab Bild {self.shown(target)} (mehrere Quellen: {self.multiple()})")
+        self.mnuEnd_Click()
+
+    # ------------------------------------------------------------------ Suche nach Film und Werbung
+    def logo_reference(self, seg: Segment):
+        """Referenzlogo des Segments (aus der Maske bzw. dem delogo-Rechteck) oder None."""
+        if seg.has_png_mask:
+            edge = int(self.options.get("logo_edge", logo_module.BIN_MIN))
+            key = (seg.mask, edge)
+            if key not in self._logo_refs:
+                self._logo_refs[key] = logo_module.isolate_logo(logo_module.mask_from_png_b64(seg.mask), bin_min=edge)
+            return self._logo_refs[key]
+        return self.delogo_refs.get(seg.mask) if seg.mask else None
+
+    def mnuEnd_Click(self):
+        self.seek_commercial(end=True)
+
+    def mnuNext_Click(self):
+        self.seek_commercial(end=False)
+
+    def seek_commercial(self, end: bool) -> None:
+        """end=True: Beginn des Films nach der Werbung suchen ("Seek end of commercial"); False: Beginn der nächsten Werbung."""
+        seg = self.segment
+        if seg is None:
+            return
+        if self.player.is_playing:
+            self.player.pause()
+        opts = self.options
+        crop = int(opts.get("crop", 0))
+        stepping = seek.step_frames(opts.get("step_end" if end else "step_next",
+                                    seek.DEFAULT_STEP_END_S if end else seek.DEFAULT_STEP_NEXT_S), seg.fps)
+        start, total = self.Slider1.value(), seg.total_frames
+        if crop > 0:
+            def job(cancel):
+                return seek.seek_border(seg.path, seg.fps, total, start, crop, end, stepping, opts, self._border_fn, cancel,
+                                        shown=lambda n, f=seg.first_frame: n - f)
+        else:
+            ref = self.logo_reference(seg)
+            if ref is None:
+                self.msg("Cannot seek: neither a cropping value (option \"crop\") nor a logo has been defined for this video. "
+                         "Please set one of them first.")
+                return
+            def job(cancel):
+                return seek.seek_logo(seg.path, seg.fps, total, start, ref, end, stepping, opts, self._conf_fn, self._avg_fn, cancel,
+                                      shown=lambda n, f=seg.first_frame: n - f)
+        self._run_seek(job)
+
+    def _run_seek(self, job) -> None:
+        self._run_job(job, "Seeking", self.seek_done)
+
+    def _run_job(self, job, message: str, on_done) -> None:
+        """Arbeit im Hintergrund mit Wartedialog ("<message>, please wait...") und Abbrechen; on_done(Ergebnis) im Qt-Thread."""
+        worker = seek.SeekWorker(job)
+        dialog = self.wait_dialog(message, worker.cancel)
+        worker.progress.connect(lambda text: getattr(dialog, "set_text", lambda t: None)(f"{message}, please wait...\n{text}"))
+        worker.done.connect(lambda result: (dialog.close(), on_done(result)))
+        worker.failed.connect(lambda text: (dialog.close(), self.msg(f"{message} failed: {text}")))
+        self._seek_worker = worker
+        worker.start()
+
+    # ------------------------------------------------------------------ Auto crop (Strg+R)
+    def mnuAutoCrop_Click(self):
+        """Schwarze Zeilen am unteren Rand des gerade angezeigten Bildes zählen und als Option "crop" vorschlagen."""
+        seg = self.segment
+        if seg is None:
+            return
+        frame, opts = self.Slider1.value(), self.options
+
+        def job(cancel):
+            if cancel():
+                raise seek.SeekCancelled()
+            return self._border_fn(seg.path, frame, seg.fps, opts)
+        self._run_job(job, "Auto-cropping", lambda found: self.autocrop_done(seg, frame, int(found)))
+
+    def autocrop_done(self, seg: Segment, frame: int, found: int) -> None:
+        current = int(self.options.get("crop", 0))
+        here = f"frame {self.shown(frame)}"
+        if found == 0:
+            label = (f"No black border line(s) found at the current position ({here}); a crop value of 0 (zero) will be "
+                     f"set in the options, but you can still adjust it here:\n(Current value in the options: {current})")
+        else:
+            label = (f"The (new) crop value has been computed ({found} black lines at {here}) and will be updated in the "
+                     f"options; you can still adjust it here:\n(Current value in the options: {current})")
+        value = self.ask_int("Auto crop", label, found, 0, max(seg.height // 4, found))
+        if value is None:
+            self.msg("The crop value was NOT changed.")
+            return
+        self.settings.set_option("crop", value)
+
+    def seek_done(self, frame: int) -> None:
+        seg = self.segment
+        if seg is None:
+            return
+        frame = max(seg.first_frame, min(seg.total_frames, frame))
+        self._go(frame)
+        self.player.show_at(self.f2t(frame))
+        self._show_frame_info(frame)
+
+    # ------------------------------------------------------------------ Zeitleiste
+    def place_cut_line(self) -> None:
+        """Rote Linie des Formulars (Line1) genau auf die Schnittstelle der Zeitleiste legen (Grenze zwischen Bild 10 und 11)."""
+        area = self.picTimeline.contentsRect()
+        x = self.picTimeline.geometry().x() + area.x() + (tl.RANGE // 2) * tl.cell_width(area.width())
+        g = self.Line1.geometry()
+        self.Line1.setGeometry(x - tl.LINE_WIDTH // 2, g.top(), tl.LINE_WIDTH, g.height())
+
+    def timeline_cells(self) -> list:
+        """Zustand der 20 Felder der Zeitleiste: ("image", QImage), ("cross", None) oder ("pending", None)."""
+        seg = self.segment
+        if seg is None or self.timeline_center is None:
+            return []
+        cells = []
+        for n in tl.window_numbers(self.timeline_center):
+            key = (seg.path, n)
+            if not seg.first_frame <= n < seg.total_frames or key in self.thumb_missing:    # davor/dahinter kein Videobild
+                cells.append(("cross", None))
+            elif key in self.thumb_cache:
+                cells.append(("image", self.thumb_cache[key]))
+            else:
+                cells.append(("pending", None))
+        return cells
+
+    def timeline_paint(self, painter, rect) -> None:
+        cells = self.timeline_cells()
+        if cells:
+            tl.draw_strip(painter, rect, cells)
+
+    def timeline_refresh(self) -> None:
+        """Zeitleiste um den Marker neu aufbauen (VB6: timeline): fehlende Vorschaubilder werden im Hintergrund geholt."""
+        seg = self.segment
+        if seg is None or self.timeline_mode is None:
+            self.timeline_center = None
+            self.picTimeline.update()
+            return
+        self.timeline_center = seg.start if self.timeline_mode == "A" else seg.end
+        need = [n for n in tl.window_numbers(self.timeline_center)
+                if seg.first_frame <= n < seg.total_frames and (seg.path, n) not in self.thumb_cache
+                and (seg.path, n) not in self.thumb_missing]
+        if need:
+            self._start_thumbs(seg, min(need), max(need))
+        self.picTimeline.update()
+
+    def _start_thumbs(self, seg: Segment, first: int, last: int) -> None:
+        for loader in self._thumb_loaders:
+            loader.cancel()                                           # veraltete Anforderung beenden
+        self._thumb_token += 1
+        size = tl.thumb_size(seg.width, seg.height, tl.cell_width(self.picTimeline.contentsRect().width()))
+        loader = tl.ThumbLoader(self._thumb_token, seg.path, first, last, seg.fps, size, self._thumb_fn)
+        loader.loaded.connect(lambda token, frames, rng, p=seg.path, sz=size: self.thumbs_loaded(token, frames, rng, p, sz))
+        loader.failed.connect(self.thumbs_failed)
+        self._thumbs_busy = True
+        self.update_title()
+        self._thumb_loaders = [w for w in self._thumb_loaders if w.isRunning()] + [loader]
+        loader.start()
+
+    def thumbs_loaded(self, token: int, frames: dict, rng: tuple, path: str, size: tuple) -> None:
+        if token != self._thumb_token:
+            return                                                    # Ergebnis einer überholten Anforderung
+        self._thumbs_busy = False
+        self.update_title()
+        if len(self.thumb_cache) > 800:                               # Speicher begrenzen: die ältesten Bilder verwerfen
+            for key in list(self.thumb_cache)[:200]:
+                del self.thumb_cache[key]
+        for n, array in frames.items():
+            h, w = array.shape[0], array.shape[1]
+            data = array.tobytes()                                    # muss bis nach copy() am Leben bleiben
+            self.thumb_cache[(path, n)] = QtGui.QImage(data, w, h, w * 3, QtGui.QImage.Format.Format_RGB888).copy()
+        for n in range(rng[0], rng[1] + 1):
+            if n not in frames and (path, n) not in self.thumb_cache:
+                self.thumb_missing.add((path, n))                     # vor dem ersten Bild oder hinter dem Ende
+        self.picTimeline.update()
+
+    def thumbs_failed(self, token: int, text: str) -> None:
+        """Das Laden der Vorschaubilder ist gescheitert: einmal melden (sonst blieben die Felder wortlos leer)."""
+        if token != self._thumb_token:
+            return
+        self._thumbs_busy = False
+        self.update_title()
+        if not self._thumb_error_shown:
+            self._thumb_error_shown = True
+            self.msg(f"The timeline thumbnails could not be loaded:\n{text}")
+
+    def picTimeline_MouseMove(self, button: int, shift: int, x: int, y: int):
+        self._mouse_x = x                                             # wird in picTimeline_Click gebraucht
+        seg = self.segment
+        if seg is not None and self.timeline_center is not None:
+            area = self.picTimeline.contentsRect()
+            n = tl.window_numbers(self.timeline_center)[tl.click_index(x - area.x(), area.width())]
+            note = "" if seg.first_frame <= n < seg.total_frames else " (no picture)"
+            self.picTimeline.setToolTip(f"Frame {self.shown(n)}{note}" + (f"\n{self._timeline_hint}" if self._timeline_hint else ""))
+
+    def picTimeline_Click(self):
+        """Klick auf ein Vorschaubild: Marker so verschieben, dass der Strich neben diesem Bild liegt."""
+        seg = self.segment
+        if seg is None or self.timeline_mode is None:
+            return
+        area = self.picTimeline.contentsRect()
+        delta = tl.click_delta(tl.click_index(self._mouse_x - area.x(), area.width()))
+        if delta == 0:
+            return
+        if self.timeline_mode == "A":
+            seg.start = max(seg.first_frame, min(seg.end - 1, seg.start + delta))   # nie auf oder hinter Marker B
+            self.lblSegment_Upd()
+            self.cmdPos_Click(9)
+        else:
+            seg.end = max(seg.start + 1, min(seg.total_frames, seg.end + delta))   # nie auf oder vor Marker A
+            self.lblSegment_Upd()
+            self.cmdPos_Click(10)
+
+    # ------------------------------------------------------------------ Ereignisse des Players
+    def VLC_MediaPlayerPlaying(self):
+        self.cmdPos[3].setText("=")
+        self.cmdPos[3].setToolTip("Stop")
+
+    def VLC_MediaPlayerPaused(self):
+        self.cmdPos[3].setText("|>")
+        self.cmdPos[3].setToolTip("Play")
+        if self.last_frame is not None and self.segment is not None:
+            self._sync_slider(self.last_frame)
+
+    def VLC_MediaPlayerStopped(self):
+        self.cmdPos[3].setText("|>")
+        self.cmdPos[3].setToolTip("Play")
+        if self.last_frame is not None and self.segment is not None:
+            self._sync_slider(self.last_frame)
+
+    def VLC_MediaPlayerEndReached(self):
+        self.VLC_MediaPlayerStopped()
+
+    def VLC_MediaPlayerTimeChanged(self, ms: int):
+        if self.segment is None or self._clock() < self._ignore_time_until:
+            return                                                    # unmittelbar nach dem Einstellen eines Standbildes
+        frame = self.t2f(ms)
+        self._show_frame_info(frame)
+        # Der Schieber läuft beim Abspielen mit (in VB6 sprang er erst beim Anhalten); wird er gerade gezogen, bleibt er unberührt.
+        grabbed = getattr(self.Slider1, "isSliderDown", lambda: False)()
+        if self.player.is_playing and not grabbed:
+            self._sync_slider(frame)
+
+    def _sync_slider(self, frame: int) -> None:
+        """Schieber ohne erneutes Springen auf die Position des Players setzen (VB6 tat es mit Slider1.Value = ...)."""
+        self.Slider1.blockSignals(True)
+        self.Slider1.setValue(max(self.Slider1.minimum(), min(self.Slider1.maximum(), frame)))
+        self.Slider1.blockSignals(False)
+
+
+def find_ini() -> str:
+    return os.environ.get("MEDIAMAKER_INI") or os.path.join(HERE, "MediaMaker.ini")
+
+
+def main(argv=None) -> int:
+    argv = list(sys.argv if argv is None else argv)
+    files = [os.path.abspath(os.path.expanduser(f)) for f in argv[1:] if not f.startswith("-")]
+    ini = find_ini()
+    settings = Settings(ini)
+    # Harmlose Meldungen von Bibliotheken (z. B. "Failed to open VDPAU backend libvdpau_nvidia.so" auf Rechnern ohne
+    # NVIDIA-Karte) werden nicht angezeigt. Weitere Muster: hide_messages=Text1|Text2 in [settings] der INI-Datei oder
+    # Umgebungsvariable MEDIAMAKER_HIDE; ganz ausschalten mit MEDIAMAKER_NO_FILTER=1.
+    if not os.environ.get("MEDIAMAKER_NO_FILTER"):
+        import stderrfilter
+        extra = (settings.get("settings", "hide_messages", "") or "").split("|")
+        extra += os.environ.get("MEDIAMAKER_HIDE", "").split("|")
+        stderrfilter.install([p for p in extra if p])
+    # Wiedergabe: "memory" (Standard) lässt VLC in den Arbeitsspeicher dekodieren und zeichnet mit Qt; läuft nativ unter
+    # Wayland. "embed" bettet das VLC-Fenster ein (X11, unter Wayland nur über XWayland). Einstellung: player= in [settings].
+    player_kind = (settings.get("settings", "player", "memory") or "memory").strip().lower()
+    if player_kind == "embed" and sys.platform.startswith("linux"):
+        os.environ.setdefault("QT_QPA_PLATFORM", "xcb")             # libvlc zeichnet in ein X11-Fenster (XWayland)
+    app = QtWidgets.QApplication(argv)
+    vbqt.apply_light_theme(app)
+    from player import debug_log, MemoryVlcPlayer, VlcPlayer
+    project = os.path.splitext(ini)[0] + ".json"
+    legacy = os.path.splitext(ini)[0] + ".csv"
+    if not files and not os.path.exists(project) and os.path.exists(legacy):
+        save_segments(project, load_segments(legacy))               # Liste aus der VB6-Version übernehmen
+    # Mit Videodatei(en) als Parameter beginnt ein neuer Auftrag mit leerer Schnittliste; ohne Parameter wird die
+    # zuletzt gespeicherte Liste wieder verwendet.
+    vlc_args = settings.get("settings", "vlc_args", "") or ""
+    player = (VlcPlayer if player_kind == "embed" else MemoryVlcPlayer)(vlc_args)
+    app.aboutToQuit.connect(player.shutdown)                        # auch bei Beenden ohne Schließen des Fensters
+    window = frmMain(settings, player, project, fresh=bool(files))
+    window.show()
+    for f in files:
+        window.OpenVideo(f)
+    code = app.exec()
+    player.shutdown()                                               # (mehrfacher Aufruf ist harmlos)
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
