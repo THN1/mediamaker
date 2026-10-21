@@ -739,13 +739,20 @@ class frmMain(frmMainBase):
 
     def delete_segment(self) -> None:
         self.player.stop()
-        del self.segments[self.current]
+        deleted = self.current
+        del self.segments[deleted]
         self.current = -1
+        self._bold_row = -1
         self.timeline_mode = self.timeline_center = None
         self.picTimeline.update()
         self.refresh_list()
         self._save()
         self.lblText_Upd()
+        if self.segments:
+            # The entry that takes the deleted one's place is selected (after deleting the last entry: the new last one),
+            # and loaded like after a click, so that further commands apply to it.
+            self.lvwSegments.select_row(min(deleted, len(self.segments) - 1))
+            self.lvwSegments_Click()
 
     def move_segment(self, step: int) -> None:
         new = self.current + step
@@ -820,8 +827,7 @@ class frmMain(frmMainBase):
             self.player.pause()
         opts = self.options
         crop = int(opts.get("crop", 0))
-        stepping = seek.step_frames(opts.get("step_end" if end else "step_next",
-                                    seek.DEFAULT_STEP_END_S if end else seek.DEFAULT_STEP_NEXT_S), seg.fps)
+        stepping = seek.step_frames(seek.step_seconds(opts, end), seg.fps)
         start, total = self.Slider1.value(), seg.total_frames
         if crop > 0:
             def job(cancel):

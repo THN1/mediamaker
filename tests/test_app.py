@@ -841,13 +841,11 @@ def test_segments(tmp, videos):
     check(win.current == 0, "ganz oben: keine Änderung")
     check([s.path for s in load_segments(os.path.join(tmp, "seekwin", "MediaMaker.json"))] == [s2, s3], "Reihenfolge gespeichert")
     win.cmdCommand_Click(0)
-    check(len(win.segments) == 1 and win.current == -1 and win.segments[0].path == s3 and "stop" in win.player.log[-3:]
+    check(len(win.segments) == 1 and win.current == 0 and win.segments[0].path == s3 and "stop" in win.player.log
+          and f"load {s3}" in win.player.log and win.lvwSegments.current_row() == 0
           and win.lvwSegments.row_count() == 1 and win.lvwSegments.topLevelItem(0).text(0) == "01"
-          and len(load_segments(os.path.join(tmp, "seekwin", "MediaMaker.json"))) == 1, "Löschen")
-    win.cmdCommand_Click(0)
-    check(len(win.segments) == 1, "ohne Auswahl wirkt kein Knopf")
-    win.lvwSegments.select_row(0)
-    win.lvwSegments_Click()
+          and len(load_segments(os.path.join(tmp, "seekwin", "MediaMaker.json"))) == 1,
+          "Löschen: der Nachfolger wird ausgewählt und geladen")
     win.cmdCommand_Click(5)
     check("not been ported" in win.messages[-1], "Beschnitt/Logo: Hinweis")
     win.answer = False
@@ -857,6 +855,23 @@ def test_segments(tmp, videos):
     win.cmdCommand_Click(3)
     check(win.segments == [] and win.lvwSegments.row_count() == 0 and win.lblText[0].text() == "00:00:00"
           and load_segments(os.path.join(tmp, "seekwin", "MediaMaker.json")) == [], "Alles entfernen: Ja")
+    # --- Auswahl nach dem Löschen: letzter Eintrag -> neuer letzter, Eintrag in der Mitte -> Nachfolger, zuletzt leere Liste
+    sample = os.path.join(videos, "sample.ts")
+    dwin = seek_window(tmp, videos, ("sample2.ts", "sample3.ts", "sample.ts"), workdir="delwin")
+    dwin.lvwSegments.select_row(2)
+    dwin.lvwSegments_Click()
+    dwin.player.log.clear()
+    dwin.cmdCommand_Click(0)
+    check([x.path for x in dwin.segments] == [s2, s3] and dwin.current == 1 and dwin.lvwSegments.current_row() == 1
+          and f"load {s3}" in dwin.player.log, f"letzten Eintrag gelöscht: der neue letzte ist ausgewählt ({dwin.current}, Zeile {dwin.lvwSegments.current_row()})")
+    dwin.lvwSegments.select_row(0)
+    dwin.lvwSegments_Click()
+    dwin.cmdCommand_Click(0)
+    check([x.path for x in dwin.segments] == [s3] and dwin.current == 0 and dwin.lvwSegments.current_row() == 0, "mittleren/ersten gelöscht: Nachfolger ausgewählt")
+    dwin.cmdCommand_Click(0)
+    check(dwin.segments == [] and dwin.current == -1 and dwin.lvwSegments.row_count() == 0, "den letzten verbliebenen gelöscht: leere Liste")
+    dwin.cmdCommand_Click(0)
+    check(dwin.segments == [], "leere Liste: Knopf wirkt nicht")
 
     # --- duplizieren mit Suche nach dem Filmbeginn (vorgetäuschte Randerkennung: Film ab Bild 130)
     probes = []
@@ -1426,6 +1441,16 @@ def test_option_changes(tmp, videos):
     # --- Schrittweiten in Sekunden
     check(seek.step_frames(40, Fraction(25)) == 1000 and seek.step_frames(240, Fraction(25)) == 6000
           and seek.step_frames(40, Fraction(30000, 1001)) == 1199 and seek.step_frames(0, Fraction(25)) == 1, "Schrittweite aus Sekunden")
+    # --- Schrittweite der Suche nach der nächsten Werbung ist durch "pause" begrenzt
+    check(seek.step_seconds({"step_next": "240", "pause": "160"}, False) == 160 and seek.step_seconds({"step_next": "100", "pause": "160"}, False) == 100
+          and seek.step_seconds({"step_next": "240", "pause": "0"}, False) == 240 and seek.step_seconds({"step_end": "40", "pause": "10"}, True) == 40
+          and seek.step_seconds({}, True) == 40 and seek.step_seconds({}, False) == 160, "Schrittweite höchstens so groß wie pause")
+    # Praxisfall: Werbeblock von 165 s (125998..130123) zwischen zwei Filmteilen; mit 240 s Schrittweite fällt keine Probe hinein
+    breaks = [(84798, 89048), (125998, 130123), (163523, 170909)]
+    inside = lambda path, n, fps, opts: 0 if any(a <= n < b for a, b in breaks) else 72
+    skipped = seek.seek_border("/x", Fraction(25), 170909, 89048, 72, False, seek.step_frames(240, Fraction(25)), {}, inside)
+    found = seek.seek_border("/x", Fraction(25), 170909, 89048, 72, False, seek.step_frames(seek.step_seconds({"step_next": "240", "pause": "160"}, False), Fraction(25)), {}, inside)
+    check(skipped == 163523 and found == 125998, f"Werbeblock wird nicht mehr übersprungen: {found} (mit 240 s: {skipped})")
     # --- Toleranz der Randsuche
     near = lambda path, n, fps, opts: 74 if n >= 130 else 0
     args = ("/x", Fraction(25), 300, 0, 72, True, 100)

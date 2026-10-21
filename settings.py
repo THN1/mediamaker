@@ -168,7 +168,8 @@ def default_options() -> dict:
 DEFAULT_TOOLTIPS = {
     "pad": "If True, source videos will be padded with (minimal) black border(s), else they will be stretched to the target scale",
     "step_end": "Seeking the end of a commercial: initial step width in seconds (refined by factor 10 down to single frames)",
-    "step_next": "Seeking the next commercial: initial step width in seconds (refined by factor 10 down to single frames)",
+    "step_next": "Seeking the next commercial: initial step width in seconds (refined by factor 10 down to single frames); "
+                 "limited to the value of 'pause' so that no commercial break can be skipped",
     "border_tol": "Seeking with the black border: tolerance in scanlines when comparing the detected border with the crop value",
     "logo_rewind": "Seeking with the station logo: max. number of seconds to go back from the first frame showing the logo, "
                    "looking for the start of the scene (the logo may appear some seconds late)",

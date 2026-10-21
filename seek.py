@@ -17,6 +17,18 @@ DEFAULT_STEP_END_S = 40              # Schrittweite für "Seek end of commercial
 DEFAULT_STEP_NEXT_S = 240            # Schrittweite für "Seek next commercial" in Sekunden (VB6: 6000 Bilder bei 25 FPS)
 
 
+def step_seconds(opts: dict, end: bool) -> float:
+    """Initial step width of a search in seconds. When looking for the next commercial the step must not exceed the minimum
+    length of a commercial break (option "pause"): with a larger step a short break could fall between two probes and be
+    skipped (a 165 s break is missed by a 240 s step)."""
+    seconds = float(opts.get("step_end" if end else "step_next", DEFAULT_STEP_END_S if end else DEFAULT_STEP_NEXT_S))
+    if not end:
+        pause = float(opts.get("pause", 160))
+        if pause > 0:
+            seconds = min(seconds, pause)
+    return seconds
+
+
 def step_frames(seconds, fps) -> int:
     """Schrittweite in Bildern aus Sekunden und Bildrate (mindestens 1)."""
     return max(1, round(float(seconds) * float(fps)))

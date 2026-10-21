@@ -2,7 +2,11 @@
 
 ## 0.2 (in Arbeit)
 
-- Versionsnummer auf 0.2-dev gesetzt; noch keine funktionalen Änderungen gegenüber 0.1.
+- Version number set to 0.2-dev.
+- Fix: after deleting a segment the entry that takes its place is selected and loaded (after deleting the last entry: the new last
+  one) instead of the cursor jumping to the top of the list.
+- Fix: "Seek next commercial" could skip a short commercial break. The initial step is now limited to the option `pause` (minimum
+  length of a break), a 240 s step could jump over a 165 s break.
 
 ## 0.1
 
