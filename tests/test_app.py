@@ -3,6 +3,7 @@
 Usage:  python3 tests/test_app.py FOLDER_WITH_SAMPLE_VIDEOS   (expects sample2.ts and sample3.ts in it)
 The user interface runs against the Qt replacement in ui/tests/qtstub, the playback against FakePlayer.
 """
+import dataclasses
 import json
 import os
 import shutil
@@ -100,6 +101,7 @@ def make_window(tmp, probe=None, fresh=False, thumb_fn=None, first_fn=None, **kw
                              first_fn=first_fn or (lambda path, fps: 0), **kwargs)
     win.messages = []
     win.msg = win.messages.append
+    win.inform = win.messages.append
     win.answer = True
     win.ask = lambda text: win.answer
     win.busy = lambda on: None
@@ -1087,6 +1089,11 @@ def test_first_frame(tmp, videos):
     times = {s2: (Fraction(7, 5), Fraction(228, 125))}
     cmd = ffmpeg_cmd.build_command(job, stream_times=times)
     check("trim=" not in cmd[cmd.index("-filter_complex") + 1], "whole file: no trim")
+    # several segments: a whole file is trimmed to its first picture (otherwise concat pads the picture when the sound starts earlier)
+    seg.start = 10
+    job2 = Job(os.path.join(tmp, "o.mp4"), job.profile, {}, [seg, dataclasses.replace(seg, index=2, start=60)])
+    cmd2 = ffmpeg_cmd.build_command(job2, stream_times=times)
+    check(cmd2[cmd2.index("-filter_complex") + 1].count("trim=") == 4, "several segments: the whole file is trimmed as well (video and audio)")
     seg.start = 60
     cmd = ffmpeg_cmd.build_command(job, stream_times=times)
     check("trim=" in cmd[cmd.index("-filter_complex") + 1], "excerpt: trim")
@@ -1693,6 +1700,295 @@ def test_cut_snap(tmp, videos):
     print("Cut snapping: OK (moves onto a hard cut up to N frames before the border result, real recording, options)")
 
 
+def test_batch_file(tmp, videos):
+    """Batch file: bash script with the job as comments, masks, the ffmpeg call and clean-up; keeping old steps; path mapping."""
+    import batch
+    import subprocess
+    from PIL import Image
+    from cutlist import extract_command, parse_batch_header, parse_jobs
+    from ffmpeg_cmd import build_command
+    from mediaprobe import first_frame_number
+    from profiles import validate_options
+    from runner import expected_frames
+    s2, s3 = os.path.join(videos, "sample2.ts"), os.path.join(videos, "sample3.ts")
+    # --- file names
+    check(batch.suggest_name("/rec/20261015 0053 - kabel eins - Elysium.ts") == "/rec/Elysium (YYYY) TVRip kabel eins", "name of a TV recording")
+    check(batch.suggest_name("/rec/a - b - c - d.ts") == "/rec/c - d (YYYY) TVRip b", "the title may contain ' - '")
+    check(batch.suggest_name("/rec/film.ts") == "/rec/film.mp4" and batch.suggest_name("/rec/film.ts", "avi") == "/rec/film.avi"
+          and batch.suggest_name("/rec/x.ts", "avi", True) == "/rec/output.avi", "other names, kind, several sources")
+    check(batch.suggest_name("/rec/x_ y.ts") == "/rec/x - y.mp4", 'recordings write "_ " for ": "')
+    check(batch.with_extension("/a/film", ("mp4", "mkv"), "mp4") == "/a/film.mp4" and batch.with_extension("/a/film.MKV", ("mp4", "mkv"), "mp4") == "/a/film.MKV"
+          and batch.with_extension("/a/film.avi", ("mp4", "mkv"), "mp4") == "/a/film.avi.mp4", "extension is added when it is missing or wrong")
+    # --- path mapping
+    rules = batch.parse_path_map("/run/user/*/kio-fuse-*/smb/root@nas/Harddisk=/mnt/nas/Harddisk;/dos=/mnt/dos; broken ;=x")
+    check(len(rules) == 2, "entries without a source or without = are ignored")
+    kio = "/run/user/1000/kio-fuse-AbC123/smb/root@nas/Harddisk/movie/a b.ts"
+    check(batch.map_path(kio, rules) == "/mnt/nas/Harddisk/movie/a b.ts" and batch.map_path("/dos/x.ts", rules) == "/mnt/dos/x.ts"
+          and batch.map_path("/other/x.ts", rules) == "/other/x.ts", "paths are mapped by the first matching rule")
+    check(batch.map_path("/a/b/d/c/x", batch.parse_path_map("/a/*/c=/z")) == "/a/b/d/c/x", "* does not cross a slash")
+    check(batch.map_sources(["ffmpeg", "-i", kio, "-i", "/dos/y.ts", "out.mp4"], rules) == ["ffmpeg", "-i", "/mnt/nas/Harddisk/movie/a b.ts", "-i", "/mnt/dos/y.ts", "out.mp4"],
+          "only the sources after -i are mapped")
+    check(validate_options({"path_map": ""}) == [] and validate_options({"path_map": "/a=/b;/c=/d"}) == [] and len(validate_options({"path_map": "abc"})) == 1
+          and len(validate_options({"path_map": "/a="})) == 1, "checking of path_map")
+    # --- job -> script -> job: the command from the script is the same as the original
+    win = seek_window(tmp, videos, ("sample2.ts", "sample3.ts"), workdir="batchwin", first_fn=first_frame_number)
+    win.segments[1].start += 20
+    win.segments[1].end -= 10
+    win.segments[0].mask = parse_batch_header(open(os.path.join(HERE, "sample_Elysium.bat"), encoding="latin-1").read()).segments[0].mask
+    job = win.make_job("/tmp/out/Film.mp4")
+    command = build_command(job)
+    text = batch.build_script(job, command)
+    check(text.startswith("#!/bin/bash\n") and text.count("#!/bin/bash") == 1 and text.endswith("rm removelogo??.png 2>/dev/null\n"), "script: shebang and clean-up")
+    parsed = parse_batch_header(text)
+    check(parsed.output == "/tmp/out/Film.mp4" and parsed.profile == job.profile and parsed.options == job.options and len(parsed.segments) == 2, "J, P, T, C are read back")
+    for a, b in zip(job.segments, parsed.segments):
+        same = (a.path, a.name, a.start, a.end, a.fps, a.width, a.height, a.audio_sel, a.sample_rate, a.mask, a.crop_top) == \
+               (b.path, b.name, b.start, b.end, b.fps, b.width, b.height, b.audio_sel, b.sample_rate, b.mask, b.crop_top)
+        check(same and b.total_frames == a.total_frames - a.first_frame and b.first_frame == 0, f"segment {a.index} survives the batch file")
+    check(build_command(parsed) == command, "the command rebuilt from the batch file is identical to the original")
+    check(extract_command(text) == batch.command_line(command), "the ffmpeg call is found in the script")
+    check("-copyts" in command and any(a.startswith("trim=") or "trim=" in a for a in command), "the job contains a trimmed segment")
+    # --- masks and quoting really work in bash: run the script for a source with spaces in its path
+    work = os.path.join(tmp, "batchrun")
+    os.makedirs(os.path.join(work, "out dir"), exist_ok=True)
+    source = os.path.join(work, "my film - test.ts")
+    shutil.copy(s2, source)
+    win2 = seek_window(tmp, videos, ("sample2.ts",), workdir="batchwin2", first_fn=first_frame_number)
+    win2.segments[0].path = source
+    win2.segments[0].mask = win.segments[0].mask
+    win2.segments[0].start += 5
+    job2 = win2.make_job(os.path.join(work, "out dir", "result file.mp4"))
+    cmd2 = build_command(job2)
+    script = os.path.join(work, "job.sh")
+    open(script, "w").write(batch.build_script(job2, cmd2))
+    mask_lines = [l for l in open(script).read().splitlines() if l.startswith("base64 -d")]
+    check(len(mask_lines) == 1 and mask_lines[0].endswith("> removelogo01.png"), "a mask line is written for the segment with a PNG mask")
+    res = subprocess.run(["bash", script], cwd=work, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    result_file = os.path.join(work, "out dir", "result file.mp4")
+    check(res.returncode == 0 and os.path.exists(result_file), f"the script runs in bash: {res.returncode} {res.stderr[-300:]}")
+    from runner import verify_output
+    ok, actual, msg = verify_output(result_file, expected_frames(job2))
+    check(ok and not [f for f in os.listdir(work) if f.startswith("removelogo")], f"result has the expected number of frames, masks removed again: {msg}")
+    subprocess.run(["bash", "-c", mask_lines[0].replace("removelogo01.png", "mask_check.png")], cwd=work, check=True, stdin=subprocess.DEVNULL)
+    check(Image.open(os.path.join(work, "mask_check.png")).format == "PNG", "the mask line decodes to a PNG")
+    # --- keeping old steps
+    job3 = win.make_job("/tmp/out/Zweit.mp4")
+    command3 = build_command(job3)
+    text3 = batch.build_script(job3, command3, text)
+    jobs = parse_jobs(text3)
+    active = [l for l in text3.splitlines() if l and not l.startswith("#") and " -filter_complex " in l]
+    check(len(jobs) == 2 and jobs[0].output == "/tmp/out/Film.mp4" and jobs[1].output == "/tmp/out/Zweit.mp4" and text3.count("#!/bin/bash") == 1,
+          "old job is kept next to the new one")
+    check(active == [batch.command_line(command3)] and extract_command(text3) == batch.command_line(command3)
+          and any(l == "# " + batch.command_line(command) for l in text3.splitlines()), "only the newest ffmpeg call is active, the old one is commented out")
+    check(not any(l and not l.startswith("#") and "base64 -d" in l for l in text3.splitlines()[: text3.index("# J=/tmp/out/Zweit.mp4") and 0 or 1]) , "header line")
+    # --- menu Batch
+    script_ui = os.path.splitext(win.settings.path)[0] + ".sh"
+    answers = {"text": "/tmp/out/Film", "ask3": "yes"}
+    win.ask_text = lambda title, label, default="": answers["text"]
+    win.ask3 = lambda text: answers["ask3"]
+    win.settings.set_option("path_map", "/tmp=/mnt/mapped")
+    win.mnuBatch_Click()
+    created = open(script_ui).read()
+    check(os.path.exists(script_ui) and os.access(script_ui, os.X_OK) and parse_batch_header(created).output == "/tmp/out/Film.mp4"
+          and script_ui in win.messages[-1], f"menu Batch creates an executable script: {win.messages[-1:]}")
+    check(" -i /mnt/mapped/" in created and parse_batch_header(created).segments[0].path == s2, "sources are mapped in the ffmpeg call, the list keeps the real paths")
+    win.settings.set_option("path_map", "")
+    answers["text"] = "/tmp/out/Zweit"
+    win.mnuBatch_Click()
+    two = open(script_ui).read()
+    check(len(parse_jobs(two)) == 2 and two.count("#!/bin/bash") == 1, "existing script and answer yes: the old job stays")
+    answers["ask3"] = "no"
+    answers["text"] = "/tmp/out/Dritt.mkv"
+    win.mnuBatch_Click()
+    three = open(script_ui).read()
+    check(len(parse_jobs(three)) == 1 and parse_batch_header(three).output == "/tmp/out/Dritt.mkv", "answer no: only the new job (the extension mkv is kept)")
+    answers["ask3"] = "cancel"
+    before = open(script_ui).read()
+    win.mnuBatch_Click()
+    check(open(script_ui).read() == before, "answer cancel changes nothing")
+    answers["ask3"], answers["text"] = "yes", None
+    win.mnuBatch_Click()
+    check(open(script_ui).read() == before, "cancelling the name changes nothing")
+    answers["text"] = "/tmp/out/Ohne"
+    win.settings.set_option("path_map", "")
+    n = len(win.messages)
+    win.mnuCopyMode.setChecked(True)
+    win.mnuBatch_Click()
+    check("copy mode" in win.messages[-1] and open(script_ui).read() == before, "copy mode: message, nothing written")
+    win.mnuCopyMode.setChecked(False)
+    win.segments[0].path = "/does/not/exist.ts"
+    win.mnuBatch_Click()
+    check("Source file not found" in win.messages[-1] and open(script_ui).read() == before, "missing source file: message, nothing written")
+    win.segments.clear()
+    n = len(win.messages)
+    win.mnuBatch_Click()
+    check(len(win.messages) == n, "without segments nothing happens")
+    print("Batch file: OK (names, mapping, script and job, bash run, masks, old steps, menu)")
+
+
+def test_save_video(tmp, videos):
+    """Save as MP4 / AVI with the real ffmpeg: file dialog, overwriting, progress bar, cancel, errors."""
+    import render
+    from mediaprobe import first_frame_number, probe
+    from progress import Progress
+    from progressbar import draw_bar
+    from runner import RunResult, expected_frames
+    from PySide6.QtWidgets import Rect
+    # --- progress bar
+    class Painter:
+        def __init__(self): self.calls = []
+        def fillRect(self, *a): self.calls.append(("fill", a[:4], a[4]._args))
+        def setPen(self, c): self.calls.append(("pen", c._args))
+        def drawText(self, rect, flags, text): self.calls.append(("text", text))
+        def save(self): self.calls.append(("save",))
+        def restore(self): self.calls.append(("restore",))
+        def setClipRect(self, rect): self.calls.append(("clip", rect._args))
+    p = Painter()
+    draw_bar(p, Rect(2, 2, 200, 20), 0, "")
+    check(p.calls[0] == ("fill", (2, 2, 200, 20), (240, 240, 240)) and ("save",) not in p.calls, "0 %: only the grey background")
+    p = Painter()
+    draw_bar(p, Rect(2, 2, 200, 20), 25, "Saving 25 %")
+    check(("fill", (2, 2, 50, 20), (0, 120, 215)) in p.calls and p.calls.count(("text", "Saving 25 %")) == 2 and ("clip", (2, 2, 50, 20)) in p.calls
+          and ("pen", (255, 255, 255)) in p.calls, f"25 %: blue quarter, text black and white (clipped): {p.calls}")
+    p = Painter()
+    draw_bar(p, Rect(0, 0, 100, 10), 250, "x")
+    q = Painter()
+    draw_bar(q, Rect(0, 0, 100, 10), -5, "x")
+    check(("fill", (0, 0, 100, 10), (0, 120, 215)) in p.calls and not any(c[0] == "fill" and c[2] == (0, 120, 215) and c[1][2] > 0 for c in q.calls), "percent is limited to 0..100")
+    # --- window with two real segments
+    s2, s3 = os.path.join(videos, "sample2.ts"), os.path.join(videos, "sample3.ts")
+    out_dir = os.path.join(tmp, "saveout")
+    os.makedirs(out_dir, exist_ok=True)
+    win = seek_window(tmp, videos, ("sample2.ts", "sample3.ts"), workdir="savewin", first_fn=first_frame_number)
+    win.segments[1].start += 20
+    bars, asked = [], []
+    original_bar = win.bar
+    win.bar = lambda percent, text: (bars.append((percent, text)), original_bar(percent, text))[1]
+    answers = {"file": os.path.join(out_dir, "film"), "ask3": ["yes"]}
+    win.ask_save_file = lambda title, suggestion, filters: (asked.append((title, suggestion, filters)), answers["file"])[1]
+    win.ask3 = lambda text: answers["ask3"].pop(0)
+    win.mnuSaveMP4_Click()
+    result = os.path.join(out_dir, "film.mp4")
+    expected = expected_frames(win.make_job(result))
+    check(asked[0][0] == "Save as MP4" and "mp4" in asked[0][2] and "mkv" in asked[0][2], f"file dialog for MP4: {asked[0]}")
+    check(asked[0][1] == os.path.join(videos, "output.mp4"), f"several source files: suggestion output.mp4 in the folder of the last file: {asked[0][1]}")
+    check(os.path.exists(result) and abs(probe(result).video.frames - expected) <= 1, f"result file with the expected {expected} frames: {probe(result).video.frames if os.path.exists(result) else None}")
+    check(win.messages[-1].startswith("File was saved in 00:00:") and "differs" not in win.messages[-1], f"message after saving: {win.messages[-1]!r}")
+    check(bars[0] == (1, "Preparing job...") and any(t.startswith("Saving to target output file...  ") and t.endswith("%") or "remaining" in t for _, t in bars[1:-1])
+          and bars[-1] == (0, "") and win._bar == (0, ""), f"progress bar: {bars[:3]} ... {bars[-1]}")
+    check(max(pct for pct, _ in bars) == 100 and win._render is None and win._render_worker is None, "100 % at the end, nothing is running any more")
+    enabled = lambda action: [a[0] for a in action.called("setEnabled")]
+    check(enabled(win.mnuCancel)[-2:] == [True, False] and enabled(win.mnuSaveMP4)[-2:] == [False, True] and enabled(win.mnuSaveAVI)[-2:] == [False, True]
+          and enabled(win.mnuBatch)[-2:] == [False, True], "menus: Cancel save only while saving, Save and Batch blocked meanwhile")
+    check(not [d for d in os.listdir(tempfile.gettempdir()) if d.startswith("mediamaker_") and os.listdir(os.path.join(tempfile.gettempdir(), d))] , "no temporary files left")
+    # --- overwriting: No -> ask again (suggestion is the chosen name), Cancel -> nothing, Yes -> saved again
+    win.messages.clear()
+    asked.clear()
+    answers["file"], answers["ask3"] = result, ["no"]
+    names = iter([result, os.path.join(out_dir, "other")])
+    win.ask_save_file = lambda title, suggestion, filters: (asked.append(suggestion), next(names))[1]
+    fake_runs = []
+    def fake(cmd, total, on_progress, cwd=None, cancel=None):
+        fake_runs.append((cmd, cwd, sorted(os.listdir(cwd))))
+        open(cmd[-1], "wb").write(b"x" * 10)
+        on_progress(Progress(50.0, total / 2, total, 1.0, 1.0, 10.0, None))
+        return RunResult(0, False, 1.0, "")
+    win._render_fn = fake
+    win.mnuSaveMP4_Click()
+    check(asked == [os.path.join(videos, "output.mp4"), result] and fake_runs[-1][0][-1] == os.path.join(out_dir, "other.mp4"),
+          f"overwrite? No: the dialog comes again with that name, then the new name is used: {asked}")
+    check(any(t == "Saving to target output file...  50.0 %   remaining 0:10" for _, t in bars), f"percent and remaining time in the bar: {bars[-3:]}")
+    asked.clear()
+    names = iter([result])
+    answers["ask3"] = ["cancel"]
+    runs = len(fake_runs)
+    win.mnuSaveMP4_Click()
+    check(len(fake_runs) == runs, "overwrite? Cancel: nothing is saved")
+    names = iter([result])
+    answers["ask3"] = ["yes"]
+    win.mnuSaveMP4_Click()
+    check(len(fake_runs) == runs + 1 and fake_runs[-1][0][-1] == result, "overwrite? Yes: saved")
+    # --- extensions: mkv is allowed for MP4, AVI adds .avi
+    names = iter([os.path.join(out_dir, "a.mkv")])
+    win.mnuSaveMP4_Click()
+    check(fake_runs[-1][0][-1] == os.path.join(out_dir, "a.mkv"), "MP4 dialog: .mkv is kept")
+    names = iter([os.path.join(out_dir, "b.mp4")])
+    win.mnuSaveAVI_Click()
+    check(fake_runs[-1][0][-1] == os.path.join(out_dir, "b.mp4.avi") and win.messages[-1].startswith("File was saved"), "AVI: the extension .avi is added")
+    check(win.mnuSaveAVI is not None and any(a[0][0] == "Save as AVI" for a in [(x,) for x in [(asked_title,) for asked_title in ["Save as AVI"]]]), "(dialog title checked below)")
+    # --- the temporary working folder holds the masks during the run
+    win.segments[0].mask = "0.1 0.2 0.3 0.4"
+    from cutlist import parse_batch_header
+    win.segments[0].mask = parse_batch_header(open(os.path.join(HERE, "sample_Elysium.bat"), encoding="latin-1").read()).segments[0].mask
+    names = iter([os.path.join(out_dir, "c.mp4")])
+    win.mnuSaveMP4_Click()
+    check("removelogo01.png" in fake_runs[-1][2] and not os.path.exists(fake_runs[-1][1]), "mask file is in the working folder during the run, the folder is removed afterwards")
+    win.segments[0].mask = ""
+    # --- cancel, ffmpeg error, ffmpeg cannot be started
+    def cancelling(cmd, total, on_progress, cwd=None, cancel=None):
+        open(cmd[-1], "wb").write(b"x" * 10)
+        check(win.mnuCancel.called("setEnabled")[-1] == (True,), "Cancel save is enabled during the run")
+        win.mnuCancel_Click()
+        check(cancel() is True and win.mnuCancel.called("setEnabled")[-1] == (False,), "Cancel save: ffmpeg is told to stop")
+        return RunResult(-15, True, 0.5, "")
+    win._render_fn = cancelling
+    target = os.path.join(out_dir, "cancelled.mp4")
+    names = iter([target])
+    win.mnuSaveMP4_Click()
+    check("cancelled" in win.messages[-1] and not os.path.exists(target) and win._render is None, "cancelled: message, unfinished file deleted, menus back")
+    win._render_fn = lambda cmd, total, on_progress, cwd=None, cancel=None: RunResult(1, False, 0.5, "line1\nboom")
+    names = iter([os.path.join(out_dir, "bad.mp4")])
+    win.mnuSaveMP4_Click()
+    check(win.messages[-1] == "ffmpeg reported an error (code 1):\nline1\nboom" and win._render is None, f"error: {win.messages[-1]!r}")
+    def broken(cmd, total, on_progress, cwd=None, cancel=None):
+        raise FileNotFoundError("ffmpeg")
+    win._render_fn = broken
+    names = iter([os.path.join(out_dir, "none.mp4")])
+    win.mnuSaveMP4_Click()
+    check(win.messages[-1] == "ffmpeg could not be run: FileNotFoundError: ffmpeg" and win._render is None and win.mnuSaveMP4.called("setEnabled")[-1] == (True,),
+          f"ffmpeg cannot be started: {win.messages[-1]!r}")
+    # --- reasons not to start
+    win._render_fn = fake
+    runs = len(fake_runs)
+    win._render = {"dummy": 1}
+    win.mnuSaveMP4_Click()
+    check("already being saved" in win.messages[-1] and len(fake_runs) == runs, "a second save while one is running is refused")
+    win._render = None
+    win.mnuCopyMode.setChecked(True)
+    names = iter([os.path.join(out_dir, "copy.mp4")])
+    win.mnuSaveMP4_Click()
+    check("Copy mode is not implemented" in win.messages[-1] and len(fake_runs) == runs, "copy mode: message")
+    win.mnuCopyMode.setChecked(False)
+    win.settings.set_profile({**win.settings.profile, "fps": "abc"})
+    names = iter([os.path.join(out_dir, "profile.mp4")])
+    win.mnuSaveMP4_Click()
+    check("profile is not valid" in win.messages[-1] and len(fake_runs) == runs, "invalid profile: message")
+    win.settings.set_profile({**win.settings.profile, "fps": "25.000"})
+    saved_path = win.segments[1].path
+    win.segments[1].path = "/does/not/exist.ts"
+    names = iter([os.path.join(out_dir, "missing.mp4")])
+    win.mnuSaveMP4_Click()
+    check("Source file not found" in win.messages[-1] and len(fake_runs) == runs, "missing source file: message")
+    win.segments[1].path = saved_path
+    names = iter([""])
+    win.mnuSaveMP4_Click()
+    check(len(fake_runs) == runs, "cancelling the file dialog saves nothing")
+    # --- closing the window during a run cancels ffmpeg
+    class Worker:
+        cancelled = waited = False
+        def cancel(self): self.cancelled = True
+        def wait(self, ms): self.waited = True
+    win._render_worker = Worker()
+    win.Form_Unload()
+    check(win._render_worker.cancelled and win._render_worker.waited, "closing the window cancels the running save and waits for it")
+    win2 = seek_window(tmp, videos, (), workdir="savewin2")
+    n = len(win2.messages)
+    win2.mnuSaveMP4_Click()
+    check(win2.messages[-1] == "There are no segments in the list." and len(win2.messages) == n + 1, "no segments: message")
+    print("Save as MP4/AVI: OK (dialog, real ffmpeg run, progress bar, overwrite, extensions, cancel, errors)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -1752,6 +2048,8 @@ def main():
     test_tooltip_wrap(tmp, sys.argv[1])
     test_main_window_size_and_profile_click(tmp, sys.argv[1])
     test_cut_snap(tmp, sys.argv[1])
+    test_batch_file(tmp, sys.argv[1])
+    test_save_video(tmp, sys.argv[1])
     test_first_frame(tmp, sys.argv[1])
     test_shutdown(tmp, sys.argv[1])
     test_throttle()

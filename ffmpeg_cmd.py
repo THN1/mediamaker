@@ -207,7 +207,10 @@ def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str]
     args = [ffmpeg, "-y", "-hide_banner"] + (["-copyts"] if stream_times else [])
     filtr = ""
     for pos, seg in enumerate(segs, 1):
-        trimmed = seg.end - seg.start < seg.total_frames - seg.first_frame   # otherwise: whole file, no trim
+        whole = seg.end - seg.start >= seg.total_frames - seg.first_frame
+        # A whole file is not trimmed (as in VB6). With several segments it is trimmed anyway: if the sound of the recording starts
+        # before the first picture, concat would otherwise pad the picture of that segment with frozen frames.
+        trimmed = not whole or len(segs) > 1
         trim = None
         if trimmed and stream_times:
             fmt0, vid0 = stream_times[seg.path]

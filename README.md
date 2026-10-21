@@ -24,6 +24,13 @@ python3 run_job.py JOB.sh --output movie.mp4  # run a job without the user inter
 Useful environment variables: `MEDIAMAKER_DEBUG=1` (log in `mediamaker_debug.log`), `MEDIAMAKER_NO_FILTER=1` (unfiltered error
 output). In the INI file, section `[settings]`: `player=memory|embed`, `vlc_args=...`, `hide_messages=Text1|Text2`.
 
+## Saving
+
+`File -> Save as MP4` / `Save as AVI` renders the job with ffmpeg (the container follows from the extension) and shows the progress in
+the main window; `Cancel save` stops it. `File -> Batch` writes the job as a bash script `MediaMaker.sh` next to the INI file (comments
+with profile, options and segment list, masks, ffmpeg call). The option `path_map` (`source=target;...`, `*` allowed) replaces the
+beginning of the source paths in the script, e.g. `/run/user/*/kio-fuse-*/smb/root@nas/Harddisk=/mnt/nas/Harddisk`.
+
 ## Tests
 
 The tests need no user interface (Qt is replaced by `ui/tests/qtstub`) and small sample videos (`sample.ts`, `sample2.ts`,

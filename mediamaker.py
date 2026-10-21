@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import shutil
 import sys
+import tempfile
 import time
 from fractions import Fraction
 from typing import Callable, Optional
@@ -28,11 +30,17 @@ _add_ui_paths()
 
 from PySide6 import QtCore, QtGui, QtWidgets                         # noqa: E402
 
-from cutlist import Segment, resolve_source                          # noqa: E402
+from cutlist import Job, Segment, resolve_source                          # noqa: E402
 from frames import grab_numbered                                     # noqa: E402
 import timeline as tl                                                # noqa: E402
 import dialogs                                                       # noqa: E402
 import mediainfo                                                     # noqa: E402
+import batch                                                         # noqa: E402
+from ffmpeg_cmd import build_command, write_masks                    # noqa: E402
+from progress import format_duration                                # noqa: E402
+from progressbar import draw_bar                                     # noqa: E402
+from render import RenderWorker                                      # noqa: E402
+from runner import expected_frames, run_ffmpeg, total_seconds, verify_output   # noqa: E402
 import info                                                          # noqa: E402
 import logo as logo_module                                           # noqa: E402
 import seek                                                          # noqa: E402
@@ -100,7 +108,8 @@ class FrameCounter(QtCore.QThread):
 class frmMain(frmMainBase):
     def __init__(self, settings: Settings, player, project_path: str, probe: Callable[..., MediaInfo] = quick_probe,
                  fresh: bool = False, count_fn=count_video_packets, thumb_fn=grab_numbered, border_fn=border_at,
-                 conf_fn=confidence_at, avg_fn=bottom_line_average, first_fn=first_frame_number, parent=None):
+                 conf_fn=confidence_at, avg_fn=bottom_line_average, first_fn=first_frame_number,
+                 render_fn=run_ffmpeg, parent=None):
         self.fresh = fresh                      # True: clear the segment list instead of loading the last one
         self.settings = settings
         self.player = player
@@ -112,6 +121,10 @@ class frmMain(frmMainBase):
         self._border_fn = border_fn
         self._conf_fn = conf_fn
         self._avg_fn = avg_fn
+        self._render_fn = render_fn
+        self._render = None                     # running save job: dict, None = nothing is being saved
+        self._render_worker = None
+        self._bar = (0.0, "")                   # progress bar: (percent, text)
         self._first_fn = first_fn
         self._seek_worker = None
         self._logo_refs: dict = {}              # mask -> reference logo (LogoRef)
@@ -154,6 +167,21 @@ class frmMain(frmMainBase):
         import dialogs
         tooltips = {key: self.settings.tooltip(key) for key in pairs}
         return dialogs.edit_pairs(self, title, pairs, tooltips, PRESETS, groups)
+
+    def inform(self, text: str) -> None:
+        QtWidgets.QMessageBox.information(self, "MediaMaker", text)
+
+    def ask3(self, text: str) -> str:
+        """Yes/No/Cancel question: "yes", "no" or "cancel"."""
+        button = QtWidgets.QMessageBox.StandardButton
+        answer = QtWidgets.QMessageBox.question(self, "MediaMaker", text, button.Yes | button.No | button.Cancel)
+        return {button.Yes: "yes", button.No: "no"}.get(answer, "cancel")
+
+    def ask_save_file(self, title: str, suggestion: str, filters: str) -> str:
+        """File dialog for saving; an existing file is not confirmed here (the caller asks, as VB6 did)."""
+        name, _ = QtWidgets.QFileDialog.getSaveFileName(self, title, suggestion, filters,
+                                                        options=QtWidgets.QFileDialog.Option.DontConfirmOverwrite)
+        return name
 
     def ask_int(self, title: str, label: str, value: int, low: int, high: int) -> Optional[int]:
         import dialogs
@@ -249,6 +277,7 @@ class frmMain(frmMainBase):
                 self._save()
         self.setup_columns()
         self.picTimeline.paint_hook = self.timeline_paint
+        self.picProgress.paint_hook = self.progress_paint
         self.place_cut_line()
         self.refresh_list()
         self.refresh_profile_menu()
@@ -295,7 +324,8 @@ class frmMain(frmMainBase):
     def Form_Unload(self):
         """Window is being closed: cancel counting and end playback cleanly before Qt tears down the video area.
                 (A thread that is still running at exit would crash the program.)"""
-        workers = self._counters + self._thumb_loaders + ([self._seek_worker] if self._seek_worker else [])
+        workers = (self._counters + self._thumb_loaders + ([self._seek_worker] if self._seek_worker else [])
+                   + ([self._render_worker] if self._render_worker else []))
         for worker in workers:
             worker.cancel()
         for worker in workers:
@@ -686,6 +716,177 @@ class frmMain(frmMainBase):
                 seg.start, seg.end = seg.first_frame, seg.total_frames
                 self.lblSegment_Upd()
         self.Slider1.setFocus()
+
+    # ------------------------------------------------------------------ Saving with ffmpeg, progress, batch file
+    SAVE_KINDS = {"mp4": ("Save as MP4", "MP4 Video File (*.mp4);;MKV Video File (*.mkv);;All files (*)", ("mp4", "mkv")),
+                  "avi": ("Save as AVI", "AVI Video File (*.avi);;All files (*)", ("avi",))}
+
+    def last_file(self) -> str:
+        return self.settings.last or (self.segments[-1].path if self.segments else "")
+
+    def mnuSaveMP4_Click(self):
+        self.save_video("mp4")
+
+    def mnuSaveAVI_Click(self):
+        self.save_video("avi")
+
+    def choose_output(self, kind: str) -> Optional[str]:
+        """File dialog with the suggested name; asks before overwriting (No: choose again). None = cancelled."""
+        title, filters, allowed = self.SAVE_KINDS[kind]
+        suggestion = batch.suggest_name(self.last_file(), kind, self.multiple())
+        while True:
+            name = self.ask_save_file(title, suggestion, filters)
+            if not name:
+                return None
+            name = batch.with_extension(name, allowed, kind)
+            if os.path.exists(name):
+                answer = self.ask3(f"{name} already exists.\n\nOverwrite?")
+                if answer == "no":
+                    suggestion = name
+                    continue
+                if answer == "cancel":
+                    return None
+            return name
+
+    def make_job(self, output: str) -> Job:
+        return Job(output=output, profile=dict(self.profile), options=dict(self.options),
+                   segments=[dataclasses.replace(s) for s in self.segments])
+
+    def check_job(self, job: Job) -> bool:
+        """Is there anything the job cannot be made of? Shows the reason and returns False."""
+        if not job.segments:
+            self.msg("There are no segments in the list.")
+        elif self.mnuCopyMode.isChecked():
+            self.msg("Copy mode is not implemented yet; please switch it off.")
+        elif validate_profile(job.profile):
+            self.msg("The profile is not valid:\n" + "\n".join(validate_profile(job.profile)))
+        elif missing := sorted({s.path for s in job.segments if not os.path.exists(s.path)}):
+            self.msg("Source file not found: " + ", ".join(missing))
+        else:
+            return True
+        return False
+
+    def save_video(self, kind: str) -> None:
+        """Save as MP4 / AVI: the container follows from the extension of the target file, ffmpeg chooses it."""
+        if self._render is not None:
+            self.msg("A file is already being saved.")
+            return
+        if not self.segments:
+            self.msg("There are no segments in the list.")
+            return
+        output = self.choose_output(kind)
+        if output is None:
+            return
+        job = self.make_job(output)
+        if not self.check_job(job):
+            return
+        work = tempfile.mkdtemp(prefix="mediamaker_")
+        try:
+            write_masks(job.segments, work)                           # removelogoNN.png for the filter
+            command = build_command(job)
+        except Exception as e:                                        # e.g. NotImplementedError for subtitles
+            shutil.rmtree(work, ignore_errors=True)
+            self.msg(f"The job cannot be built: {e}")
+            return
+        self._render = {"job": job, "output": output, "dir": work, "expected": expected_frames(job), "total": total_seconds(job)}
+        worker = RenderWorker(command, self._render["total"], work, self._render_fn)
+        worker.progress.connect(self.render_progress)
+        worker.done.connect(self.render_done)
+        worker.failed.connect(self.render_failed)
+        self._render_worker = worker
+        for action in (self.mnuSaveMP4, self.mnuSaveAVI, self.mnuBatch):
+            action.setEnabled(False)
+        self.mnuCancel.setEnabled(True)
+        self.bar(1, "Preparing job...")
+        worker.start()
+
+    def render_progress(self, p) -> None:
+        text = f"Saving to target output file...  {p.percent:.1f} %"
+        if p.eta is not None:
+            text += f"   remaining {format_duration(p.eta)}"
+        self.bar(p.percent, text)
+
+    def render_finished(self) -> dict:
+        """Common end of a save: menus and bar back to normal, temporary files removed. Returns the job information."""
+        info, self._render, self._render_worker = self._render, None, None
+        for action in (self.mnuSaveMP4, self.mnuSaveAVI, self.mnuBatch):
+            action.setEnabled(True)
+        self.mnuCancel.setEnabled(False)
+        self.bar(0, "")
+        shutil.rmtree(info["dir"], ignore_errors=True)
+        return info
+
+    def render_done(self, result) -> None:
+        info = self.render_finished()
+        output = info["output"]
+        if result.cancelled:
+            if os.path.exists(output):
+                os.remove(output)                                     # an unfinished MP4 cannot be played anyway
+            self.msg("Saving was cancelled; the unfinished file was deleted.")
+        elif not result.ok:
+            self.msg(f"ffmpeg reported an error (code {result.returncode}):\n{result.errors[-800:]}")
+        else:
+            try:
+                ok, actual, check = verify_output(output, info["expected"])
+            except Exception:
+                ok, check = True, ""
+            text = f"File was saved in {format_hms(result.elapsed)}."
+            if not ok:
+                text += "\n\n" + check
+            getattr(QtWidgets.QApplication, "beep", lambda: None)()
+            self.inform(text)
+
+    def render_failed(self, text: str) -> None:
+        self.render_finished()
+        self.msg(f"ffmpeg could not be run: {text}")
+
+    def mnuCancel_Click(self):
+        """Cancel save: ends ffmpeg (the progress is polled regularly, so this takes a moment)."""
+        self.mnuCancel.setEnabled(False)
+        if self._render_worker is not None:
+            self._render_worker.cancel()
+
+    def bar(self, percent: float, text: str) -> None:
+        self._bar = (percent, text)
+        self.picProgress.update()
+
+    def progress_paint(self, painter, rect) -> None:
+        draw_bar(painter, rect, *self._bar)
+
+    def mnuBatch_Click(self):
+        """Writes the job as a shell script next to the INI file; its comments carry the job for a later import."""
+        if not self.segments:
+            return
+        if self.mnuCopyMode.isChecked():
+            self.msg("You cannot save job to batch with 'copy mode' enabled (yet).")
+            return
+        script = os.path.splitext(self.settings.path)[0] + ".sh"
+        old = None
+        if os.path.exists(script):
+            answer = self.ask3("Keep old (existing) steps in batch file?")
+            if answer == "cancel":
+                return
+            if answer == "yes":
+                with open(script, encoding="utf-8", errors="replace") as f:
+                    old = f.read()
+        name = self.ask_text("Batch", "Enter target output file name including path: \n\n"
+                             "NOTE: An existing file will be overwritten w/o warning!",
+                             batch.suggest_name(self.last_file(), "mp4", self.multiple()))
+        if not name:
+            return
+        name = batch.with_extension(name, batch.OUTPUT_EXTENSIONS, "mp4")
+        job = self.make_job(name)
+        if not self.check_job(job):
+            return
+        try:
+            command = batch.map_sources(build_command(job), batch.parse_path_map(job.options.get("path_map", "")))
+        except Exception as e:
+            self.msg(f"The job cannot be built: {e}")
+            return
+        with open(script, "w", encoding="utf-8", newline="\n") as f:
+            f.write(batch.build_script(job, command, old))
+        os.chmod(script, 0o755)
+        self.inform(f"Batch file was updated and can be run from the command line:\n{script}")
 
     # ------------------------------------------------------------------ Information (overview of all segments)
     def mnuInfo_Click(self):

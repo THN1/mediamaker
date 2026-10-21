@@ -99,23 +99,32 @@ class Job:
     segments: list[Segment] = field(default_factory=list)
 
 
-def parse_batch_header(text: str) -> Job:
-    """Reads J/P/T/C from a .bat (REM ...) or .sh (# ...) file of MediaMaker."""
-    parts = {"P": "", "T": "", "C": ""}
-    output = ""
+def parse_jobs(text: str) -> list[Job]:
+    """All jobs of a .bat (REM ...) or .sh (# ...) file of MediaMaker, in the order of the file.
+
+    Every job starts with its J= line (output file) and is followed by its P=, T= and C= lines (profile, options, segment list).
+    A file that was extended with "keep old steps" contains several jobs; only the last one has an active command."""
+    jobs: list[dict] = []
     for line in text.splitlines():
         m = re.match(r"^(?:#|REM)\s+([JPTC])=(.*)$", line.strip(), re.IGNORECASE)
         if not m:
             continue
         key, val = m.group(1).upper(), m.group(2).strip()
-        if key == "J":
-            output = val
-        else:
-            parts[key] += val
-    return Job(output=output,
-               profile=parse_kv(_decode(parts["P"])) if parts["P"] else {},
-               options=parse_kv(_decode(parts["T"])) if parts["T"] else {},
-               segments=parse_segments(_decode(parts["C"])) if parts["C"] else [])
+        if key == "J" or not jobs:
+            jobs.append({"J": val if key == "J" else "", "P": "", "T": "", "C": ""})
+            if key == "J":
+                continue
+        jobs[-1][key] += val
+    return [Job(output=j["J"],
+                profile=parse_kv(_decode(j["P"])) if j["P"] else {},
+                options=parse_kv(_decode(j["T"])) if j["T"] else {},
+                segments=parse_segments(_decode(j["C"])) if j["C"] else []) for j in jobs]
+
+
+def parse_batch_header(text: str) -> Job:
+    """The (last) job of a batch file: reads J/P/T/C from a .bat (REM ...) or .sh (# ...) file of MediaMaker."""
+    jobs = parse_jobs(text)
+    return jobs[-1] if jobs else Job(output="", profile={}, options={}, segments=[])
 
 
 # ----------------------------------------------------------------------------- ffmpeg call in the batch file

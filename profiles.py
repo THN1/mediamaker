@@ -74,6 +74,7 @@ OPTION_GROUPS = (
     ("Border detection", ("crop", "blackness", "allowance", "border_tol")),
     ("Seeking commercials", ("pause", "overlap", "step_end", "step_next", "cut_window", "logo_rewind")),
     ("Audio and subtitles", ("audio", "multilanguage", "subtitle", "aflags")),
+    ("Batch file", ("path_map",)),
     ("Technical", ("floor", "detect")),
 )
 
@@ -93,6 +94,11 @@ def validate_options(o: dict) -> list[str]:
             v = _float(o[key])
             if v is None or not lo <= v <= hi:
                 errors.append(f'"{key}" must be a number between {lo} and {hi} (decimal point, e.g. 1.8).')
+    for part in [p for p in o.get("path_map", "").split(";") if p.strip()]:
+        source, equals, target = part.partition("=")
+        if not equals or not source.strip() or not target.strip():
+            errors.append('"path_map" must be a list of source=target pairs separated by semicolons.')
+            break
     if "multilanguage" in o and o["multilanguage"] not in ("True", "False"):
         errors.append('"multilanguage" must be True or False.')
     if "subtitle" in o and not re.fullmatch(r"0|\d+(,\d+)*", o["subtitle"]):

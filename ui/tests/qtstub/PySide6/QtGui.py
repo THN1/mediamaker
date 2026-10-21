@@ -28,8 +28,12 @@ class QImage(Base):
 
 
 class QAction(QObject):
-    methods = {"setShortcut", "setCheckable", "setChecked", "setEnabled", "setVisible", "setText"}
+    methods = {"setShortcut", "setCheckable", "setChecked", "setEnabled", "setVisible", "setText", "isChecked"}
     signals = {"triggered", "toggled"}
+
+    def _ret_isChecked(self):
+        args = self.called("setChecked")
+        return bool(args[-1][0]) if args else False
 
 
 class QShortcut(QObject):

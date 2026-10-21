@@ -9,7 +9,7 @@ from PySide6 import QtCore, QtWidgets
 from profiles import wrapped_lines
 
 FIELD_WIDTH = 230                  # width of the input fields in pixels; longer values are wrapped
-LONG_TEXT_KEYS = ("description",)  # keys with long free text: always multi-line (at least 2 lines)
+LONG_TEXT_KEYS = ("description", "path_map")  # keys with long free text: always multi-line (at least 2 lines)
 _ENTER_KEYS = (0x01000004, 0x01000005)
 
 

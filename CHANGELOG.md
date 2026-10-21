@@ -5,6 +5,16 @@
 - Version number set to 0.2-dev.
 - All comments, docstrings, messages, tests and documentation are now in English (the generated user interface files were
   regenerated; their code is unchanged).
+- **Save as MP4 / Save as AVI** (Ctrl+S / Ctrl+V): the container follows from the extension of the target file (ffmpeg chooses it; mkv is
+  also allowed in the MP4 dialog). The run goes on in the background with a progress bar (percent and remaining time) in the main
+  window; **Cancel save** (Ctrl+C) stops ffmpeg and deletes the unfinished file; the masks for the logo filter are created in a
+  temporary folder. Asks before overwriting; the suggested name is made from the recording's name as in VB6.
+- **Batch** (Ctrl+B): writes the job as a bash script (`MediaMaker.sh` next to the INI file) whose comments carry the profile, options and
+  segment list for a later import, with the masks, the ffmpeg call and the clean-up. Old steps can be kept (switched off with `#`).
+  The new option `path_map` (`source=target;...`, `*` allowed) replaces the beginning of the source paths in the script, e.g. the
+  changing `kio-fuse-XXXX` directory by a fixed mount point.
+- A segment that is a whole file is now trimmed when several segments are joined: with sound starting before the first picture, concat
+  had padded the picture of that segment with frozen frames (9 extra frames in the test).
 - "Seek next commercial" / "Seek end of commercial" with the black border: the result could be one frame late, because the first frame of a
   commercial may still have (almost) the border of the movie. After the border search the result now moves onto a hard cut in the
   last frames before it (new option `cut_window`, default 5 frames, 0 = off; advanced `cut_diff` in the INI file).
