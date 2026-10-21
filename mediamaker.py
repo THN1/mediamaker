@@ -48,7 +48,7 @@ from settings import Settings, default_options                       # noqa: E40
 import vbqt                                                          # noqa: E402
 from ui_frmMain import frmMainBase                                   # noqa: E402
 
-VERSION = "0.1"
+VERSION = "0.2-dev"
 # Sichtbar sind nur "#" (schmal), "Title", "First" und "Last"; alle anderen Spalten haben die Breite 0 (wie in VB6).
 # Sichtbare Spalten der Schnittliste: Nummer des Eintrags (feste Breite wie in VB6), Dateiname/Titel (füllt den Rest und gibt
 # so weit nach, wie die übrigen Spalten Platz brauchen), erstes und letztes Bild, Dauer des Segments. Die Breiten der letzten

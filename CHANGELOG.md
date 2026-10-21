@@ -2,7 +2,7 @@
 
 ## 0.2 (in Arbeit)
 
-- (noch keine Änderungen)
+- Versionsnummer auf 0.2-dev gesetzt; noch keine funktionalen Änderungen gegenüber 0.1.
 
 ## 0.1
 
