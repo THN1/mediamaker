@@ -1327,22 +1327,22 @@ def test_media_info(tmp, videos):
     finally:
         mediainfo.build_sections = real_build
     check("could not be collected" in win.messages[-1] and "ffprobe missing" in win.messages[-1], "error is reported")
-    # --- dialog: resizable, buttons evenly distributed, text copyable
+    # --- dialog: one tab per section, resizable, as wide as all tabs, text copyable
     from mediainfo_dialog import frmMediaInfo
-    from PySide6.QtWidgets import QHBoxLayout, QSizePolicy
     dialog = frmMediaInfo("sample2.ts", sections)
     check(dialog.called("setWindowTitle")[-1] == ("Media info for sample2.ts",) and dialog.TabStrip1.called("hide") != []
-          and dialog.lblMediaInfo.called("hide") != [] and dialog.text.toPlainText() == text["General"], "dialog: title, first section")
+          and dialog.lblMediaInfo.called("hide") != [], "dialog: title, old controls hidden")
     flags = dialog.called("setWindowFlag")
     check(dialog.called("setMaximumSize") == [(16777215, 16777215)] and dialog.called("setMinimumSize") != []
           and "WindowMaximizeButtonHint" in repr(flags[-1][0]) and flags[-1][1] is True, "window is resizable")
-    check(len(dialog.tab_buttons) == 4 and [b._args[0] for b in dialog.tab_buttons] == names, "one button per section")
-    check(all(len(b.called("setSizePolicy")) == 1 and "Ignored" in repr(b.called("setSizePolicy")[0][0]) for b in dialog.tab_buttons),
-          "size policy: independent of the text of the buttons")
-    check([w for w, _ in dialog.tab_row.added_] == dialog.tab_buttons and [st for _, st in dialog.tab_row.added_] == [1, 1, 1, 1],
-          "all buttons with the same share of the width")
-    dialog.tab_buttons[3].clicked.emit(False)
-    check(dialog.text.toPlainText() == text["MediaMaker"] and dialog.tab_buttons[3].called("setChecked")[-1] == (True,), "button shows the section")
+    check([label for _, label in dialog.tabs.tabs_] == names and [e.toPlainText() for e in dialog.editors] == [t for _, t in sections]
+          and dialog.tabs.currentIndex() == 0, "one tab per section with its text, the first tab is shown first")
+    px = QtWidgets.FontMetrics.px_per_char
+    need = sum(px * len(n) + 40 for n in names) + 40
+    check(dialog.called("setMinimumWidth")[-1] == (need,) and "ElideNone" in repr(dialog.tabs.called("setElideMode")[-1][0])
+          and dialog.tabs.called("setUsesScrollButtons")[-1] == (False,), f"all tabs completely visible: minimum width {need}, no eliding, no scroll buttons")
+    dialog.show_tab(3)
+    check(dialog.tabs.currentIndex() == 3, "show_tab selects the tab")
     dialog.copy_all()
     check(QApplication._Clipboard.text_ == mediainfo.full_text(sections), "copy all")
     # --- tooltip of the timeline with the frame number
@@ -1538,10 +1538,19 @@ def test_option_changes(tmp, videos):
     check(pages == [("Borders", ["crop"]), ("Seeking", ["pause"]), ("Audio/Subtitles", ["audio"]), ("Other", ["unknown"])],
           f"one tab per group, only groups with keys, the rest on 'Other': {pages}")
     check(tabs.currentIndex() == 0, "the first tab is shown first")
+    shown_dialogs = []
+    QDialog.on_exec = shown_dialogs.append
     dialogs.edit_pairs(None, "Options", pairs, {}, {}, OPTION_GROUPS, 2)
+    QDialog.on_exec = None
     check(QTabWidget.instances[-1].currentIndex() == 2, "start tab")
+    px = QtWidgets.FontMetrics.px_per_char
+    need = sum(px * len(n) + 40 for n in ("Borders", "Seeking", "Audio/Subtitles", "Other")) + 40
+    check(shown_dialogs[-1].called("setMinimumWidth")[-1] == (need,) and "ElideNone" in repr(QTabWidget.instances[-1].called("setElideMode")[-1][0])
+          and QTabWidget.instances[-1].called("setUsesScrollButtons")[-1] == (False,),
+          f"the dialog is at least as wide as all tabs ({need}), names not elided, no scroll buttons")
+    tab_widgets = len(QTabWidget.instances)
     dialogs.edit_pairs(None, "Profile", {"scale": "720:576", "fps": "25.000"}, {}, {})
-    check([l._args[0] for l, e in QFormLayout.instances[-1].rows] == ["scale", "fps"] and len(QTabWidget.instances) == 2, "without groups: one list, no tabs")
+    check([l._args[0] for l, e in QFormLayout.instances[-1].rows] == ["scale", "fps"] and len(QTabWidget.instances) == tab_widgets, "without groups: one list, no tabs")
     # keys of all options: the tabs are Borders, Seeking, Audio/Subtitles, Batch, Technical
     all_keys = {k: d[k] for k in d if k not in HIDDEN_OPTIONS}
     check([h for h, _ in dialogs.group_plan(all_keys, OPTION_GROUPS)] == ["Borders", "Seeking", "Audio/Subtitles", "Batch", "Technical"], "tabs of the options dialog")

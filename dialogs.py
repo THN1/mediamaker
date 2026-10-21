@@ -52,6 +52,19 @@ def wrap_tooltip(text: str, width: int = TOOLTIP_WIDTH) -> str:
                      for line in text.split("\n"))
 
 
+TAB_PADDING = 40                 # pixels per tab for the space around its text (depends on the style, generous)
+TAB_MARGIN = 40                  # room for the frame of the tab widget and the margins of the dialog
+
+
+def fit_tabs(dialog, tabs, labels) -> None:
+    """Makes sure all tabs are completely visible: no elided text, no scroll buttons, and the dialog is at least as wide as all
+    the tabs side by side (otherwise Qt would elide the names or hide tabs behind scroll arrows)."""
+    tabs.setUsesScrollButtons(False)
+    tabs.setElideMode(QtCore.Qt.TextElideMode.ElideNone)
+    metrics = tabs.fontMetrics()
+    dialog.setMinimumWidth(sum(metrics.horizontalAdvance(label) + TAB_PADDING for label in labels) + TAB_MARGIN)
+
+
 def group_plan(pairs: dict, groups) -> list:
     """[(heading, [keys])] of the tabs: the groups with the keys that are present, then the keys of no group under "Other"."""
     plan = [(heading, [k for k in keys if k in pairs]) for heading, keys in groups]
@@ -113,10 +126,12 @@ def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, g
 
     if groups:
         tabs = QtWidgets.QTabWidget()
-        for heading, keys in group_plan(pairs, groups):
+        plan = group_plan(pairs, groups)
+        for heading, keys in plan:
             page = QtWidgets.QWidget()
             add_rows(QtWidgets.QFormLayout(page), keys)
             tabs.addTab(page, heading)
+        fit_tabs(dialog, tabs, [heading for heading, _ in plan])
         tabs.setCurrentIndex(max(0, start))
         layout.addWidget(tabs)
     else:

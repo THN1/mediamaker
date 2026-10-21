@@ -269,7 +269,7 @@ class QTabBar(QWidget):
 
 class QTabWidget(QWidget):
     instances = []
-    methods = set()
+    methods = {"setUsesScrollButtons", "setElideMode"}
 
     def __init__(self, *a, **k):
         super().__init__(*a, **k)

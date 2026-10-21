@@ -39,7 +39,7 @@ class Signal:
 
 # Methods whose first argument must be a Qt enumeration (PySide6 rejects a plain number with a TypeError)
 ENUM_ARG_METHODS = {"setHorizontalScrollBarPolicy", "setVerticalScrollBarPolicy", "setLineWrapMode", "setFrameShape",
-                    "setFrameShadow", "setAlignment", "setWindowFlag", "setSizeConstraint", "setEchoMode", "setSizePolicy"}
+                    "setFrameShadow", "setAlignment", "setWindowFlag", "setSizeConstraint", "setEchoMode", "setSizePolicy", "setElideMode"}
 
 
 class Base:

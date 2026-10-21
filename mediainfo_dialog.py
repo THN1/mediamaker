@@ -1,12 +1,12 @@
-"""Dialog "Media info" (VB6: frmMediaInfo): buttons for the sections of the report, selectable and copyable text.
+"""Dialog "Media info" (VB6: frmMediaInfo): one tab per section of the report, selectable and copyable text.
 
-The window can be resized; the buttons for General, Video, Audio ... share the whole window width in
-equal parts, the text field fills the rest.
+The window can be resized and is at least as wide as all tabs side by side; the text fills the rest.
 """
 from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+import dialogs
 from ui_frmMediaInfo import frmMediaInfoBase
 
 QWIDGETSIZE_MAX = 16777215
@@ -25,28 +25,21 @@ class frmMediaInfo(frmMediaInfoBase):
         self.setWindowFlag(QtCore.Qt.WindowType.WindowMaximizeButtonHint, True)
         self.resize(width, height)
 
-        # The elements of the design (tabs, caption) are replaced by buttons and a text field.
+        # The elements of the design (tab strip, caption) are replaced by a tab widget with one text field per section.
         self.TabStrip1.hide()
         self.lblMediaInfo.hide()
-        self.text = QtWidgets.QPlainTextEdit(self)
-        self.text.setReadOnly(True)
-        self.text.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
-        self.text.setFont(QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont))
-
-        self.tab_group = QtWidgets.QButtonGroup(self)
-        self.tab_group.setExclusive(True)
-        self.tab_buttons = []
-        tabs = QtWidgets.QHBoxLayout()
-        tabs.setSpacing(2)
-        for index, (name, _) in enumerate(sections):
-            button = QtWidgets.QPushButton(name)
-            button.setCheckable(True)
-            # "Ignored": the size does not depend on the text, all buttons get the same width
-            button.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
-            button.clicked.connect(lambda checked=False, i=index: self.show_tab(i))
-            self.tab_group.addButton(button, index)
-            self.tab_buttons.append(button)
-            tabs.addWidget(button, 1)
+        self.tabs = QtWidgets.QTabWidget()
+        self.editors = []
+        fixed = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont)
+        for name, text in sections:
+            editor = QtWidgets.QPlainTextEdit()
+            editor.setReadOnly(True)
+            editor.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
+            editor.setFont(fixed)
+            editor.setPlainText(text)
+            self.tabs.addTab(editor, name)
+            self.editors.append(editor)
+        dialogs.fit_tabs(self, self.tabs, [name for name, _ in sections])
 
         self.cmdCopy = QtWidgets.QPushButton("Copy &all")
         self.cmdCopy.clicked.connect(self.copy_all)
@@ -55,17 +48,14 @@ class frmMediaInfo(frmMediaInfoBase):
         bottom.addWidget(self.cmdCopy)
         bottom.addWidget(self.cmdClose)
 
-        self.tab_row = tabs
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addLayout(tabs)
-        layout.addWidget(self.text, 1)
+        layout.addWidget(self.tabs, 1)
         layout.addLayout(bottom)
         self.show_tab(0)
 
     def show_tab(self, index: int) -> None:
         if 0 <= index < len(self.sections):
-            self.text.setPlainText(self.sections[index][1])
-            self.tab_buttons[index].setChecked(True)
+            self.tabs.setCurrentIndex(index)
 
     def cmdClose_Click(self):
         self.close()
