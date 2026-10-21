@@ -9,7 +9,10 @@ from typing import Callable
 
 from PySide6 import QtCore
 
+import numpy as np
+
 from border import border_at, where_border
+from frames import grab_numbered
 from logo import bottom_line_average, confidence_at, rewind, where_logo
 from player import debug_log
 
@@ -38,8 +41,41 @@ class SeekCancelled(Exception):
     pass
 
 
+CUT_SIZE = (64, 48)                  # size of the pictures used to look for a hard cut
+
+
+def snap_to_cut(path, fps, pos, window, threshold, frames_fn=grab_numbered, cancel=lambda: False, shown=lambda n: n) -> int:
+    """Moves a result of the border search to the hard cut right before it, if there is one.
+
+    The border changes a little later than the picture: the first frame of a commercial may still have (almost) the border of the
+    movie, then the border search is one or two frames late. Looks at the frames pos-window..pos for the latest hard cut (mean
+    difference to the preceding frame of at least `threshold` on a scale of 0..255 and at least three times the usual difference)
+    and returns its first frame; without such a cut `pos` stays.
+    """
+    note = getattr(cancel, "note", None)
+    first = max(pos - window - 3, 0)             # a few frames more before the window give the usual difference
+    if cancel():
+        raise SeekCancelled()
+    if note:
+        note(f"frame {shown(pos)}: looking for a cut in the last {window} frames")
+    try:
+        frames = frames_fn(path, first, pos - first + 1, fps, CUT_SIZE)
+    except Exception as e:                       # best effort: the unrefined result is still useful
+        debug_log(f"cut search failed: {e!r}")
+        return pos
+    grey = {n: f.astype(np.float32).mean(axis=2) for n, f in frames.items()}
+    diffs = {n: float(np.abs(grey[n] - grey[n - 1]).mean()) for n in grey if n - 1 in grey and n <= pos}
+    if len(diffs) < 3:
+        return pos
+    usual = sorted(diffs.values())[len(diffs) // 2]
+    cuts = [n for n, d in diffs.items() if pos - window <= n and d >= threshold and d >= 3 * max(usual, 1.0)]
+    debug_log(f"cut search before frame {shown(pos)}: differences { {shown(n): round(d, 1) for n, d in sorted(diffs.items())} }, "
+              f"cuts {[shown(n) for n in sorted(cuts)]}")
+    return max(cuts) if cuts else pos
+
+
 def seek_border(path, fps, total, pos, value, equal, stepping, opts, border_fn=border_at, cancel=lambda: False,
-                shown=lambda n: n) -> int:
+                shown=lambda n: n, frames_fn=grab_numbered) -> int:
     """Starting at frame `pos`, searches for the first frame whose black border matches `value` (equal=True: movie starts) or
         differs from it (equal=False: commercial starts). `shown` converts frame numbers for display; every probe is reported in the
         wait window (cancel.note) and in the log.
@@ -60,6 +96,12 @@ def seek_border(path, fps, total, pos, value, equal, stepping, opts, border_fn=b
     tolerance = int(opts.get("border_tol", 3))
     result = where_border(border_of, pos, total, value, equal, stepping, lim=tolerance)
     debug_log(f"border search: result frame {shown(result)}")
+    window = int(opts.get("cut_window", 5))
+    if window > 0:
+        refined = snap_to_cut(path, fps, result, window, int(opts.get("cut_diff", 30)), frames_fn, cancel, shown)
+        if refined != result:
+            debug_log(f"border search: moved to the cut at frame {shown(refined)}")
+        result = refined
     return result
 
 

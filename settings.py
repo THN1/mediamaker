@@ -160,8 +160,8 @@ def default_options() -> dict:
         (40 s = 1000 frames and 240 s = 6000 frames at 25 FPS, the values from VB6); logo_rewind corresponds to 45 frames."""
     return {"crop": "0", "floor": "2", "blackness": "12", "allowance": "1000", "overlap": "400", "audio": "1",
             "pause": "160", "detect": "0", "aflags": "", "subtitle": "0", "multilanguage": "False",
-            "step_end": "40", "step_next": "240", "border_tol": "3", "logo_rewind": "1.8",
-            "logo_edge": "18", "logo_conf": "0.2"}
+            "step_end": "40", "step_next": "240", "border_tol": "3", "cut_window": "5", "logo_rewind": "1.8",
+            "logo_edge": "18", "logo_conf": "0.2", "cut_diff": "30"}
 
 
 # explanations for keys that are still missing in the INI file (section [ToolTipText])
@@ -171,6 +171,9 @@ DEFAULT_TOOLTIPS = {
     "step_next": "Seeking the next commercial: initial step width in seconds (refined by factor 10 down to single frames); "
                  "limited to the value of 'pause' so that no commercial break can be skipped",
     "border_tol": "Seeking with the black border: tolerance in scanlines when comparing the detected border with the crop value",
+    "cut_window": "Seeking with the black border: after the border has been found, look this many frames back for a hard cut and move "
+                  "the result onto it (0 = off). The border changes a little later than the picture.",
+    "cut_diff": "Seeking with the black border (advanced): min. mean difference (0 to 255) between two frames to count as a hard cut",
     "logo_rewind": "Seeking with the station logo: max. number of seconds to go back from the first frame showing the logo, "
                    "looking for the start of the scene (the logo may appear some seconds late)",
     "logo_edge": "Logo detection (advanced): min. grey level difference of neighbouring pixels that counts as an edge",

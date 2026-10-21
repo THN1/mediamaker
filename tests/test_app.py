@@ -912,8 +912,10 @@ def test_segments(tmp, videos):
     check(win.multiple() and probes != [] and win.Slider1.value() == 130, f"several sources: search runs, frame {win.Slider1.value()}")
     # intermediate results in the wait window
     texts = win.dialogs[-1].texts
+    probe_texts = [t for t in texts if "looking for about 72" in t]
     check(texts and texts[0].startswith("Seeking, please wait...\nframe ") and "border" in texts[0] and "about 72" in texts[0]
-          and any("border 72" in t for t in texts) and len(texts) == len(probes), f"wait window shows every probe: {texts[:2]}")
+          and any("border 72" in t for t in texts) and len(probe_texts) == len(probes)
+          and "looking for a cut" in texts[-1], f"wait window shows every probe and the cut search: {texts[:2]}")
     # neither crop nor logo: message, no search
     win = seek_window(tmp, videos, workdir="dupwin3", border_fn=border)
     win.settings.set_option("crop", 0)
@@ -1637,6 +1639,60 @@ def test_main_window_size_and_profile_click(tmp, videos):
     print("Main window: OK (fixed size, no maximize button, profile editor opens on a click on the profile frame)")
 
 
+def test_cut_snap(tmp, videos):
+    """After the border search the result moves onto a hard cut right before it (the border changes a little later than the
+    picture)."""
+    import numpy as np
+    import seek
+    from profiles import HIDDEN_OPTIONS, OPTION_GROUPS, validate_options
+    from settings import DEFAULT_TOOLTIPS, default_options
+    fps = Fraction(25)
+
+    def make_frames(cuts, noise=3.0):
+        """frames_fn: noisy grey pictures; the picture changes completely at the frame numbers in `cuts`."""
+        rng = np.random.default_rng(1)
+        def fn(path, first, count, fps_, size, on_start=None):
+            out, level = {}, 100.0
+            for n in range(first, first + count):
+                if n in cuts:
+                    level = 40.0 if level > 70 else 160.0
+                out[n] = np.clip(level + rng.normal(0, noise, (size[1], size[0], 3)), 0, 255).astype(np.uint8)
+            return out
+        return fn
+    snap = lambda cuts, pos, window=5, thr=30: seek.snap_to_cut("/x", fps, pos, window, thr, make_frames(cuts))
+    check(snap({1000}, 1001) == 1000, "result one frame late: moves onto the cut")
+    check(snap({1000}, 1003) == 1000, "result three frames late: moves onto the cut")
+    check(snap({1000}, 1000) == 1000, "result already on the cut: stays")
+    check(snap(set(), 1001) == 1001, "no cut: stays")
+    check(snap({990}, 1001) == 1001, "cut outside the window: stays")
+    check(snap({997, 1000}, 1001) == 1000, "several cuts: the latest one wins")
+    check(snap({1000}, 1001, window=1) == 1000 and snap({1000}, 1004, window=2) == 1004, "window size is respected")
+    check(snap({1000}, 1001, thr=300) == 1001, "threshold respected")
+    check(seek.snap_to_cut("/x", fps, 2, 5, 30, make_frames({1})) in (1, 2), "near the start of the file: no error")
+    boom = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no frames"))
+    check(seek.snap_to_cut("/x", fps, 1001, 5, 30, boom) == 1001, "an error in reading the frames leaves the result unchanged")
+    # inside seek_border: border says film until 1000 (frame 1000 is the first commercial frame, but still has the border)
+    border = lambda path, n, fps_, opts: 72 if n <= 1000 else 0
+    opts = {"border_tol": "3", "cut_window": "5", "cut_diff": "30"}
+    args = ("/x", fps, 3000, 0, 72, False, 100, opts, border)
+    check(seek.seek_border(*args, frames_fn=make_frames({1000})) == 1000, "border search: late by one frame -> moved onto the cut")
+    check(seek.seek_border(*args[:7], dict(opts, cut_window="0"), border, frames_fn=make_frames({1000})) == 1001, "cut_window 0: no refinement")
+    check(seek.seek_border(*args, frames_fn=make_frames(set())) == 1001, "without a cut the border result stays")
+    # real recording: sample2 has a hard cut at frame 76 (first frame of the commercial; its border is 66, the next one 68)
+    s2 = os.path.join(videos, "sample2.ts")
+    check(seek.snap_to_cut(s2, fps, 78, 5, 30) == 76, "real recording: a result two frames late moves onto the cut at 76")
+    check(seek.snap_to_cut(s2, fps, 76, 5, 30) == 76 and seek.snap_to_cut(s2, fps, 70, 5, 30) == 70, "real recording: no change on the cut or in the movie")
+    real = seek.seek_border(s2, fps, 158, 10, 72, False, 100, {"border_tol": "3", "cut_window": "5", "cut_diff": "30", "floor": "2", "blackness": "12", "allowance": "1000"})
+    check(real == 76, f"real recording: next commercial stays at 76: {real}")
+    # options
+    d = default_options()
+    check(d["cut_window"] == "5" and d["cut_diff"] == "30" and "cut_window" in DEFAULT_TOOLTIPS and "cut_diff" in DEFAULT_TOOLTIPS, "defaults and explanations")
+    check("cut_window" in [k for _, keys in OPTION_GROUPS for k in keys] and "cut_diff" in HIDDEN_OPTIONS, "dialog: cut_window shown, cut_diff hidden")
+    check(validate_options(d) == [] and len(validate_options({"cut_window": "-1"})) == 1 and len(validate_options({"cut_diff": "0"})) == 1
+          and validate_options({"cut_window": "0"}) == [], "checking of the new values")
+    print("Cut snapping: OK (moves onto a hard cut up to N frames before the border result, real recording, options)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -1695,6 +1751,7 @@ def main():
     test_info(tmp, sys.argv[1])
     test_tooltip_wrap(tmp, sys.argv[1])
     test_main_window_size_and_profile_click(tmp, sys.argv[1])
+    test_cut_snap(tmp, sys.argv[1])
     test_first_frame(tmp, sys.argv[1])
     test_shutdown(tmp, sys.argv[1])
     test_throttle()

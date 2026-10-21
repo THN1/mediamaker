@@ -840,7 +840,7 @@ class frmMain(frmMainBase):
         if crop > 0:
             def job(cancel):
                 return seek.seek_border(seg.path, seg.fps, total, start, crop, end, stepping, opts, self._border_fn, cancel,
-                                        shown=lambda n, f=seg.first_frame: n - f)
+                                        shown=lambda n, f=seg.first_frame: n - f, frames_fn=self._thumb_fn)
         else:
             ref = self.logo_reference(seg)
             if ref is None:

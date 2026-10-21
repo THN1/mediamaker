@@ -67,12 +67,12 @@ def _float(value: str) -> Optional[float]:
 
 # options that no longer appear in the dialog:
 REMOVED_OPTIONS = {"focus", "pad"}            # focus: no effect; pad: now belongs to the profile
-HIDDEN_OPTIONS = {"logo_edge", "logo_conf"}   # for advanced users only, they are only in the INI file
+HIDDEN_OPTIONS = {"logo_edge", "logo_conf", "cut_diff"}   # for advanced users only, they are only in the INI file
 
 # grouping of the options dialog: (heading, keys)
 OPTION_GROUPS = (
     ("Border detection", ("crop", "blackness", "allowance", "border_tol")),
-    ("Seeking commercials", ("pause", "overlap", "step_end", "step_next", "logo_rewind")),
+    ("Seeking commercials", ("pause", "overlap", "step_end", "step_next", "cut_window", "logo_rewind")),
     ("Audio and subtitles", ("audio", "multilanguage", "subtitle", "aflags")),
     ("Technical", ("floor", "detect")),
 )
@@ -82,7 +82,7 @@ def validate_options(o: dict) -> list[str]:
     errors = []
     ranges = {"crop": (0, 288), "floor": (0, 60), "blackness": (0, 255), "allowance": (0, 10 ** 7), "overlap": (0, 10 ** 6),
               "audio": (1, 99), "pause": (0, 10 ** 5), "detect": (0, 10 ** 8), "step_end": (1, 3600), "step_next": (1, 36000),
-              "border_tol": (0, 50), "logo_edge": (1, 255)}
+              "border_tol": (0, 50), "logo_edge": (1, 255), "cut_window": (0, 50), "cut_diff": (1, 255)}
     for key, (lo, hi) in ranges.items():
         if key in o:
             v = _int(o[key])

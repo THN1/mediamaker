@@ -5,6 +5,9 @@
 - Version number set to 0.2-dev.
 - All comments, docstrings, messages, tests and documentation are now in English (the generated user interface files were
   regenerated; their code is unchanged).
+- "Seek next commercial" / "Seek end of commercial" with the black border: the result could be one frame late, because the first frame of a
+  commercial may still have (almost) the border of the movie. After the border search the result now moves onto a hard cut in the
+  last frames before it (new option `cut_window`, default 5 frames, 0 = off; advanced `cut_diff` in the INI file).
 - The main window has a fixed size again, as defined in VB6 (BorderStyle 1): the generator now fixes the whole window including the
   menu bar, not only its contents. The window could be enlarged before.
 - A click on a caption or value of the "Target output profile" frame opens the profile editor (as in VB6).
