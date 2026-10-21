@@ -65,6 +65,65 @@ def fit_tabs(dialog, tabs, labels) -> None:
     dialog.setMinimumWidth(sum(metrics.horizontalAdvance(label) + TAB_PADDING for label in labels) + TAB_MARGIN)
 
 
+NAV_STYLE = "tabs"               # "tabs": tabs along the top, "list": list of the groups on the left (INI: dialog_style)
+LIST_PADDING = 40                # pixels around the longest name in the list on the left
+
+
+def set_style(value) -> str:
+    """Sets the style of the dialogs with several pages from the INI value dialog_style ("list" or anything else for "tabs")."""
+    global NAV_STYLE
+    NAV_STYLE = "list" if (value or "").strip().lower() == "list" else "tabs"
+    return NAV_STYLE
+
+
+class Sections:
+    """Named pages in one widget: tabs along the top (NAV_STYLE "tabs") or a list of the names on the left with the page next to it
+    ("list", like the settings dialogs of many programs). Used by the options dialog and the Media info dialog."""
+
+    def __init__(self, style=None):
+        self.style = style or NAV_STYLE
+        self.names: list = []
+        self.tabs = None
+        if self.style == "list":
+            self.widget = QtWidgets.QWidget()
+            row = QtWidgets.QHBoxLayout(self.widget)
+            row.setContentsMargins(0, 0, 0, 0)
+            self.list = QtWidgets.QListWidget()
+            self.stack = QtWidgets.QStackedWidget()
+            self.list.currentRowChanged.connect(self.stack.setCurrentIndex)
+            row.addWidget(self.list)
+            row.addWidget(self.stack, 1)
+        else:
+            self.tabs = self.widget = QtWidgets.QTabWidget()
+
+    def add(self, name: str, page) -> None:
+        self.names.append(name)
+        if self.tabs is not None:
+            self.tabs.addTab(page, name)
+        else:
+            self.list.addItem(name)
+            self.stack.addWidget(page)
+
+    def set_current(self, index: int) -> None:
+        index = max(0, min(index, len(self.names) - 1))
+        if self.tabs is not None:
+            self.tabs.setCurrentIndex(index)
+        else:
+            self.list.setCurrentRow(index)
+            self.stack.setCurrentIndex(index)
+
+    def current(self) -> int:
+        return self.tabs.currentIndex() if self.tabs is not None else self.list.currentRow()
+
+    def fit(self, dialog) -> None:
+        """Makes sure all names are completely visible (tabs: dialog at least as wide as all tabs; list: wide enough for the longest)."""
+        if self.tabs is not None:
+            fit_tabs(dialog, self.tabs, self.names)
+        else:
+            metrics = self.list.fontMetrics()
+            self.list.setFixedWidth(max(metrics.horizontalAdvance(n) for n in self.names) + LIST_PADDING)
+
+
 def group_plan(pairs: dict, groups) -> list:
     """[(heading, [keys])] of the tabs: the groups with the keys that are present, then the keys of no group under "Other"."""
     plan = [(heading, [k for k in keys if k in pairs]) for heading, keys in groups]
@@ -125,15 +184,14 @@ def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, g
             form.addRow(label, editor)
 
     if groups:
-        tabs = QtWidgets.QTabWidget()
-        plan = group_plan(pairs, groups)
-        for heading, keys in plan:
+        sections = Sections()
+        for heading, keys in group_plan(pairs, groups):
             page = QtWidgets.QWidget()
             add_rows(QtWidgets.QFormLayout(page), keys)
-            tabs.addTab(page, heading)
-        fit_tabs(dialog, tabs, [heading for heading, _ in plan])
-        tabs.setCurrentIndex(max(0, start))
-        layout.addWidget(tabs)
+            sections.add(heading, page)
+        sections.fit(dialog)
+        sections.set_current(start)
+        layout.addWidget(sections.widget)
     else:
         form = QtWidgets.QFormLayout()
         add_rows(form, list(pairs))

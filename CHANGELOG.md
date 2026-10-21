@@ -5,6 +5,10 @@
 - Version number set to 0.2-dev.
 - All comments, docstrings, messages, tests and documentation are now in English (the generated user interface files were
   regenerated; their code is unchanged).
+- New INI key `dialog_style=list` shows the pages of the options and Media info dialogs as a list on the left instead of tabs
+  (`tabs` is the default).
+- The batch script `MediaMaker.sh` is in `.gitignore` (it is a personal file next to the INI file), and the INI key `batch` sets another
+  place, e.g. `batch=~/MediaMaker.sh`.
 - The Media info dialog also uses tabs (one per section). Both tab dialogs are at least as wide as all their tabs side by side; the tab
   names are not elided and there are no scroll arrows.
 - The options dialog shows the groups as tabs along the top (Borders, Seeking, Audio/Subtitles, Batch, Technical) instead of one long list;

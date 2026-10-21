@@ -287,6 +287,40 @@ class QTabWidget(QWidget):
         return self.__dict__.get("cur_", 0)
 
 
+class QListWidget(QWidget):
+    signals = {"currentRowChanged"}
+    methods = {"setFixedWidth"}
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.items_ = []
+
+    def addItem(self, text):
+        self.items_.append(text)
+
+    def setCurrentRow(self, i):
+        self.row_ = i
+        self.currentRowChanged.emit(i)
+
+    def currentRow(self):
+        return self.__dict__.get("row_", -1)
+
+
+class QStackedWidget(QWidget):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.widgets_ = []
+
+    def addWidget(self, widget):
+        self.widgets_.append(widget)
+
+    def setCurrentIndex(self, i):
+        self.index_ = i
+
+    def currentIndex(self):
+        return self.__dict__.get("index_", 0)
+
+
 class QHeaderView(Base):
     ResizeMode = EnumGroup("QHeaderView.ResizeMode", {"Stretch", "Interactive", "Fixed", "ResizeToContents"})
     methods = {"setStretchLastSection", "setMinimumSectionSize", "setSectionResizeMode"}

@@ -2035,6 +2035,86 @@ def test_save_video(tmp, videos):
     print("Save as MP4/AVI: OK (dialog, real ffmpeg run, progress bar, overwrite, extensions, cancel, errors)")
 
 
+def test_dialog_styles_and_batch_path(tmp, videos):
+    """Dialogs with several pages as tabs along the top or as a list on the left (INI: dialog_style); place of the batch script."""
+    import dialogs
+    import mediainfo
+    from mediainfo_dialog import frmMediaInfo
+    from profiles import OPTION_GROUPS
+    from PySide6 import QtWidgets
+    from PySide6.QtWidgets import QDialog, QTabWidget
+    px = QtWidgets.FontMetrics.px_per_char
+    check(dialogs.set_style("LIST ") == "list" and dialogs.NAV_STYLE == "list" and dialogs.set_style("tabs") == "tabs"
+          and dialogs.set_style(None) == "tabs" and dialogs.set_style("nonsense") == "tabs", "dialog_style from the INI file")
+    # --- Sections directly
+    pages = [object(), object(), object()]
+    names = ["Borders", "Seeking", "Audio/Subtitles"]
+    lst = dialogs.Sections("list")
+    for name, page in zip(names, pages):
+        lst.add(name, page)
+    lst.set_current(2)
+    check(lst.list.items_ == names and lst.stack.widgets_ == pages and lst.list.currentRow() == 2 and lst.stack.currentIndex() == 2
+          and lst.current() == 2 and lst.tabs is None, "list on the left: names, pages, selection")
+    lst.set_current(99)
+    check(lst.current() == 2, "selection is limited to the existing pages")
+    lst.set_current(-3)
+    check(lst.current() == 0 and lst.stack.currentIndex() == 0, "selection is limited at the start")
+    lst.fit(object())
+    check(lst.list.called("setFixedWidth")[-1] == (px * len("Audio/Subtitles") + 40,), "the list is wide enough for the longest name")
+    tab = dialogs.Sections("tabs")
+    for name, page in zip(names, pages):
+        tab.add(name, page)
+    tab.set_current(1)
+    check([label for _, label in tab.tabs.tabs_] == names and tab.current() == 1 and tab.tabs is tab.widget, "tabs along the top")
+    # --- the options dialog in both styles
+    created = []
+    original = dialogs.Sections
+    dialogs.Sections = lambda *a, **k: (created.append(original(*a, **k)), created[-1])[1]
+    try:
+        QDialog.exec_result, QDialog.on_exec = 1, None
+        pairs = {"crop": "72", "pause": "160", "audio": "1", "path_map": ""}
+        for style in ("list", "tabs"):
+            dialogs.set_style(style)
+            dialogs.edit_pairs(None, "Options", pairs, {}, {}, OPTION_GROUPS, 1)
+            sec = created[-1]
+            check(sec.style == style and sec.names == ["Borders", "Seeking", "Audio/Subtitles", "Batch"] and sec.current() == 1,
+                  f"options dialog in the style {style}: {sec.names}, start page {sec.current()}")
+        # --- the Media info dialog in both styles
+        report = [("General", "g"), ("Video #1", "v"), ("Audio #1", "a"), ("MediaMaker", "m")]
+        for style in ("list", "tabs"):
+            dialogs.set_style(style)
+            dialog = frmMediaInfo("x.ts", report)
+            check(dialog.nav.style == style and [e.toPlainText() for e in dialog.editors] == ["g", "v", "a", "m"] and dialog.nav.current() == 0
+                  and (dialog.tabs is None) == (style == "list"), f"Media info in the style {style}")
+            dialog.show_tab(3)
+            check(dialog.nav.current() == 3, f"Media info: show_tab in the style {style}")
+        check(dialog.nav.names == [n for n, _ in report], "Media info: names")
+    finally:
+        dialogs.Sections = original
+        dialogs.set_style("tabs")
+    # --- place of the batch script and .gitignore
+    work = os.path.join(tmp, "batchpath")
+    os.makedirs(work, exist_ok=True)
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="batchpath")
+    default_script = os.path.splitext(win.settings.path)[0] + ".sh"
+    check(win.batch_path() == default_script, "default: next to the INI file")
+    win.ask_text = lambda title, label, default="": os.path.join(work, "Film")
+    win.settings.set("settings", "batch", os.path.join(work, "elsewhere", "job.sh"))
+    win.mnuBatch_Click()
+    check(win.batch_path() == os.path.join(work, "elsewhere", "job.sh") and os.path.exists(win.batch_path()) and not os.path.exists(default_script),
+          "INI key batch: the script is written there (the folder is created)")
+    old_home = os.environ.get("HOME")
+    os.environ["HOME"] = work
+    try:
+        win.settings.set("settings", "batch", "~/MediaMaker.sh")
+        check(win.batch_path() == os.path.join(work, "MediaMaker.sh"), "a leading ~ is the home folder")
+    finally:
+        os.environ["HOME"] = old_home
+    ignored = open(os.path.join(ROOT, ".gitignore"), encoding="utf-8").read().splitlines()
+    check({"MediaMaker.ini", "MediaMaker.json", "MediaMaker.sh"} <= set(ignored), ".gitignore lists the personal files including the script")
+    print("Dialog styles and batch path: OK (tabs or list, Media info, INI key batch, .gitignore)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -2096,6 +2176,7 @@ def main():
     test_cut_snap(tmp, sys.argv[1])
     test_batch_file(tmp, sys.argv[1])
     test_save_video(tmp, sys.argv[1])
+    test_dialog_styles_and_batch_path(tmp, sys.argv[1])
     test_first_frame(tmp, sys.argv[1])
     test_shutdown(tmp, sys.argv[1])
     test_throttle()

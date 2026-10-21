@@ -5,6 +5,7 @@ __pycache__/
 # personal working files (created by the program or containing paths of your own computer)
 MediaMaker.ini
 MediaMaker.json
+MediaMaker.sh
 mediamaker_debug.log
 *.bak
 

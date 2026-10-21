@@ -22,7 +22,9 @@ python3 run_job.py JOB.sh --output movie.mp4  # run a job without the user inter
 ```
 
 Useful environment variables: `MEDIAMAKER_DEBUG=1` (log in `mediamaker_debug.log`), `MEDIAMAKER_NO_FILTER=1` (unfiltered error
-output). In the INI file, section `[settings]`: `player=memory|embed`, `vlc_args=...`, `hide_messages=Text1|Text2`.
+output). In the INI file, section `[settings]`: `player=memory|embed`, `vlc_args=...`, `hide_messages=Text1|Text2`,
+`dialog_style=tabs|list` (pages of the options and Media info dialogs as tabs along the top or as a list on the left) and
+`batch=~/MediaMaker.sh` (where the batch script is written; default: next to the INI file).
 
 ## Saving
 

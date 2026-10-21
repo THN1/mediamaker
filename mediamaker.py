@@ -859,6 +859,12 @@ class frmMain(frmMainBase):
     def progress_paint(self, painter, rect) -> None:
         draw_bar(painter, rect, *self._bar)
 
+    def batch_path(self) -> str:
+        """Where the batch script is written: INI key `batch` in [settings] (a leading ~ is the home folder), otherwise next to the
+        INI file with the extension .sh."""
+        custom = (self.settings.get("settings", "batch", "") or "").strip()
+        return os.path.expanduser(custom) if custom else os.path.splitext(self.settings.path)[0] + ".sh"
+
     def mnuBatch_Click(self):
         """Writes the job as a shell script next to the INI file; its comments carry the job for a later import."""
         if not self.segments:
@@ -866,7 +872,7 @@ class frmMain(frmMainBase):
         if self.mnuCopyMode.isChecked():
             self.msg("You cannot save job to batch with 'copy mode' enabled (yet).")
             return
-        script = os.path.splitext(self.settings.path)[0] + ".sh"
+        script = self.batch_path()
         old = None
         if os.path.exists(script):
             answer = self.ask3("Keep old (existing) steps in batch file?")
@@ -889,6 +895,7 @@ class frmMain(frmMainBase):
         except Exception as e:
             self.msg(f"The job cannot be built: {e}")
             return
+        os.makedirs(os.path.dirname(script) or ".", exist_ok=True)
         with open(script, "w", encoding="utf-8", newline="\n") as f:
             f.write(batch.build_script(job, command, old))
         os.chmod(script, 0o755)
@@ -1277,6 +1284,8 @@ def main(argv=None) -> int:
         stderrfilter.install([p for p in extra if p])
     # Playback: "memory" (default) lets VLC decode into memory and draws with Qt; runs natively under
     # Wayland. "embed" embeds the VLC window (X11, under Wayland only via XWayland). Setting: player= in [settings].
+    import dialogs
+    dialogs.set_style(settings.get("settings", "dialog_style", "tabs"))
     player_kind = (settings.get("settings", "player", "memory") or "memory").strip().lower()
     if player_kind == "embed" and sys.platform.startswith("linux"):
         os.environ.setdefault("QT_QPA_PLATFORM", "xcb")             # libvlc draws into an X11 window (XWayland)

@@ -1,4 +1,5 @@
-"""Dialog "Media info" (VB6: frmMediaInfo): one tab per section of the report, selectable and copyable text.
+"""Dialog "Media info" (VB6: frmMediaInfo): one page per section of the report (tabs along the top or a list on the left, see
+dialogs.Sections), selectable and copyable text.
 
 The window can be resized and is at least as wide as all tabs side by side; the text fills the rest.
 """
@@ -28,7 +29,8 @@ class frmMediaInfo(frmMediaInfoBase):
         # The elements of the design (tab strip, caption) are replaced by a tab widget with one text field per section.
         self.TabStrip1.hide()
         self.lblMediaInfo.hide()
-        self.tabs = QtWidgets.QTabWidget()
+        self.nav = dialogs.Sections()
+        self.tabs = self.nav.tabs                                  # None with the list on the left (dialog_style=list)
         self.editors = []
         fixed = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont)
         for name, text in sections:
@@ -37,9 +39,9 @@ class frmMediaInfo(frmMediaInfoBase):
             editor.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
             editor.setFont(fixed)
             editor.setPlainText(text)
-            self.tabs.addTab(editor, name)
+            self.nav.add(name, editor)
             self.editors.append(editor)
-        dialogs.fit_tabs(self, self.tabs, [name for name, _ in sections])
+        self.nav.fit(self)
 
         self.cmdCopy = QtWidgets.QPushButton("Copy &all")
         self.cmdCopy.clicked.connect(self.copy_all)
@@ -49,13 +51,13 @@ class frmMediaInfo(frmMediaInfoBase):
         bottom.addWidget(self.cmdClose)
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(self.tabs, 1)
+        layout.addWidget(self.nav.widget, 1)
         layout.addLayout(bottom)
         self.show_tab(0)
 
     def show_tab(self, index: int) -> None:
         if 0 <= index < len(self.sections):
-            self.tabs.setCurrentIndex(index)
+            self.nav.set_current(index)
 
     def cmdClose_Click(self):
         self.close()
