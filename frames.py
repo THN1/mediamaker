@@ -46,7 +46,7 @@ def grab_frame(path: str, frame: int, fps: Fraction, preroll: int = 2, ffmpeg: s
         cmd += ["-ss", str(d)]
     cmd += ["-i", path, "-filter_complex", f"[0:v]trim=start={fmt_seconds(t)},setpts=PTS-STARTPTS[v]",
             "-frames:v", "1", "-map", "[v]", "-f", "image2pipe", "-c:v", "png", "-"]
-    res = subprocess.run(cmd, capture_output=True)
+    res = subprocess.run(cmd, capture_output=True, stdin=subprocess.DEVNULL)
     if res.returncode != 0 or not res.stdout:
         raise RuntimeError(f"Frame {frame} could not be read: {res.stderr.decode(errors='replace')[-300:]}")
     return np.asarray(Image.open(io.BytesIO(res.stdout)).convert("RGB"))
@@ -67,7 +67,7 @@ def grab_window(path: str, first: int, count: int, fps: Fraction, size: tuple[in
     cmd = [ffmpeg, "-v", "error", "-hide_banner", "-copyts"] + (["-ss", str(d)] if d > 0 else []) + [
         "-i", path, "-filter_complex", f"[0:v]trim=start={fmt_seconds(t)},setpts=PTS-STARTPTS,scale={w}:{h}:flags=area[v]",
         "-frames:v", str(count), "-map", "[v]", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
-    res = subprocess.run(cmd, capture_output=True)
+    res = subprocess.run(cmd, capture_output=True, stdin=subprocess.DEVNULL)
     n = len(res.stdout) // (w * h * 3)
     return first, np.frombuffer(res.stdout[: n * w * h * 3], np.uint8).reshape(n, h, w, 3)
 
@@ -90,7 +90,7 @@ def grab_numbered(path: str, first: int, count: int, fps: Fraction, size: tuple,
         "-i", path, "-filter_complex",
         f"[0:v]trim=start={fmt_seconds(t)},showinfo,setpts=PTS-STARTPTS,scale={w}:{h}:flags=area[v]",
         "-frames:v", str(count), "-map", "[v]", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if on_start:
         on_start(proc)
     out, err = proc.communicate()

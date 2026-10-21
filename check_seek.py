@@ -25,7 +25,7 @@ def grab_vb6(path, n, fps, preroll=2):
     cmd = ["ffmpeg", "-v", "error"] + (["-ss", str(seek)] if seek > 0 else []) + ["-i", path, "-filter_complex",
            f"[0:v]trim={fmt_seconds(rest)},setpts=PTS-STARTPTS[v]", "-frames:v", "1", "-map", "[v]",
            "-f", "image2pipe", "-c:v", "png", "-"]
-    r = subprocess.run(cmd, capture_output=True)
+    r = subprocess.run(cmd, capture_output=True, stdin=subprocess.DEVNULL)
     return np.asarray(Image.open(io.BytesIO(r.stdout)).convert("RGB")) if r.stdout else None
 
 

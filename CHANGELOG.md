@@ -5,6 +5,8 @@
 - Version number set to 0.2-dev.
 - All comments, docstrings, messages, tests and documentation are now in English (the generated user interface files were
   regenerated; their code is unchanged).
+- Fix: after quitting MediaMaker the console no longer shows typed characters. Several ffmpeg processes running at the same time
+  left the terminal without echo; all external programs now get no terminal as standard input. New test `tests/test_terminal.py`.
 - Fix: after deleting a segment the entry that takes its place is selected and loaded (after deleting the last entry: the new last
   one) instead of the cursor jumping to the top of the list.
 - Fix: "Seek next commercial" could skip a short commercial break. The initial step is now limited to the option `pause` (minimum

@@ -58,7 +58,7 @@ def _lang(stream: dict) -> str:
 def build_sections(path: str, segment: Optional[Segment] = None, ffprobe: str = "ffprobe", first_fn=first_frame_number) -> list:
     """List of (title, text) for the tabs of the dialog."""
     out = subprocess.run([ffprobe, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", path],
-                         capture_output=True, check=True).stdout
+                         capture_output=True, check=True, stdin=subprocess.DEVNULL).stdout
     data = json.loads(out or b"{}")
     fmt, streams = data.get("format", {}), data.get("streams", [])
     sections = []

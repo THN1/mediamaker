@@ -34,6 +34,7 @@ python3 tests/test_app.py /path/to/sample/videos
 python3 tests/test_border.py /path/to/sample/videos
 python3 tests/test_logo.py /path/to/sample.ts
 python3 tests/test_build.py /path/to/sample/videos
+python3 tests/test_terminal.py
 python3 ui/tests/test_frm2qt.py "/path/to/VB6/folder"
 ```
 

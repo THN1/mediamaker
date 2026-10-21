@@ -24,7 +24,7 @@ def describe(path: str) -> dict:
     meta = json.loads(subprocess.run(
         ["ffprobe", "-v", "error", "-print_format", "json", "-show_entries",
          "stream=codec_type,sample_aspect_ratio,display_aspect_ratio,duration", path],
-        capture_output=True, text=True).stdout)["streams"]
+        capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout)["streams"]
     sar = next((s for s in meta if s["codec_type"] == "video"), {})
     aud = next((s for s in meta if s["codec_type"] == "audio"), {})
     return {"frames": v.frames, "fps": float(v.fps), "size": f"{v.width}x{v.height}", "vcodec": v.codec,

@@ -48,7 +48,7 @@ def run_ffmpeg(cmd: list[str], total: float, on_progress: Optional[Callable[[Pro
     """
     full = [cmd[0], "-progress", "pipe:1", "-nostats", "-loglevel", "error", *cmd[1:]]
     tracker = tracker or ProgressTracker(total)
-    proc = subprocess.Popen(full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd,
+    proc = subprocess.Popen(full, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd,
                             text=True, encoding="utf-8", errors="replace", bufsize=1)
     lines: queue.Queue = queue.Queue()
     err: list[str] = []

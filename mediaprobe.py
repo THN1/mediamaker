@@ -65,7 +65,7 @@ class MediaInfo:
 def _run_ffprobe(args: list[str], ffprobe: str) -> dict:
     cmd = [ffprobe, "-v", "error", "-print_format", "json", *args]
     try:
-        res = subprocess.run(cmd, capture_output=True, check=True)
+        res = subprocess.run(cmd, capture_output=True, check=True, stdin=subprocess.DEVNULL)
     except FileNotFoundError as e:
         raise ProbeError(f"ffprobe not found: {ffprobe}") from e
     except subprocess.CalledProcessError as e:
@@ -134,7 +134,7 @@ def count_video_packets(path: str, ffprobe: str = "ffprobe", on_start=None) -> t
     cmd = [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,flags",
            "-of", "csv=p=0", path]
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     except FileNotFoundError as e:
         raise ProbeError(f"ffprobe not found: {ffprobe}") from e
     if on_start:
@@ -164,7 +164,7 @@ def first_frame_number(path: str, fps, ffprobe: str = "ffprobe", packets: int = 
     cmd = [ffprobe, "-v", "error", "-select_streams", "v:0", "-read_intervals", f"%+#{packets}", "-show_entries",
            "packet=pts_time,flags", "-of", "csv=p=0", path]
     try:
-        out = subprocess.run(cmd, capture_output=True, check=True, text=True).stdout
+        out = subprocess.run(cmd, capture_output=True, check=True, text=True, stdin=subprocess.DEVNULL).stdout
     except (OSError, subprocess.CalledProcessError):
         out = ""
     pts = video

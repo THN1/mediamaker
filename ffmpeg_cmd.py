@@ -41,7 +41,7 @@ def stream_times_of(path: str, ffprobe: str = "ffprobe") -> tuple[Fraction, Frac
     """
     out = subprocess.run([ffprobe, "-v", "error", "-print_format", "json", "-select_streams", "v:0",
                           "-show_entries", "format=start_time:stream=start_time", path],
-                         capture_output=True, check=True).stdout
+                         capture_output=True, check=True, stdin=subprocess.DEVNULL).stdout
     d = json.loads(out or b"{}")
     fmt = _start_fraction(d.get("format", {}).get("start_time"), Fraction(0))
     vid = _start_fraction((d.get("streams") or [{}])[0].get("start_time"), fmt)
