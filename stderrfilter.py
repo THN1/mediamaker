@@ -1,10 +1,10 @@
-"""Filtert bekannte, harmlose Meldungen aus der Fehlerausgabe (stderr) des Programms heraus.
+"""Filters known, harmless messages out of the program's error output (stderr).
 
-Manche Bibliotheken schreiben direkt auf die Fehlerausgabe, ohne dass Python oder Qt das beeinflussen können; ein
-Beispiel ist die VDPAU-Bibliothek, die auf Rechnern ohne NVIDIA-Karte "Failed to open VDPAU backend libvdpau_nvidia.so"
-meldet, obwohl VLC danach eine andere Bildausgabe nimmt. Das Filter ersetzt dafür die Fehlerausgabe (Dateinummer 2)
-durch eine Leitung, liest sie zeilenweise und gibt alle Zeilen weiter, die keines der Muster enthalten.
-Auch Programme, die MediaMaker startet, schreiben durch das Filter.
+Some libraries write directly to the error output, without Python or Qt being able to influence it; one
+example is the VDPAU library, which on computers without an NVIDIA card reports "Failed to open VDPAU backend libvdpau_nvidia.so"
+even though VLC then uses another video output. For this the filter replaces the error output (file number 2)
+by a pipe, reads it line by line and passes on all lines that contain none of the patterns.
+Programs started by MediaMaker also write through the filter.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from typing import Iterable
 
 DEFAULT_PATTERNS = (
     "Failed to open VDPAU backend",
-    # Qt unter Wayland: harmlose Warnung, wenn ein Menü der Menüleiste ein zweites Mal angeklickt wird
+    # Qt on Wayland: harmless warning when a menu of the menu bar is clicked a second time
     "This plugin supports grabbing the mouse only for popup windows",
 )
 
@@ -24,13 +24,13 @@ DEFAULT_PATTERNS = (
 class StderrFilter:
     def __init__(self, patterns: Iterable[str]):
         self.patterns = [p.encode("utf-8") for p in patterns if p]
-        self._orig = os.dup(2)                    # ursprüngliche Fehlerausgabe, hierhin geht alles Gewollte
-        self._restore = os.dup(2)                 # zweite Kopie, um die Ausgabe am Ende zurückzusetzen
+        self._orig = os.dup(2)                    # original error output, everything wanted goes here
+        self._restore = os.dup(2)                 # second copy, to reset the output at the end
         read_end, write_end = os.pipe()
         self._read = read_end
         os.dup2(write_end, 2)
         os.close(write_end)
-        # Absturzmeldungen von Python (faulthandler) sollen die Leitung umgehen und sofort ausgegeben werden
+        # crash messages from Python (faulthandler) should bypass the pipe and be printed immediately
         self._fault_file = os.fdopen(os.dup(self._orig), "w")
         faulthandler.enable(file=self._fault_file)
         self._closed = False
@@ -59,11 +59,11 @@ class StderrFilter:
         os.close(self._read)
 
     def close(self) -> None:
-        """Stellt die ursprüngliche Fehlerausgabe wieder her und gibt Reste aus. Mehrfacher Aufruf ist harmlos."""
+        """Restores the original error output and prints what is left. Calling it several times is harmless."""
         if self._closed:
             return
         self._closed = True
-        os.dup2(self._restore, 2)                 # schließt das Schreibende der Leitung -> die Lesefunktion endet
+        os.dup2(self._restore, 2)                 # closes the write end of the pipe -> the read function ends
         self._thread.join(timeout=2)
         faulthandler.disable()
         self._fault_file.close()

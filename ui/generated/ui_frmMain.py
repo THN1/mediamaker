@@ -1,7 +1,7 @@
-"""Oberfläche von frmMain - automatisch erzeugt von frm2qt.py aus frmMediaMaker.frm.
+"""User interface of frmMain - generated automatically by frm2qt.py from frmMediaMaker.frm.
 
-Nicht von Hand ändern: Die Datei wird beim erneuten Erzeugen überschrieben.
-Logik gehört in eine abgeleitete Klasse mit den VB6-Prozedurnamen (siehe frmMain.py).
+Do not change by hand: the file is overwritten when it is generated again.
+Logic belongs in a derived class with the VB6 procedure names (see frmMain.py).
 """
 import os
 
@@ -20,7 +20,7 @@ class frmMainBase(QtWidgets.QMainWindow):
         self._connect()
 
     def _vb(self, procedure, *args):
-        """Ruft die VB6-Prozedur (falls in der abgeleiteten Klasse vorhanden) auf."""
+        """Calls the VB6 procedure (if present in the derived class)."""
         fn = getattr(self, procedure, None)
         return fn(*args) if fn else None
 
@@ -28,7 +28,7 @@ class frmMainBase(QtWidgets.QMainWindow):
         return lambda *signal_args: self._vb(procedure, *fixed)
 
     def _callv(self, procedure, *fixed):
-        """Wie _call, reicht aber die Argumente des Ereignisses weiter (Maus, Tasten, Dateien)."""
+        """Like _call, but passes on the arguments of the event (mouse, keys, files)."""
         return lambda *event_args: self._vb(procedure, *fixed, *event_args)
 
     def _build(self):
@@ -44,7 +44,7 @@ class frmMainBase(QtWidgets.QMainWindow):
         self.setWindowFlag(QtCore.Qt.WindowType.WindowMaximizeButtonHint, False)
         central = QtWidgets.QWidget(self)
         self.setCentralWidget(central)
-        central.setFont(vbqt.make_font('MS Sans Serif', 8.25, 400, 0, 0, 0))      # VB6-Standardschrift des Formulars (Menü behält die Systemschrift)
+        central.setFont(vbqt.make_font('MS Sans Serif', 8.25, 400, 0, 0, 0))      # VB6 default font of the form (menu keeps the system font)
         central.setFixedSize(1089, 436)
 
         menubar = self.menuBar()
@@ -203,7 +203,7 @@ class frmMainBase(QtWidgets.QMainWindow):
         w_Line1.setObjectName('Line1')
 
         # SP: MediaMaker.ShellPipe
-        w_SP = QtWidgets.QWidget(central)      # ShellPipe: siehe runner.py
+        w_SP = QtWidgets.QWidget(central)      # ShellPipe: see runner.py
         w_SP.hide()
         self.SP = w_SP
         w_SP.setGeometry(1064, 328, 0, 0)
@@ -228,7 +228,7 @@ class frmMainBase(QtWidgets.QMainWindow):
         w_picDummy.hide()
 
         # VLC: AXVLCCtl.VLCPlugin2
-        w_VLC = QtWidgets.QWidget(central)      # Videofläche: Wiedergabe später z. B. mit python-vlc (set_xwindow(int(w_VLC.winId())))
+        w_VLC = QtWidgets.QWidget(central)      # video area: playback later e.g. with python-vlc (set_xwindow(int(w_VLC.winId())))
         self.VLC = w_VLC
         w_VLC.setGeometry(544, 0, 513, 289)
         w_VLC.setObjectName('VLC')
@@ -693,11 +693,11 @@ class frmMainBase(QtWidgets.QMainWindow):
         self.cmdPos[9].clicked.connect(self._call('cmdPos_Click', 9))
         self.cmdPos[10].clicked.connect(self._call('cmdPos_Click', 10))
         self.cmdPos[11].clicked.connect(self._call('cmdPos_Click', 11))
-        # TODO: VLC_MediaPlayerEndReached (AXVLCCtl.VLCPlugin2) hat keine automatische Entsprechung in Qt
-        # TODO: VLC_MediaPlayerPaused (AXVLCCtl.VLCPlugin2) hat keine automatische Entsprechung in Qt
-        # TODO: VLC_MediaPlayerPlaying (AXVLCCtl.VLCPlugin2) hat keine automatische Entsprechung in Qt
-        # TODO: VLC_MediaPlayerStopped (AXVLCCtl.VLCPlugin2) hat keine automatische Entsprechung in Qt
-        # TODO: VLC_MediaPlayerTimeChanged (AXVLCCtl.VLCPlugin2) hat keine automatische Entsprechung in Qt
+        # TODO: VLC_MediaPlayerEndReached (AXVLCCtl.VLCPlugin2) has no automatic equivalent in Qt
+        # TODO: VLC_MediaPlayerPaused (AXVLCCtl.VLCPlugin2) has no automatic equivalent in Qt
+        # TODO: VLC_MediaPlayerPlaying (AXVLCCtl.VLCPlugin2) has no automatic equivalent in Qt
+        # TODO: VLC_MediaPlayerStopped (AXVLCCtl.VLCPlugin2) has no automatic equivalent in Qt
+        # TODO: VLC_MediaPlayerTimeChanged (AXVLCCtl.VLCPlugin2) has no automatic equivalent in Qt
         vbqt.on_mouse(self.fraCrop[0], down=self._callv('fraCrop_MouseDown', 0))
         vbqt.on_mouse(self.fraCrop[1], down=self._callv('fraCrop_MouseDown', 1))
         vbqt.on_mouse(self.fraCrop[2], down=self._callv('fraCrop_MouseDown', 2))
@@ -759,7 +759,7 @@ class frmMainBase(QtWidgets.QMainWindow):
         vbqt.on_mouse(self.picTimeline, move=self._callv('picTimeline_MouseMove'))
         self.Slider1.valueChanged.connect(self._call('Slider1_Change'))
         self.vscVolume.sliderMoved.connect(self._call('vscVolume_Scroll'))
-        # TODO: SP_DataArrival (MediaMaker.ShellPipe) hat keine automatische Entsprechung in Qt
+        # TODO: SP_DataArrival (MediaMaker.ShellPipe) has no automatic equivalent in Qt
 
     def showEvent(self, event):
         super().showEvent(event)

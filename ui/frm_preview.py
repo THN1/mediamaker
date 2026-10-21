@@ -1,8 +1,8 @@
-"""Zeichnet eine schematische Vorschau von VB6-Formularen (Lage, Größe, Beschriftung der Steuerelemente).
+"""Draws a schematic preview of VB6 forms (position, size, caption of the controls).
 
-Aufruf:  python3 frm_preview.py Formular.frm [weitere.frm ...] [--out ORDNER]
-Die Vorschau zeigt, wie die Maße nach der Umrechnung (1 Pixel = 15 Twips) liegen. Sie ersetzt keine Ansicht in Qt,
-dient aber dazu, die Umsetzung gegen die Ansicht in der VB6-IDE zu prüfen. Unsichtbare Steuerelemente sind gestrichelt.
+Usage:  python3 frm_preview.py form.frm [more.frm ...] [--out FOLDER]
+The preview shows how the dimensions are laid out after the conversion (1 pixel = 15 twips). It does not replace a view in Qt,
+but serves to check the translation against the view in the VB6 IDE. Invisible controls are dashed.
 """
 import os
 import sys
@@ -39,7 +39,7 @@ def dashed(d: ImageDraw.ImageDraw, box, color):
 
 
 def draw(d, c: Control, ox: int, oy: int):
-    for ch in reversed(c.children):                 # in der .frm steht das oberste Steuerelement zuerst
+    for ch in reversed(c.children):                 # in the .frm the topmost control comes first
         if ch.type in SKIP:
             continue
         x, y, w, h = geometry_px(ch)
@@ -89,7 +89,7 @@ def render(path: str, out_dir: str) -> str:
             x += int(d.textlength(cap, font=FONT)) + 14
     draw_root = Control("root", "root", {}, {}, form.root.children, None)
     draw_root.props = {}
-    # Kinder gehören zum Formular; Koordinaten relativ zum Clientbereich
+    # children belong to the form; coordinates relative to the client area
     for ch in form.root.children:
         pass
     sub = Image.new("RGB", (w, h), (240, 240, 240))
@@ -104,7 +104,7 @@ def render(path: str, out_dir: str) -> str:
 
 def main():
     files = [a for a in sys.argv[1:] if not a.startswith("--") and sys.argv[sys.argv.index(a) - 1] != "--out"]
-    out_dir = sys.argv[sys.argv.index("--out") + 1] if "--out" in sys.argv else "vorschau"
+    out_dir = sys.argv[sys.argv.index("--out") + 1] if "--out" in sys.argv else "preview"
     if not files:
         sys.exit(__doc__)
     for f in files:

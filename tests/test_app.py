@@ -1,7 +1,7 @@
-"""Tests für Einstellungen, Projektdatei und die Hauptlogik (Öffnen, Analysieren, Navigation) ohne Qt und ohne VLC.
+"""Tests for settings, project file and the main logic (opening, analysing, navigation) without Qt and without VLC.
 
-Aufruf:  python3 tests/test_app.py ORDNER_MIT_BEISPIELVIDEOS   (erwartet sample2.ts und sample3.ts darin)
-Die Oberfläche läuft gegen den Qt-Ersatz in ui/tests/qtstub, die Wiedergabe gegen FakePlayer.
+Usage:  python3 tests/test_app.py FOLDER_WITH_SAMPLE_VIDEOS   (expects sample2.ts and sample3.ts in it)
+The user interface runs against the Qt replacement in ui/tests/qtstub, the playback against FakePlayer.
 """
 import json
 import os
@@ -12,7 +12,7 @@ from fractions import Fraction
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, os.path.join(ROOT, "ui", "tests", "qtstub"))        # Ersatz vor einem echten PySide6
+sys.path.insert(0, os.path.join(ROOT, "ui", "tests", "qtstub"))        # replacement before a real PySide6
 sys.path.insert(1, ROOT)
 sys.path.insert(2, os.path.join(ROOT, "ui"))
 sys.path.insert(3, os.path.join(ROOT, "ui", "generated"))
@@ -32,7 +32,7 @@ def check(cond, msg):
         errors.append(msg)
 
 
-# ----------------------------------------------------------------------------- Einstellungen
+# ----------------------------------------------------------------------------- Settings
 def test_settings(tmp):
     ini = os.path.join(tmp, "MediaMaker.ini")
     shutil.copy(os.path.join(HERE, "sample_MediaMaker.ini"), ini)
@@ -43,53 +43,53 @@ def test_settings(tmp):
     check(len(s.profiles) == 11 and s.profiles["HD"]["scale"] == "1280:720", f"profiles: {list(s.profiles)}")
     check(s.last.endswith("Elysium.ts"), f"last: {s.last}")
     check("Target video bitrate" in s.tooltip("bv"), "tooltip")
-    # Ändern: nur die betroffene Zeile ändert sich
+    # change: only the affected line changes
     s.set_option("crop", 70)
     s.save()
     after = open(ini, "rb").read()
     old_lines, new_lines = before.decode("cp1252").split("\r\n"), after.decode("utf-8").split("\r\n")
     changed = [(a, b) for a, b in zip(old_lines, new_lines) if a != b]
     check(len(old_lines) == len(new_lines) and len(changed) == 1 and changed[0][1].startswith("options=") and
-          'crop="70"' in changed[0][1], f"Änderung nicht auf eine Zeile beschränkt: {changed}")
-    check(Settings(ini).options["crop"] == "70" and Settings(ini).options["floor"] == "2", "Neuladen")
+          'crop="70"' in changed[0][1], f"change not limited to one line: {changed}")
+    check(Settings(ini).options["crop"] == "70" and Settings(ini).options["floor"] == "2", "Reload")
     s2 = Settings(ini)
     s2.last = "/tmp/x y.ts"
-    check(Settings(ini).last == "/tmp/x y.ts", "last speichern")
-    s2.set("neuer abschnitt", "k", "v")
+    check(Settings(ini).last == "/tmp/x y.ts", "save last")
+    s2.set("new section", "k", "v")
     s2.save()
-    check(Settings(ini).get("neuer abschnitt", "k") == "v", "neuen Abschnitt anlegen")
-    print("Einstellungen: OK (Optionen, Profil, 11 benannte Profile, Ändern ersetzt genau eine Zeile)")
+    check(Settings(ini).get("new section", "k") == "v", "create a new section")
+    print("Settings: OK (options, profile, 11 named profiles, changing replaces exactly one line)")
 
 
-# ----------------------------------------------------------------------------- Projektdatei
+# ----------------------------------------------------------------------------- Project file
 def test_project(tmp):
     job = parse_batch_header(open(os.path.join(HERE, "sample_Elysium.bat"), encoding="latin-1").read())
-    check(len(job.segments) == 4 and all(s.has_png_mask for s in job.segments), "Elysium-Liste (4 Segmente mit Maske)")
+    check(len(job.segments) == 4 and all(s.has_png_mask for s in job.segments), "Elysium list (4 segments with mask)")
     path = os.path.join(tmp, "list.json")
     save_segments(path, job.segments)
     back = load_segments(path)
-    check(len(back) == 4, "Anzahl nach Laden")
+    check(len(back) == 4, "count after loading")
     for a, b in zip(job.segments, back):
-        check(a == b, f"Segment nach JSON verändert: {a.index}")
+        check(a == b, f"segment changed by JSON: {a.index}")
     data = json.load(open(path))
-    check(data["segments"][0]["fps"] == "25/1" and data["segments"][0]["crop"] == [0, 0, 0, 0], "JSON-Felder")
-    check(not os.path.exists(path + ".tmp"), "temporäre Datei bleibt liegen")
-    # alte CSV-Datei laden
+    check(data["segments"][0]["fps"] == "25/1" and data["segments"][0]["crop"] == [0, 0, 0, 0], "JSON fields")
+    check(not os.path.exists(path + ".tmp"), "temporary file stays behind")
+    # load old CSV file
     csv_text = open(os.path.join(tmp, "legacy.csv"), "w", encoding="cp1252", newline="")
     csv_text.write('"01","R:\\Film.ts","Film.ts","0","1000","00:00:40","1000","25.000","720","576","3009","192","a","0","0","0","0","48000",""\r\n')
     csv_text.close()
     legacy = load_segments(os.path.join(tmp, "legacy.csv"))
     check(len(legacy) == 1 and legacy[0].fps == 25 and legacy[0].end == 1000, "CSV-Import")
-    check(load_segments(os.path.join(tmp, "gibtsnicht.json")) == [], "fehlende Datei")
+    check(load_segments(os.path.join(tmp, "doesnotexist.json")) == [], "missing file")
     robocop = parse_batch_header(open(os.path.join(HERE, "sample_MediaMaker.sh"), encoding="latin-1").read())
-    check(len(robocop.segments) == 6, "RoboCop-Liste")
+    check(len(robocop.segments) == 6, "RoboCop list")
     row = segment_row(robocop.segments[0], 1)
-    check(len(row) == 19 and row[0] == "01" and row[7] == "25.000" and row[5] == "00:31:26", f"Zeile: {row[:8]}")
+    check(len(row) == 19 and row[0] == "01" and row[7] == "25.000" and row[5] == "00:31:26", f"row: {row[:8]}")
     check(timeof(7509, Fraction(25)) == "00:05:00.360", timeof(7509, Fraction(25)))
-    print("Projektdatei: OK (JSON verlustfrei, alte CSV importierbar, 19 Listenspalten)")
+    print("Project file: OK (JSON lossless, old CSV importable, 19 list columns)")
 
 
-# ----------------------------------------------------------------------------- Hauptlogik
+# ----------------------------------------------------------------------------- Main logic
 def make_window(tmp, probe=None, fresh=False, thumb_fn=None, first_fn=None, **kwargs):
     import mediamaker
     ini = os.path.join(tmp, "MediaMaker.ini")
@@ -111,34 +111,34 @@ def test_app(tmp, videos):
     win = make_window(tmp)
     win.showEvent(None)                                       # Form_Load
     check(win.lblText[1].text() == "3072k" and win.lblText[2].text() == "720:576" and win.lblText[3].text() == "25.000",
-          "Profilanzeige")
-    check(win.player.volume == 44, f"Lautstärke {win.player.volume}")
+          "profile display")
+    check(win.player.volume == 44, f"volume {win.player.volume}")
     widths = {a[0]: a[1] for a in win.lvwSegments.called("setColumnWidth")}
-    # Nummer unverändert 32 Pixel; Bildnummern und Dauer aus der Schrift (im Test 1 Pixel je Zeichen): sechsstellig, hh:mm:ss, je 20 Rand
+    # number unchanged 32 pixels; frame numbers and duration from the font (in the test 1 pixel per character): six digits, hh:mm:ss, 20 border each
     px = QtWidgets.FontMetrics.px_per_char
     check(widths[0] == 32 and widths[3] == px * 6 + 20 and widths[4] == px * 6 + 20 and widths[5] == px * 8 + 20,
-          f"sichtbare Spalten (Nummer, erstes, letztes Bild, Dauer): {widths}")
-    check(widths[3] == widths[4] < widths[5], "Spalten für erstes und letztes Bild gleich breit, Dauer etwas breiter")
+          f"visible columns (number, first, last frame, duration): {widths}")
+    check(widths[3] == widths[4] < widths[5], "columns for first and last frame equally wide, duration somewhat wider")
     hidden = sorted(c for c, w in widths.items() if w == 0)
-    check(hidden == [1] + list(range(6, 19)), f"ausgeblendete Spalten: {hidden}")
+    check(hidden == [1] + list(range(6, 19)), f"hidden columns: {hidden}")
     check(2 not in widths and win.lvwSegments.header().called("setStretchLastSection") == [(False,)]
           and win.lvwSegments.header().called("setMinimumSectionSize") == [(0,)]
-          and len(win.lvwSegments.header().called("setSectionResizeMode")) == 1, "Kopfzeile")
-    check(win.player.attached is win.VLC, "Videofläche")
+          and len(win.lvwSegments.header().called("setSectionResizeMode")) == 1, "header")
+    check(win.player.attached is win.VLC, "video area")
 
     check(win.OpenVideo(s2), "OpenVideo sample2")
     seg = win.segments[0]
     check((seg.end, seg.total_frames, seg.width, seg.height, seg.fps, seg.audio_sel) == (148, 148, 720, 576, 25, "a"),
           f"Segment: {seg}")
-    check(win.lvwSegments.row_count() == 1 and win.lvwSegments.topLevelItem(0).text(2) == "sample2.ts", "Liste")
-    check(win.lvwSegments.topLevelItem(0).font(2).called("setBold")[-1] == (True,), "Titel fett")
-    check(win.current == 0 and win.player.path == s2, "Segment geladen")
-    check(win.Slider1.maximum() == 148 and win.Slider1.value() == 0, "Schieber")
-    check(win.lblInfo.text() == "Frame 0" and win.lblTime.text() == "Time 00:00:00.000", f"Anzeige {win.lblInfo.text()}")
-    check(win.lblText[0].text() == "00:00:06", f"Gesamtlänge {win.lblText[0].text()}")
-    check(win.cmdPos[3].text() == "|>", "Play-Knopf nach dem Laden")
-    check(Settings(os.path.join(tmp, "MediaMaker.ini")).last == s2, "last gespeichert")
-    check(load_segments(os.path.join(tmp, "MediaMaker.json"))[0].end == 148, "Liste gespeichert")
+    check(win.lvwSegments.row_count() == 1 and win.lvwSegments.topLevelItem(0).text(2) == "sample2.ts", "list")
+    check(win.lvwSegments.topLevelItem(0).font(2).called("setBold")[-1] == (True,), "title bold")
+    check(win.current == 0 and win.player.path == s2, "segment loaded")
+    check(win.Slider1.maximum() == 148 and win.Slider1.value() == 0, "slider")
+    check(win.lblInfo.text() == "Frame 0" and win.lblTime.text() == "Time 00:00:00.000", f"display {win.lblInfo.text()}")
+    check(win.lblText[0].text() == "00:00:06", f"total length {win.lblText[0].text()}")
+    check(win.cmdPos[3].text() == "|>", "play button after loading")
+    check(Settings(os.path.join(tmp, "MediaMaker.ini")).last == s2, "last saved")
+    check(load_segments(os.path.join(tmp, "MediaMaker.json"))[0].end == 148, "list saved")
 
     # Navigation
     win.cmdPos_Click(4)
@@ -147,91 +147,91 @@ def test_app(tmp, videos):
     win.cmdPos_Click(5)
     check(win.Slider1.value() == 126, f"+5 s: {win.Slider1.value()}")
     win.cmdPos_Click(6)
-    check(win.Slider1.value() == 148, "Ende")
+    check(win.Slider1.value() == 148, "end")
     win.cmdPos_Click(1)
     check(win.Slider1.value() == 23, "-5 s")
     win.cmdPos_Click(0)
-    check(win.Slider1.value() == 0 and win.player.time == 0, "Anfang")
-    # Wiedergabe
+    check(win.Slider1.value() == 0 and win.player.time == 0, "start")
+    # playback
     win.cmdPos_Click(3)
     check(win.player.is_playing and win.cmdPos[3].text() == "=", "Play")
     win.player.tick(1000)
-    check(win.lblInfo.text() == "Frame 25", f"Zeitanzeige beim Abspielen: {win.lblInfo.text()}")
-    check(win.Slider1.value() == 25, f"Schieber läuft beim Abspielen mit: {win.Slider1.value()}")
+    check(win.lblInfo.text() == "Frame 25", f"time display during playback: {win.lblInfo.text()}")
+    check(win.Slider1.value() == 25, f"slider moves along during playback: {win.Slider1.value()}")
     win.player.tick(1000)
-    check(win.Slider1.value() == 50 and win.player.time == 2000, "Schieber folgt weiter, ohne den Player erneut springen zu lassen")
-    win.Slider1.isSliderDown = lambda: True                    # der Benutzer hält den Schieber fest
+    check(win.Slider1.value() == 50 and win.player.time == 2000, "slider keeps following, without letting the player jump again")
+    win.Slider1.isSliderDown = lambda: True                    # the user holds the slider
     win.player.tick(1000)
-    check(win.Slider1.value() == 50 and win.lblInfo.text() == "Frame 75", "gezogener Schieber bleibt unberührt")
+    check(win.Slider1.value() == 50 and win.lblInfo.text() == "Frame 75", "dragged slider stays untouched")
     del win.Slider1.isSliderDown
     win.player.time = 1000
     win.player.tick(0)
     win.cmdPos_Click(3)
     check(not win.player.is_playing and win.cmdPos[3].text() == "|>" and win.Slider1.value() == 25,
-          f"Pause setzt Schieber: {win.Slider1.value()}")
+          f"pause sets the slider: {win.Slider1.value()}")
     # Marker
     win._go(50)
     win.cmdPos_Click(7)
     check(seg.start == 50 and win.lvwSegments.topLevelItem(0).text(3) == "50", "Marker A")
-    check(win.lvwSegments.topLevelItem(0).text(5) == "00:00:04", f"Dauer {win.lvwSegments.topLevelItem(0).text(5)}")
+    check(win.lvwSegments.topLevelItem(0).text(5) == "00:00:04", f"duration {win.lvwSegments.topLevelItem(0).text(5)}")
     win._go(100)
     win.cmdPos_Click(8)
-    check(seg.end == 100 and win.lblText[0].text() == "00:00:02", f"Marker B / Gesamtlänge {win.lblText[0].text()}")
-    check(win.Slider1.value() == 100 and win.timeline_mode == "B", "Sprung zu Marker B")
+    check(seg.end == 100 and win.lblText[0].text() == "00:00:02", f"marker B / total length {win.lblText[0].text()}")
+    check(win.Slider1.value() == 100 and win.timeline_mode == "B", "jump to marker B")
     win._go(40)
-    win.cmdPos_Click(8)                                        # Ende vor dem Beginn: Signalton, keine Änderung
-    check(seg.end == 100 and "beep" in QtWidgets.QApplication.log, "Ende vor Beginn")
+    win.cmdPos_Click(8)                                        # end before start: beep, no change
+    check(seg.end == 100 and "beep" in QtWidgets.QApplication.log, "end before start")
     win.cmdPos_Click(11)
-    check((seg.start, seg.end) == (0, 148), "Marker zurücksetzen")
-    # Lautstärke
+    check((seg.start, seg.end) == (0, 148), "reset markers")
+    # volume
     win.vscVolume.setValue(0)
     win.vscVolume_Scroll()
-    check(win.player.volume == 204, "Lautstärke oben")
+    check(win.player.volume == 204, "volume up")
 
-    # Ablegen mehrerer Dateien, dann zurück zum ersten Segment
+    # dropping several files, then back to the first segment
     win.lvwSegments._vb_filter.handlers["drop"]([s3])
     check(len(win.segments) == 2 and win.segments[1].end == 348 and win.current == 1 and win.player.path == s3,
-          f"Ablegen: {len(win.segments)}")
+          f"dropping: {len(win.segments)}")
     win.lvwSegments.select_row(0)
     win.lvwSegments_Click()
-    check(win.current == 0 and win.player.path == s2 and win.Slider1.maximum() == 148, "Auswahl wechseln")
+    check(win.current == 0 and win.player.path == s2 and win.Slider1.maximum() == 148, "change selection")
 
-    # Neustart: Liste wird geladen
+    # restart: list is loaded
     win2 = make_window(tmp)
     win2.showEvent(None)
-    check(len(win2.segments) == 2 and win2.lvwSegments.row_count() == 2, "Liste beim Start geladen")
-    check(win2.lblText[0].text() == "00:00:20", f"Gesamtlänge nach Neustart {win2.lblText[0].text()}")
-    print("Hauptlogik: OK (Öffnen, Analyse, Anzeige, Navigation, Marker, Wiedergabe, Ablegen, Neustart)")
+    check(len(win2.segments) == 2 and win2.lvwSegments.row_count() == 2, "list loaded at start")
+    check(win2.lblText[0].text() == "00:00:20", f"total length after restart {win2.lblText[0].text()}")
+    print("Main logic: OK (open, analysis, display, navigation, markers, playback, dropping, restart)")
 
 
 def test_fresh_and_paths(tmp, videos):
-    """Neuer Auftrag leert die Liste; relative Pfade werden als vollständige Pfade gespeichert."""
+    """New job empties the list; relative paths are stored as full paths."""
     project = os.path.join(tmp, "MediaMaker.json")
     s2 = os.path.join(videos, "sample2.ts")
     old = [Segment(1, s2, "sample2.ts", 0, 148, 148, Fraction(25), 720, 576, 0, 0, "a", 0, 0, 0, 0, 48000, "")] * 2
     save_segments(project, old)
-    # ohne Parameter: letzte Liste wird geladen
+    # without parameter: last list is loaded
     win = make_window(tmp)
     win.showEvent(None)
-    check(len(win.segments) == 2, "ohne Parameter wird die Liste geladen")
-    # mit Parameter: Liste wird verworfen und die Datei geleert
+    check(len(win.segments) == 2, "without parameter the list is loaded")
+    # with parameter: list is discarded and the file emptied
     win = make_window(tmp, fresh=True)
     win.showEvent(None)
     check(win.segments == [] and load_segments(project) == [] and win.lvwSegments.row_count() == 0,
-          "mit Parameter beginnt die Liste leer")
-    # relativer Pfad: aus dem Ordner der Videodatei aufgerufen
+          "with parameter the list starts empty")
+    # relative path: called from the folder of the video file
     cwd = os.getcwd()
     os.chdir(videos)
     try:
-        check(win.OpenVideo("sample2.ts"), "OpenVideo mit Dateiname")
+        check(win.OpenVideo("sample2.ts"), "OpenVideo with file name")
     finally:
         os.chdir(cwd)
     stored = load_segments(project)[0]
-    check(stored.path == s2 and os.path.isabs(stored.path), f"Pfad in der Liste: {stored.path}")
-    check(stored.name == "sample2.ts" and win.player.path == s2, "Titel bleibt der Dateiname, Player bekommt den vollen Pfad")
+    check(stored.path == s2 and os.path.isabs(stored.path), f"path in the list: {stored.path}")
+    check(stored.name == "sample2.ts" and win.player.path == s2, "title stays the file name, player gets the full path")
     check(win.settings.last == s2, f"last: {win.settings.last}")
-    check(json.load(open(project))["segments"][0]["path"] == s2, "JSON enthält den vollständigen Pfad")
-    print("Neuer Auftrag und Pfade: OK (leere Liste mit Parameter, vollständige Pfade)")
+    check(json.load(open(project))["segments"][0]["path"] == s2, "JSON contains the full path")
+    print("New job and paths: OK (empty list with parameter, full paths)")
 
 
 def fake_info(path, audio):
@@ -247,27 +247,27 @@ def test_audio_choice(tmp):
     win.showEvent(None)
     f = os.path.join(tmp, "x.ts")
     open(f, "w").close()
-    check(win.OpenVideo(f) and win.segments[-1].audio_sel == "2", f"erste mp2-Spur: {win.segments[-1].audio_sel}")
+    check(win.OpenVideo(f) and win.segments[-1].audio_sel == "2", f"first mp2 track: {win.segments[-1].audio_sel}")
     win.settings.set_option("audio", 2)
     win.OpenVideo(f)
-    check(win.segments[-1].audio_sel == "3", f"zweite mp2-Spur: {win.segments[-1].audio_sel}")
+    check(win.segments[-1].audio_sel == "3", f"second mp2 track: {win.segments[-1].audio_sel}")
     win.settings.set_option("audio", 5)
     win.OpenVideo(f)
-    check(win.segments[-1].audio_sel == "2" and any("no audio track" in m for m in win.messages), "Spur nicht vorhanden")
+    check(win.segments[-1].audio_sel == "2" and any("no audio track" in m for m in win.messages), "track does not exist")
     win.settings.set_profile(dict(win.profile, acodec_in="aac"))
     n = len(win.segments)
     check(not win.OpenVideo(f) and len(win.segments) == n and any("no audio stream of type" in m for m in win.messages),
-          "Codec nicht vorhanden")
+          "codec does not exist")
     win3 = make_window(tmp, probe=lambda p: fake_info(p, []))
-    check(not win3.OpenVideo(f) and any("no audio stream" in m for m in win3.messages), "ohne Ton")
-    print("Tonspurwahl: OK (n-te Spur mit passendem Codec, Warnungen, Abbruch)")
+    check(not win3.OpenVideo(f) and any("no audio stream" in m for m in win3.messages), "without sound")
+    print("Audio track selection: OK (n-th track with matching codec, warnings, cancel)")
 
 
 def test_counting_and_network(tmp, videos):
-    """Schnelle Analyse mit geschätzter Bildanzahl, exakte Zählung im Hintergrund, Netzlaufwerk-Pfade."""
+    """Quick analysis with estimated number of frames, exact counting in the background, network drive paths."""
     import mediamaker
     from mediaprobe import MediaInfo
-    # 1) Schätzung wird durch die Zählung ersetzt; das Ende folgt, solange der Benutzer es nicht geändert hat
+    # 1) the estimate is replaced by the count; the end follows as long as the user has not changed it
     est = lambda p: fake_info(p, [AudioInfo(1, "mp2", 2, 48000, 192000, "deu")])
     def estimated(p):
         info = est(p)
@@ -278,21 +278,21 @@ def test_counting_and_network(tmp, videos):
     win = make_window(tmp, probe=estimated, fresh=True)
     win.showEvent(None)
     win._count_fn = lambda path, on_start=None: (990, 1, 0.0)
-    check(win.OpenVideo(f), "OpenVideo mit Schätzung")
+    check(win.OpenVideo(f), "OpenVideo with estimate")
     seg = win.segments[0]
-    check((seg.total_frames, seg.end) == (990, 990), f"nach der Zählung: {seg.total_frames}/{seg.end}")
-    check(win.Slider1.maximum() == 990 and win.lvwSegments.topLevelItem(0).text(6) == "990", "Schieber und Liste")
+    check((seg.total_frames, seg.end) == (990, 990), f"after counting: {seg.total_frames}/{seg.end}")
+    check(win.Slider1.maximum() == 990 and win.lvwSegments.topLevelItem(0).text(6) == "990", "slider and list")
     titles = [a[0] for a in win.called("setWindowTitle")]
-    check("counting" in titles[-2] and titles[-1] == "MediaMaker " + mediamaker.VERSION, f"Titel: {titles[-2:]}")
-    # 2) Marker des Benutzers bleiben erhalten, ein Ende hinter dem wirklichen Ende wird begrenzt
+    check("counting" in titles[-2] and titles[-1] == "MediaMaker " + mediamaker.VERSION, f"title: {titles[-2:]}")
+    # 2) the user's markers are kept, an end behind the real end is limited
     seg.start, seg.end = 200, 500
     win.frames_counted(f, 400, 0, 0.0)
     check((seg.start, seg.end, seg.total_frames) == (200, 400, 400), f"Marker: {seg.start}/{seg.end}/{seg.total_frames}")
     seg.start, seg.end = 100, 300
     win.frames_counted(f, 450, 0, 0.0)
-    check((seg.start, seg.end, seg.total_frames) == (100, 300, 450), "Marker unverändert bei größerer Zahl")
-    check(load_segments(os.path.join(tmp, "MediaMaker.json"))[0].total_frames == 450, "gespeichert")
-    # 3) Zählung abbrechen
+    check((seg.start, seg.end, seg.total_frames) == (100, 300, 450), "markers unchanged with a larger number")
+    check(load_segments(os.path.join(tmp, "MediaMaker.json"))[0].total_frames == 450, "saved")
+    # 3) cancel counting
     from mediamaker import FrameCounter
     class Proc:
         terminated = False
@@ -302,14 +302,14 @@ def test_counting_and_network(tmp, videos):
     proc = Proc()
     c._remember(proc)
     c.cancel()
-    check(proc.terminated and c.cancelled, "Zählung abbrechbar")
+    check(proc.terminated and c.cancelled, "counting can be cancelled")
     got = []
     c2 = FrameCounter(f, lambda path, on_start=None: (5, 0, 0.0))
     c2.counted.connect(lambda *a: got.append(a))
     c2.cancelled = True
     c2.run()
-    check(got == [], "abgebrochene Zählung meldet nichts")
-    # 4) Netzlaufwerk: das Verzeichnis kio-fuse-... ändert sich mit jeder Sitzung
+    check(got == [], "cancelled counting reports nothing")
+    # 4) network drive: the directory kio-fuse-... changes with every session
     share = os.path.join(tmp, "run", "kio-fuse-NEUab", "smb", "nas", "movie")
     os.makedirs(share)
     real = os.path.join(share, "Film 1.ts")
@@ -319,13 +319,13 @@ def test_counting_and_network(tmp, videos):
     save_segments(os.path.join(tmp, "MediaMaker.json"), [seg2])
     win = make_window(tmp)
     win.showEvent(None)
-    check(win.segments[0].path == real and not win.messages, f"Pfad aufgelöst: {win.segments[0].path}")
-    check(load_segments(os.path.join(tmp, "MediaMaker.json"))[0].path == real, "aufgelöster Pfad gespeichert")
-    print("Zählung und Netzlaufwerk: OK (Schätzung, Zählung im Hintergrund, Marker bleiben, abbrechbar, kio-fuse-Pfade)")
+    check(win.segments[0].path == real and not win.messages, f"path resolved: {win.segments[0].path}")
+    check(load_segments(os.path.join(tmp, "MediaMaker.json"))[0].path == real, "resolved path saved")
+    print("Counting and network drive: OK (estimate, counting in the background, markers stay, cancellable, kio-fuse paths)")
 
 
 def test_profiles(tmp, videos):
-    """Profil und Optionen: Prüfung, INI-Datei, Dialoge, Profilliste, Speichern, Kopieren aus dem Mustervideo."""
+    """Profile and options: checking, INI file, dialogs, profile list, saving, copying from the sample video."""
     from profiles import (default_name, normalize_bitrate, profile_from_segment, valid_profile_name, validate_options,
                           validate_profile, weighted_bitrate)
     ok_profile = {"description": "x", "scale": "720:576", "sws_flags": "lanczos", "fps": "25.000", "bv": "3072k",
@@ -333,102 +333,102 @@ def test_profiles(tmp, videos):
     from profiles import wrapped_lines
     check(wrapped_lines(330, 230, min_lines=2) == 2 and wrapped_lines(50, 230, min_lines=2) == 2
           and wrapped_lines(900, 230) == 4 and wrapped_lines(0, 230) == 1 and wrapped_lines(218, 230) == 1
-          and wrapped_lines(219, 230) == 2, "Zeilenzahl für lange Werte")
-    check(validate_profile(ok_profile) == [], f"gültiges Profil: {validate_profile(ok_profile)}")
+          and wrapped_lines(219, 230) == 2, "number of lines for long values")
+    check(validate_profile(ok_profile) == [], f"valid profile: {validate_profile(ok_profile)}")
     bad = lambda **kw: validate_profile(dict(ok_profile, **kw))
     check(len(bad(scale="abc")) == 1 and len(bad(scale="721:576")) == 1 and len(bad(scale="720:0")) == 1, "scale")
     check(len(bad(fps="25")) == 1 and len(bad(fps="5.000")) == 1 and bad(fps="29.970") == [], "fps")
-    check(len(bad(bv="3072")) == 1 and len(bad(ba="0k")) == 1 and bad(ba="64k") == [], "Bitraten")
+    check(len(bad(bv="3072")) == 1 and len(bad(ba="0k")) == 1 and bad(ba="64k") == [], "bit rates")
     check(len(bad(ar="48")) == 1 and bad(ar="44100") == [] and len(bad(acodec_out="")) == 1, "ar, Codec")
-    check(validate_options({"crop": "72", "floor": "2", "subtitle": "0", "multilanguage": "False"}) == [], "Optionen gültig")
+    check(validate_options({"crop": "72", "floor": "2", "subtitle": "0", "multilanguage": "False"}) == [], "options valid")
     check(len(validate_options({"crop": "-1"})) == 1 and len(bad(pad="yes")) == 1 and bad(pad="True") == []
           and len(validate_options({"subtitle": "a"})) == 1 and validate_options({"subtitle": "1,2"}) == []
-          and len(validate_options({"audio": "0"})) == 1, "Optionen ungültig")
-    check(valid_profile_name("Mein Profil [1]") is None and valid_profile_name("a=b") and valid_profile_name("[x") and
-          valid_profile_name("  "), "Profilnamen")
-    check(default_name({"description": "MPEG-TS (SD 720x576), 25 FPS"}) == "MPEG-TS_(SD_720x576),_25_FPS", "Vorschlag Name")
+          and len(validate_options({"audio": "0"})) == 1, "options invalid")
+    check(valid_profile_name("My profile [1]") is None and valid_profile_name("a=b") and valid_profile_name("[x") and
+          valid_profile_name("  "), "profile names")
+    check(default_name({"description": "MPEG-TS (SD 720x576), 25 FPS"}) == "MPEG-TS_(SD_720x576),_25_FPS", "suggested name")
     check(normalize_bitrate("3000") == "3000k" and normalize_bitrate(" 3000k ") == "3000k" and
           normalize_bitrate("0") is None and normalize_bitrate("abc") is None, "normalize_bitrate")
     seg = lambda frames, v, a: Segment(1, "/x.ts", "x.ts", 0, frames, frames, Fraction(25), 1280, 720, v, a, "a", 0, 0, 0, 0, 44100, "")
     check(weighted_bitrate([seg(250, 4000, 192), seg(750, 2000, 128)], "video") == 2500 and
           weighted_bitrate([seg(250, 4000, 192), seg(750, 2000, 128)], "audio") == 144 and weighted_bitrate([], "video") == 0,
-          "gewichteter Mittelwert")
+          "weighted mean")
     check(profile_from_segment(seg(100, 3009, 192)) == {"bv": "3009k", "scale": "1280:720", "fps": "25.000", "ar": "44100",
-                                                       "ba": "192k"}, "Profil aus Segment")
+                                                       "ba": "192k"}, "profile from segment")
 
-    # --- INI: benannte Profile
+    # --- INI: named profiles
     ini = os.path.join(tmp, "profiles.ini")
     shutil.copy(os.path.join(HERE, "sample_MediaMaker.ini"), ini)
     st = Settings(ini)
-    st.save_profile("Mein Profil [test]", ok_profile)
-    st.save_profile("HD", dict(st.profiles["HD"], bv="9999k"))                       # überschreiben
+    st.save_profile("My profile [test]", ok_profile)
+    st.save_profile("HD", dict(st.profiles["HD"], bv="9999k"))                       # overwrite
     st.update_profile({"bv": "1234k"})
     st.set_options(dict(st.options, crop="60"))
     st.save()
     st = Settings(ini)
     names = list(st.profiles)
-    check(len(names) == 12 and names[-1] == "Mein Profil [test]" and st.profiles["HD"]["bv"] == "9999k", f"Profile: {names}")
-    check(st.profiles["Mein Profil [test]"] == ok_profile and st.profile["bv"] == "1234k" and st.profile["scale"] == "720:576",
-          "Profil gespeichert und Einzelwert geändert")
-    check(st.options["crop"] == "60" and st.options["floor"] == "2", "Optionen gespeichert")
+    check(len(names) == 12 and names[-1] == "My profile [test]" and st.profiles["HD"]["bv"] == "9999k", f"Profile: {names}")
+    check(st.profiles["My profile [test]"] == ok_profile and st.profile["bv"] == "1234k" and st.profile["scale"] == "720:576",
+          "profile saved and single value changed")
+    check(st.options["crop"] == "60" and st.options["floor"] == "2", "options saved")
 
-    # --- Hauptfenster
+    # --- main window
     workdir = os.path.join(tmp, "profwin")
     os.makedirs(workdir)
     shutil.copy(os.path.join(HERE, "sample_MediaMaker.ini"), os.path.join(workdir, "MediaMaker.ini"))
     win = make_window(workdir)
     win.showEvent(None)
-    check(len(win.profile_actions) == 11 and win.mnuLoadProfile.called("setEnabled") == [(True,)], "Profilmenü gefüllt")
-    check(win.Frame1.called("setToolTip")[-1] == ("MPEG-TS (SD 720x576), 25 FPS, 3072 and 192 KBit/s",), "Tooltip Beschreibung")
-    # Profil laden über das Menü
+    check(len(win.profile_actions) == 11 and win.mnuLoadProfile.called("setEnabled") == [(True,)], "profile menu filled")
+    check(win.Frame1.called("setToolTip")[-1] == ("MPEG-TS (SD 720x576), 25 FPS, 3072 and 192 KBit/s",), "tooltip description")
+    # load profile via the menu
     hd = next(a for a in win.profile_actions if a.text_ == "HD")
     hd.triggered.emit(False)
     check(win.profile["scale"] == "1280:720" and win.lblText[2].text() == "1280:720" and win.lblText[3].text() == "29.970",
-          "Profil laden: Anzeige")
-    check(Settings(os.path.join(workdir, "MediaMaker.ini")).profile["scale"] == "1280:720", "Profil laden: gespeichert")
-    # Profil bearbeiten: erst fehlerhaft, dann gültig; Abbruch ändert nichts
+          "load profile: display")
+    check(Settings(os.path.join(workdir, "MediaMaker.ini")).profile["scale"] == "1280:720", "load profile: saved")
+    # edit profile: first invalid, then valid; cancel changes nothing
     answers = [dict(win.profile, scale="abc"), dict(win.profile, scale="1920:1080", bv="5000k")]
     seen = []
     win.edit_pairs = lambda title, pairs, groups=None: (seen.append((title, dict(pairs))), answers.pop(0))[1]
     win.mnuProfile_Click()
-    check(len(win.messages) == 1 and "width:height" in win.messages[0], f"Fehlermeldung: {win.messages}")
-    check(seen[1][1]["scale"] == "abc", "Dialog erscheint mit den eingegebenen Werten erneut")
-    check(win.profile["scale"] == "1920:1080" and win.lblText[1].text() == "5000k", "Profil bearbeitet")
+    check(len(win.messages) == 1 and "width:height" in win.messages[0], f"error message: {win.messages}")
+    check(seen[1][1]["scale"] == "abc", "dialog appears again with the entered values")
+    check(win.profile["scale"] == "1920:1080" and win.lblText[1].text() == "5000k", "profile edited")
     win.edit_pairs = lambda title, pairs, groups=None: None
     win.mnuProfile_Click()
-    check(win.profile["scale"] == "1920:1080", "Abbruch ändert nichts")
-    # Optionen
+    check(win.profile["scale"] == "1920:1080", "cancel changes nothing")
+    # options
     win.edit_pairs = lambda title, pairs, groups=None: dict(pairs, crop="70", floor="1")
     win.mnuOptions_Click()
-    check(win.options["crop"] == "70" and win.options["floor"] == "1" and win.options["blackness"] == "12", "Optionen geändert")
-    check(Settings(os.path.join(workdir, "MediaMaker.ini")).options["crop"] == "70", "Optionen in der INI-Datei")
+    check(win.options["crop"] == "70" and win.options["floor"] == "1" and win.options["blackness"] == "12", "options changed")
+    check(Settings(os.path.join(workdir, "MediaMaker.ini")).options["crop"] == "70", "options in the INI file")
     win.edit_pairs = lambda title, pairs, groups=None: dict(pairs, crop="abc")
     n_msgs = len(win.messages)
     answers2 = [dict(win.options, crop="abc"), None]
     win.edit_pairs = lambda title, pairs, groups=None: answers2.pop(0)
     win.mnuOptions_Click()
-    check(len(win.messages) == n_msgs + 1 and win.options["crop"] == "70", "ungültige Option wird abgelehnt")
-    # Profil speichern unter Namen
-    names_asked = ["Neu A", "Neu A", "Neu B"]
+    check(len(win.messages) == n_msgs + 1 and win.options["crop"] == "70", "invalid option is rejected")
+    # save profile under a name
+    names_asked = ["New A", "New A", "New B"]
     win.ask_text = lambda title, label, default="": names_asked.pop(0)
     win.mnuSaveProfile_Click()
-    check("Neu A" in win.settings.profiles and len(win.profile_actions) == 12, "Profil gespeichert, Menü aktualisiert")
-    win.answer = False                                                  # Überschreiben verneint: nach neuem Namen fragen
+    check("New A" in win.settings.profiles and len(win.profile_actions) == 12, "profile saved, menu updated")
+    win.answer = False                                                  # overwriting denied: ask for a new name
     win.mnuSaveProfile_Click()
-    check("Neu B" in win.settings.profiles and len(win.profile_actions) == 13 and win.settings.profiles["Neu A"]["scale"] == "1920:1080",
-          "Überschreiben verneint: anderer Name")
+    check("New B" in win.settings.profiles and len(win.profile_actions) == 13 and win.settings.profiles["New A"]["scale"] == "1920:1080",
+          "overwriting denied: other name")
     win.ask_text = lambda title, label, default="": None
     win.mnuSaveProfile_Click()
-    check(len(win.profile_actions) == 13, "Abbruch beim Speichern")
+    check(len(win.profile_actions) == 13, "cancel when saving")
     win.ask_text = lambda title, label, default="": "a=b"
     msgs = len(win.messages)
     answers3 = ["a=b", None]
     win.ask_text = lambda title, label, default="": answers3.pop(0)
     win.mnuSaveProfile_Click()
-    check(len(win.messages) == msgs + 1, "ungültiger Profilname")
-    # Mustervideo: Werte der Zieldatei kopieren
+    check(len(win.messages) == msgs + 1, "invalid profile name")
+    # sample video: copy values of the target file
     win.mnuReuse_Click()
-    check("one and only one" in win.messages[-1], "Reuse ohne Segment")
+    check("one and only one" in win.messages[-1], "reuse without segment")
     win.OpenVideo(os.path.join(videos, "sample2.ts"))
     before_reuse = dict(win.profile)
     win.mnuReuse_Click()
@@ -437,29 +437,29 @@ def test_profiles(tmp, videos):
           and win.profile["bv"] == f"{seg0.vbitrate_kbit}k" and win.profile["ba"] == f"{seg0.abitrate_kbit}k"
           and win.lblText[2].text() == "720:576" and "copied from" in win.messages[-1], f"Reuse: {win.profile}")
     check({k: v for k, v in win.profile.items() if k not in ("bv", "scale", "fps", "ar", "ba")}
-          == {k: v for k, v in before_reuse.items() if k not in ("bv", "scale", "fps", "ar", "ba")}, "Reuse lässt andere Werte unverändert")
-    # Bitraten schätzen
+          == {k: v for k, v in before_reuse.items() if k not in ("bv", "scale", "fps", "ar", "ba")}, "reuse leaves other values unchanged")
+    # estimate bit rates
     win.OpenVideo(os.path.join(videos, "sample3.ts"))
     win.mnuReuse_Click()
-    check("one and only one" in win.messages[-1], "Reuse mit zwei Segmenten")
+    check("one and only one" in win.messages[-1], "reuse with two segments")
     win.segments[0].vbitrate_kbit, win.segments[1].vbitrate_kbit = 4000, 2000
     avg = weighted_bitrate(win.segments, "video")
     asked = []
     win.ask_text = lambda title, label, default="": (asked.append((label, default)), "3000")[1]
     win.mnuCalcVideo_Click()
-    check(asked[0][1] == str(avg) and win.profile["bv"] == "3000k", f"Schätzung Video: {asked} {win.profile['bv']}")
+    check(asked[0][1] == str(avg) and win.profile["bv"] == "3000k", f"estimate video: {asked} {win.profile['bv']}")
     win.ask_text = lambda title, label, default="": "160k"
     win.mnuCalcAudio_Click()
-    check(win.profile["ba"] == "160k" and win.lblText[5].text() == "160k", "Schätzung Audio")
+    check(win.profile["ba"] == "160k" and win.lblText[5].text() == "160k", "estimate audio")
     win.ask_text = lambda title, label, default="": "abc"
     before = win.profile["bv"]
     win.mnuCalcVideo_Click()
-    check(win.profile["bv"] == before and "not a valid bitrate" in win.messages[-1], "ungültige Bitrate")
-    print("Profil und Optionen: OK (Prüfung, INI-Datei, Dialoge, Profilmenü, Speichern, Kopieren aus Mustervideo, Schätzung)")
+    check(win.profile["bv"] == before and "not a valid bitrate" in win.messages[-1], "invalid bit rate")
+    print("Profile and options: OK (checking, INI file, dialogs, profile menu, saving, copying from sample video, estimate)")
 
 
 def test_dialog():
-    """Der Bearbeiten-Dialog wird gegen den strengen Qt-Ersatz durchgespielt (Aufzählungen, Feldtypen, Rückgabe)."""
+    """The edit dialog is played through against the strict Qt replacement (enumerations, field types, return value)."""
     import dialogs
     from profiles import PRESETS
     from PySide6.QtWidgets import FontMetrics, QComboBox, QDialog, QFormLayout, QLineEdit
@@ -468,40 +468,40 @@ def test_dialog():
     QDialog.exec_result = 1
     QDialog.on_exec = None
     QFormLayout.instances.clear()
-    result = dialogs.edit_pairs(None, "Profile", pairs, {"scale": "Tipp"}, PRESETS)
-    check(result == pairs, f"Rückgabe unverändert: {result}")
+    result = dialogs.edit_pairs(None, "Profile", pairs, {"scale": "hint"}, PRESETS)
+    check(result == pairs, f"return value unchanged: {result}")
     rows = dict((label._args[0], editor) for label, editor in QFormLayout.instances[-1].rows)
     check(isinstance(rows["description"], dialogs.WrappedEdit) and isinstance(rows["scale"], QLineEdit)
           and isinstance(rows["fps"], QComboBox) and isinstance(rows["pad"], QComboBox) and isinstance(rows["aflags"], QLineEdit),
-          f"Feldtypen: { {k: type(v).__name__ for k, v in rows.items()} }")
+          f"field types: { {k: type(v).__name__ for k, v in rows.items()} }")
     height = rows["description"].called("setFixedHeight")
-    check(len(height) == 1 and height[0][0] >= 2 * 16, f"Beschreibung hat mindestens zwei Zeilen: {height}")
-    check(rows["scale"].called("setToolTip") == [("Tipp",)], "Tooltip")
-    # Eingaben ändern: Combobox, Zeilenfeld mit Zeilenumbruch
+    check(len(height) == 1 and height[0][0] >= 2 * 16, f"description has at least two lines: {height}")
+    check(rows["scale"].called("setToolTip") == [("hint",)], "Tooltip")
+    # change inputs: combo box, line field with line break
     def edit(dialog):
         rows2 = dict((l._args[0], e) for l, e in QFormLayout.instances[-1].rows)
         rows2["fps"].setCurrentText("29.970")
         rows2["scale"].setText(" 1280:720 ")
-        rows2["description"].setPlainText("erste Zeile\nzweite Zeile")
+        rows2["description"].setPlainText("first line\nsecond line")
     QDialog.on_exec = edit
     result = dialogs.edit_pairs(None, "Profile", pairs, {}, PRESETS)
-    check(result["fps"] == "29.970" and result["scale"] == "1280:720" and result["description"] == "erste Zeile zweite Zeile",
-          f"geänderte Werte: {result}")
-    # Abbruch
+    check(result["fps"] == "29.970" and result["scale"] == "1280:720" and result["description"] == "first line second line",
+          f"changed values: {result}")
+    # cancel
     QDialog.on_exec = None
     QDialog.exec_result = 0
-    check(dialogs.edit_pairs(None, "Profile", pairs, {}, PRESETS) is None, "Abbruch liefert None")
+    check(dialogs.edit_pairs(None, "Profile", pairs, {}, PRESETS) is None, "cancel returns None")
     QDialog.exec_result = 1
-    # lange Werte in beliebigen Feldern werden ebenfalls mehrzeilig
+    # long values in any field also become multi-line
     FontMetrics.px_per_char = 10
     try:
         QFormLayout.instances.clear()
         dialogs.edit_pairs(None, "Options", {"aflags": "x" * 40}, {}, {})
         long_editor = QFormLayout.instances[-1].rows[0][1]
-        check(isinstance(long_editor, dialogs.WrappedEdit), "langer Wert in beliebigem Feld wird mehrzeilig")
+        check(isinstance(long_editor, dialogs.WrappedEdit), "long value in any field becomes multi-line")
     finally:
         FontMetrics.px_per_char = 1
-    # Enter im mehrzeiligen Feld bestätigt den Dialog statt einen Zeilenumbruch einzufügen
+    # Enter in the multi-line field confirms the dialog instead of inserting a line break
     accepted = []
     edit_box = dialogs.WrappedEdit("text", lambda: accepted.append(1))
     class Key:
@@ -509,18 +509,18 @@ def test_dialog():
         def key(self): return self.k
     edit_box.keyPressEvent(Key(0x01000004))
     edit_box.keyPressEvent(Key(0x41))
-    check(accepted == [1], "Enter bestätigt")
-    # Der Ersatz lehnt eine Zahl statt einer Aufzählung ab (der Fehler, der im echten Qt aufgefallen war)
+    check(accepted == [1], "Enter confirms")
+    # The replacement rejects a number instead of an enumeration (the error that was noticed in the real Qt)
     try:
         edit_box.setHorizontalScrollBarPolicy(1)
-        check(False, "Ersatz erkennt Zahl statt Aufzählung nicht")
+        check(False, "replacement does not detect a number instead of an enumeration")
     except TypeError:
         pass
-    print("Dialog: OK (Feldtypen, mehrzeilige Beschreibung, Eingaben, Abbruch, Enter, Prüfung der Aufzählungen)")
+    print("Dialog: OK (field types, multi-line description, inputs, cancel, Enter, checking of the enumerations)")
 
 
 def test_memory_player():
-    """MemoryVlcPlayer gegen ein vorgetäuschtes vlc-Modul: Formate, Rückrufe, Bildübergabe, Herunterfahren."""
+    """MemoryVlcPlayer against a simulated vlc module: formats, callbacks, picture hand-over, shutdown."""
     import ctypes
     import types
     from types import SimpleNamespace
@@ -575,115 +575,115 @@ def test_memory_player():
         area = QWidget()
         area.setGeometry(0, 0, 513, 290)
         player.attach(area)
-        check(player.surface.called("setGeometry") == [(0, 0, 513, 290)], "Zeichenfläche füllt die Videofläche")
+        check(player.surface.called("setGeometry") == [(0, 0, 513, 290)], "drawing area fills the video area")
         mp = player.mp
         player.load("/x/film.ts", (720, 576))
         check(mp.format == ("RV32", 720, 576, 2880) and mp.aspect == "720:576" and len(mp.cb_calls) == 1 and mp.stops >= 1,
               f"Format: {mp.format} {mp.aspect}")
         lock, unlock, display, opaque = mp.cb_calls[0]
-        check(unlock is None and opaque is None, "kein Entsperr-Rückruf")
+        check(unlock is None and opaque is None, "no unlock callback")
         planes = [None]
         lock(None, planes)
-        check(planes[0].value == ctypes.addressof(player._buf), "Rückruf liefert den Speicherbereich")
+        check(planes[0].value == ctypes.addressof(player._buf), "callback delivers the memory area")
         ctypes.memmove(player._buf, b"\x01\x02\x03\xff" * (720 * 576), 720 * 576 * 4)
         display(None, None)
         image = player.surface.image
         check(image is not None and image._args[0] == b"\x01\x02\x03\xff" * (720 * 576) and image._args[1:4] == (720, 576, 2880),
-              "Bild kommt in der Zeichenfläche an")
-        player.load("/x/zwei.ts", (720, 576))
-        check(len(mp.cb_calls) == 1 and player.surface.image is None, "gleiche Größe: keine Neuinstallation, Bild gelöscht")
+              "picture arrives in the drawing area")
+        player.load("/x/two.ts", (720, 576))
+        check(len(mp.cb_calls) == 1 and player.surface.image is None, "same size: no reinstallation, picture cleared")
         player.load("/x/hd.ts", (1281, 721))
-        check(mp.format == ("RV32", 1280, 720, 5120) and len(mp.cb_calls) == 2, f"neue Größe (gerade gemacht): {mp.format}")
+        check(mp.format == ("RV32", 1280, 720, 5120) and len(mp.cb_calls) == 2, f"new size (made even): {mp.format}")
         player.set_aspect("4:3")
-        check(player.surface.aspect == (4, 3), "Darstellungsformat")
-        # Bilder vor Erreichen der Startposition werden nicht angezeigt (VLC zeigt zuerst den Dateianfang)
+        check(player.surface.aspect == (4, 3), "display format")
+        # pictures before reaching the start position are not shown (VLC shows the start of the file first)
         lock3, _, display3, _ = mp.cb_calls[-1]
-        player.load("/x/drei.ts", (1280, 720))
+        player.load("/x/three.ts", (1280, 720))
         lock3, _, display3, _ = mp.cb_calls[-1]
         ctypes.memmove(player._buf, b"\x07\x07\x07\xff" * (1280 * 720), 1280 * 720 * 4)
         player.show_at(193_000)
         display3(None, None)
-        check(player.surface.image is None, "Bild vom Dateianfang wird verworfen, solange die Position fehlt")
-        player._awaiting_position = None                            # (Position gilt als erreicht)
-        # Sprung im angehaltenen Zustand: kommt kein Bild, wird mit der Startposition neu geladen
+        check(player.surface.image is None, "picture from the start of the file is discarded as long as the position is missing")
+        player._awaiting_position = None                            # (position counts as reached)
+        # jump in the paused state: if no picture arrives, the medium is reloaded with the start position
         mp.state, mp.t = 4, 90_000
         QTimer.pending.clear()
         frames0 = player._frames_shown
         player._do_seek(560)
-        check(len(QTimer.pending) == 1 and QTimer.pending[0][0] == 600, f"Prüfung nach 600 ms geplant: {QTimer.pending}")
+        check(len(QTimer.pending) == 1 and QTimer.pending[0][0] == 600, f"check after 600 ms scheduled: {QTimer.pending}")
         loads = mp.calls_play
-        QTimer.pending.pop(0)[1]()                                  # kein Bild gekommen
+        QTimer.pending.pop(0)[1]()                                  # no picture arrived
         check(mp.calls_play == loads + 1 and player._awaiting_position == 560 and mp.media.options == [":start-time=0.560"],
-              f"kein Bild nach dem Sprung: neu geladen mit start-time: {mp.media.options}")
+              f"no picture after the jump: reloaded with start-time: {mp.media.options}")
         player._awaiting_position = None
         QTimer.pending.clear()
-        mp.state, mp.t = 4, 90_000                                  # wieder angehalten (das Neuladen hat gestoppt)
+        mp.state, mp.t = 4, 90_000                                  # paused again (reloading has stopped)
         player._do_seek(2000)
         player.surface.image = None
-        display3(None, None)                                        # Bild ist gekommen
+        display3(None, None)                                        # picture has arrived
         loads = mp.calls_play
         QTimer.pending.pop(0)[1]()
-        check(mp.calls_play == loads, "Bild kam: kein Neuladen")
+        check(mp.calls_play == loads, "picture arrived: no reloading")
         QTimer.pending.clear()
         mp.state, mp.t = 4, 5000
-        player._do_seek(5050)                                       # fast dieselbe Stelle: nicht prüfen
-        check(QTimer.pending == [], "Sprung auf (fast) dieselbe Stelle wird nicht geprüft")
+        player._do_seek(5050)                                       # almost the same position: do not check
+        check(QTimer.pending == [], "jump to (almost) the same position is not checked")
         player._do_seek(7000)
-        player._do_seek(9000)                                       # überholt
+        player._do_seek(9000)                                       # superseded
         loads = mp.calls_play
         QTimer.pending.pop(0)[1]()
-        check(mp.calls_play == loads, "überholter Sprung wird nicht geprüft")
+        check(mp.calls_play == loads, "superseded jump is not checked")
         mp.state = 5
         QTimer.pending.clear()
         player._do_seek(100)
-        check(QTimer.pending == [], "nur im angehaltenen Zustand")
+        check(QTimer.pending == [], "only in the paused state")
         player._awaiting_position = player._pending_show = 193_000
         mp.state = 5
         mp.t = 193_050
         QTimer.pending.clear()
         player.playing.emit()
         QTimer.pending.pop(0)[1]()
-        check(player._awaiting_position is None and mp.set_times[-1] == 193_000, "Position erreicht: erneuter Sprung für ein frisches Bild")
+        check(player._awaiting_position is None and mp.set_times[-1] == 193_000, "position reached: another jump for a fresh picture")
         display3(None, None)
-        check(player.surface.image is not None, "danach werden Bilder angezeigt")
+        check(player.surface.image is not None, "afterwards pictures are shown")
         image_before = player.surface.image
         player.shutdown()
         lock2, _, display2, _ = mp.cb_calls[1]
         display2(None, None)
         display3(None, None)
-        check(player.surface.image is image_before and mp.released, "nach dem Herunterfahren keine Bilder mehr, Player freigegeben")
+        check(player.surface.image is image_before and mp.released, "no more pictures after shutdown, player released")
     finally:
         del sys.modules["vlc"]
-    print("Speicher-Wiedergabe: OK (Format, Rückrufe, Bildübergabe, Größenwechsel, Herunterfahren)")
+    print("Memory playback: OK (format, callbacks, picture hand-over, size change, shutdown)")
 
 
 def test_timeline(tmp, videos):
-    """Zeitleiste: Fenster der 20 Bilder, Klick-Verschiebung, Kreuze, Zeichnen, Bildnummern aus echten Aufnahmen."""
+    """Timeline: window of the 20 frames, click shifting, crosses, drawing, frame numbers from real recordings."""
     import numpy as np
     import timeline as tl
     from PIL import Image
     from frames import grab_frame, grab_numbered
     from PySide6.QtWidgets import Rect
     s2 = os.path.join(videos, "sample2.ts")
-    # --- reine Logik
+    # --- pure logic
     check(tl.window_numbers(100)[0] == 90 and tl.window_numbers(100)[10] == 100 and tl.window_numbers(100)[19] == 109
-          and len(tl.window_numbers(5)) == 20, "Fenster der Bildnummern")
-    check([tl.click_delta(i) for i in range(20)] == list(range(-9, 0)) + [0, 0] + list(range(1, 10)), "Verschiebung je Bild")
-    check([tl.click_index(x, 1085) for x in (0, 53, 54, 540, 541, 1084)] == [0, 0, 1, 10, 10, 19], "Bild unter der Maus")
-    check(tl.thumb_size(720, 576, 54) == (53, 42) and tl.thumb_size(576, 720, 54) == (42, 53), "Größe der Vorschaubilder")
+          and len(tl.window_numbers(5)) == 20, "window of the frame numbers")
+    check([tl.click_delta(i) for i in range(20)] == list(range(-9, 0)) + [0, 0] + list(range(1, 10)), "shift per frame")
+    check([tl.click_index(x, 1085) for x in (0, 53, 54, 540, 541, 1084)] == [0, 0, 1, 10, 10, 19], "frame under the mouse")
+    check(tl.thumb_size(720, 576, 54) == (53, 42) and tl.thumb_size(576, 720, 54) == (42, 53), "size of the thumbnails")
     check((tl.frame_number(1.824, 1.4, 25), tl.frame_number(1.4, 1.4, 25), tl.frame_number(1.439, 1.4, 25),
-           tl.frame_number(1.44, 1.4, 25)) == (10, 0, 0, 1), "Bildnummer aus dem Zeitstempel")
-    # --- echte Aufnahme: Nummern aus den Zeitstempeln, Bildinhalt passt zu grab_frame
+           tl.frame_number(1.44, 1.4, 25)) == (10, 0, 0, 1), "frame number from the timestamp")
+    # --- real recording: numbers from the timestamps, picture content matches grab_frame
     got = grab_numbered(s2, 0, 20, Fraction(25), (54, 43))
     check(sorted(got) == list(range(10, 30)) and got[10].shape == (43, 54, 3),
-          f"Bildnummern am Dateianfang (Ton beginnt früher): {sorted(got)[:3]}..{sorted(got)[-2:]}")
+          f"frame numbers at the start of the file (sound starts earlier): {sorted(got)[:3]}..{sorted(got)[-2:]}")
     got = grab_numbered(s2, 40, 10, Fraction(25), (54, 43))
-    check(sorted(got) == list(range(40, 50)), f"Fenster mitten in der Datei: {sorted(got)}")
+    check(sorted(got) == list(range(40, 50)), f"window in the middle of the file: {sorted(got)}")
     for n in (40, 49):
         ref = np.asarray(Image.fromarray(grab_frame(s2, n, Fraction(25))).resize((54, 43), Image.BOX)).astype(int)
         diff = np.abs(ref - got[n].astype(int)).mean()
-        check(diff < 12, f"Vorschaubild {n} passt zum Bild {n}: Abweichung {diff:.1f}")
-    # --- Hauptfenster mit vorgetäuschter Bildquelle (Aufnahme beginnt bei Bild 10, 148 Bilder)
+        check(diff < 12, f"thumbnail {n} matches frame {n}: deviation {diff:.1f}")
+    # --- main window with simulated picture source (recording starts at frame 10, 148 frames)
     calls = []
     def fake_thumbs(path, first, count, fps, size, on_start=None):
         calls.append((first, count, size))
@@ -694,84 +694,84 @@ def test_timeline(tmp, videos):
     win.showEvent(None)
     area = win.picTimeline.contentsRect()
     cw = tl.cell_width(area.width())
-    check(area.width() == 1085 and cw == 54, f"Zeichenfläche {area.width()}")
+    check(area.width() == 1085 and cw == 54, f"drawing area {area.width()}")
     line = win.Line1.called("setGeometry")[-1]
-    check(line[0] == win.picTimeline.geometry().x() + area.x() + 10 * cw - 1 and line[2] == 3, f"Strich liegt auf der Schnittstelle: {line}")
+    check(line[0] == win.picTimeline.geometry().x() + area.x() + 10 * cw - 1 and line[2] == 3, f"line lies on the cut position: {line}")
     win.OpenVideo(s2)
     seg = win.segments[0]
     check(win.timeline_mode == "A" and win.timeline_center == 0 and calls[-1][:2] == (0, 10) and calls[-1][2] == (53, 42),
-          f"Zeitleiste bei Bild 0: {win.timeline_center} {calls[-1]}")
+          f"timeline at frame 0: {win.timeline_center} {calls[-1]}")
     check(all(state == "cross" for state, _ in win.timeline_cells()) and len(win.timeline_cells()) == 20,
-          "Anfang: nur Kreuze (die ersten 10 Bilder fehlen, davor ebenfalls)")
-    # Marker A bei 50: Bilder 40..59 werden geladen und angezeigt
+          "start: only crosses (the first 10 frames are missing, and those before them as well)")
+    # marker A at 50: frames 40..59 are loaded and shown
     win._go(50)
     win.cmdPos_Click(7)
     cells = win.timeline_cells()
     check(seg.start == 50 and calls[-1][:2] == (40, 20) and [c[0] for c in cells] == ["image"] * 20, f"Marker A: {calls[-1]}")
-    # Marker B bei 100: Zeitleiste um das Ende; das Segment endet mit dem Bild links vom Strich
+    # marker B at 100: timeline around the end; the segment ends with the frame left of the line
     win._go(100)
     win.cmdPos_Click(8)
     check(seg.end == 100 and win.timeline_mode == "B" and win.timeline_center == 100 and calls[-1][:2] == (90, 20), "Marker B")
-    # Klick: links vom Strich
+    # click: left of the line
     def click(index):
         win._mouse_x = area.x() + index * cw + 5
         win.picTimeline_Click()
     click(5)
-    check(seg.end == 96 and win.timeline_center == 96 and win.Slider1.value() == 96, f"Klick links (Index 5): Ende {seg.end}")
+    check(seg.end == 96 and win.timeline_center == 96 and win.Slider1.value() == 96, f"click left (index 5): end {seg.end}")
     click(9)
     click(10)
-    check(seg.end == 96, "Klick auf die beiden Bilder am Strich ändert nichts")
+    check(seg.end == 96, "click on the two frames at the line changes nothing")
     click(15)
-    check(seg.end == 101 and win.lvwSegments.topLevelItem(0).text(4) == "101", f"Klick rechts (Index 15): Ende {seg.end}")
+    check(seg.end == 101 and win.lvwSegments.topLevelItem(0).text(4) == "101", f"click right (index 15): end {seg.end}")
     seg.start, seg.end = 95, 101
     click(0)
-    check(seg.end == 96, f"Ende bleibt mindestens ein Bild hinter dem Beginn: {seg.end}")
+    check(seg.end == 96, f"end stays at least one frame behind the start: {seg.end}")
     seg.end = 147
     click(19)
-    check(seg.end == 148, f"Ende bleibt im Film: {seg.end}")
-    # Marker A und B dürfen sich nicht überholen und nicht zusammenfallen (Segment hätte 0 Bilder)
+    check(seg.end == 148, f"end stays in the movie: {seg.end}")
+    # markers A and B must not overtake each other and must not coincide (segment would have 0 frames)
     seg.start, seg.end = 10, 12
     win.cmdPos_Click(9)
     click(19)
-    check((seg.start, seg.end) == (11, 12), f"Marker A bleibt vor B: {seg.start}/{seg.end}")
+    check((seg.start, seg.end) == (11, 12), f"marker A stays before B: {seg.start}/{seg.end}")
     win.cmdPos_Click(10)
     click(0)
-    check((seg.start, seg.end) == (11, 12), f"Marker B bleibt hinter A: {seg.start}/{seg.end}")
+    check((seg.start, seg.end) == (11, 12), f"marker B stays behind A: {seg.start}/{seg.end}")
     n_beeps = QtWidgets.QApplication.log.count("beep")
     win._go(12)
-    win.cmdPos_Click(7)                                           # A auf B setzen: abgelehnt
+    win.cmdPos_Click(7)                                           # set A onto B: rejected
     win._go(11)
-    win.cmdPos_Click(8)                                           # B auf A setzen: abgelehnt
+    win.cmdPos_Click(8)                                           # set B onto A: rejected
     win._go(13)
-    win.cmdPos_Click(7)                                           # A hinter B setzen: abgelehnt
+    win.cmdPos_Click(7)                                           # set A behind B: rejected
     win._go(5)
-    win.cmdPos_Click(8)                                           # B vor A setzen: abgelehnt
+    win.cmdPos_Click(8)                                           # set B before A: rejected
     check((seg.start, seg.end) == (11, 12) and QtWidgets.QApplication.log.count("beep") == n_beeps + 4,
-          f"Setzen über die Knöpfe: {seg.start}/{seg.end}")
+          f"setting via the buttons: {seg.start}/{seg.end}")
     win._go(8)
-    win.cmdPos_Click(7)                                           # A vor B: erlaubt
-    check(seg.start == 8, "A vor B ist erlaubt")
+    win.cmdPos_Click(7)                                           # A before B: allowed
+    check(seg.start == 8, "A before B is allowed")
     seg.start, seg.end = 0, 148
-    # Klick im Modus A
+    # click in mode A
     win.cmdPos_Click(9)
     seg.start = 50
     click(12)
-    check(seg.start == 52 and win.Slider1.value() == 52 and win.timeline_center == 52, f"Klick rechts, Marker A: {seg.start}")
+    check(seg.start == 52 and win.Slider1.value() == 52 and win.timeline_center == 52, f"click right, marker A: {seg.start}")
     click(0)
     seg.start = 3
     click(0)
-    check(seg.start == 0, f"Marker A nicht unter 0: {seg.start}")
-    # kein Modus: Klick wirkt nicht
+    check(seg.start == 0, f"marker A not below 0: {seg.start}")
+    # no mode: click has no effect
     win.timeline_mode = None
     seg.start = 20
     click(0)
-    check(seg.start == 20, "ohne Modus keine Wirkung")
+    check(seg.start == 20, "no effect without a mode")
     win.cmdPos_Click(9)
-    # veraltete Ergebnisse werden verworfen
+    # outdated results are discarded
     cache_size = len(win.thumb_cache)
     win.thumbs_loaded(win._thumb_token - 1, {999: np.zeros((42, 53, 3), np.uint8)}, (999, 999), seg.path, (53, 42))
-    check(len(win.thumb_cache) == cache_size, "überholte Anforderung wird ignoriert")
-    # Zeichnen
+    check(len(win.thumb_cache) == cache_size, "superseded request is ignored")
+    # drawing
     class Painter:
         def __init__(self): self.images, self.lines, self.fills = [], [], []
         def drawImage(self, x, y, img): self.images.append((x, y))
@@ -783,17 +783,17 @@ def test_timeline(tmp, videos):
     painter = Painter()
     win.timeline_paint(painter, Rect(2, 2, 1085, 45))
     check(len(painter.images) == 20 and painter.images[0] == (2, 2) and painter.images[10] == (2 + 10 * cw, 2)
-          and painter.lines == [] and painter.fills == [(2 + 10 * cw - 1, 2, 3, 45)], f"Zeichnen: {painter.fills}")
+          and painter.lines == [] and painter.fills == [(2 + 10 * cw - 1, 2, 3, 45)], f"drawing: {painter.fills}")
     seg.start = 0
     win.cmdPos_Click(9)
     painter = Painter()
     win.timeline_paint(painter, Rect(2, 2, 1085, 45))
-    check(len(painter.lines) == 40 and painter.images == [], "Zeichnen am Anfang: 20 Kreuze")
-    print("Zeitleiste: OK (Fenster, Klick-Verschiebung, Kreuze, Zeichnen, Bildnummern aus Zeitstempeln)")
+    check(len(painter.lines) == 40 and painter.images == [], "drawing at the start: 20 crosses")
+    print("Timeline: OK (window, click shifting, crosses, drawing, frame numbers from timestamps)")
 
 
 def quick_thumbs(path, first, count, fps, size, on_start=None):
-    """Vorgetäuschte Vorschaubilder (schnell), damit die Tests nicht auf ffmpeg warten."""
+    """Simulated thumbnails (fast), so that the tests do not wait for ffmpeg."""
     import numpy as np
     w, h = size
     return {n: np.zeros((h, w, 3), np.uint8) for n in range(max(first, 0), first + count)}
@@ -821,41 +821,41 @@ def seek_window(tmp, videos, names=("sample2.ts",), workdir="seekwin", **kwargs)
 
 
 def test_segments(tmp, videos):
-    """Segmente löschen, verschieben, duplizieren (mit Suche nach dem Filmbeginn) und die Suche selbst."""
+    """Delete, move, duplicate segments (with search for the start of the movie) and the search itself."""
     import seek
     from PySide6 import QtWidgets
     s2, s3 = os.path.join(videos, "sample2.ts"), os.path.join(videos, "sample3.ts")
-    # --- verschieben, löschen, alles entfernen
+    # --- move, delete, remove all
     win = seek_window(tmp, videos, ("sample2.ts", "sample3.ts"))
     win.lvwSegments.select_row(0)
     win.lvwSegments_Click()
     win.cmdCommand_Click(2)
     titles = lambda: [win.lvwSegments.topLevelItem(i).text(2) for i in range(win.lvwSegments.row_count())]
     check(titles() == ["sample3.ts", "sample2.ts"] and win.current == 1 and win.segments[1].path == s2
-          and win.lvwSegments.topLevelItem(0).text(0) == "01", f"nach unten: {titles()} {win.current}")
+          and win.lvwSegments.topLevelItem(0).text(0) == "01", f"down: {titles()} {win.current}")
     win.cmdCommand_Click(2)
-    check(titles() == ["sample3.ts", "sample2.ts"] and win.current == 1, "ganz unten: keine Änderung")
+    check(titles() == ["sample3.ts", "sample2.ts"] and win.current == 1, "all the way down: no change")
     win.cmdCommand_Click(1)
-    check(titles() == ["sample2.ts", "sample3.ts"] and win.current == 0, "nach oben")
+    check(titles() == ["sample2.ts", "sample3.ts"] and win.current == 0, "up")
     win.cmdCommand_Click(1)
-    check(win.current == 0, "ganz oben: keine Änderung")
-    check([s.path for s in load_segments(os.path.join(tmp, "seekwin", "MediaMaker.json"))] == [s2, s3], "Reihenfolge gespeichert")
+    check(win.current == 0, "all the way up: no change")
+    check([s.path for s in load_segments(os.path.join(tmp, "seekwin", "MediaMaker.json"))] == [s2, s3], "order saved")
     win.cmdCommand_Click(0)
     check(len(win.segments) == 1 and win.current == 0 and win.segments[0].path == s3 and "stop" in win.player.log
           and f"load {s3}" in win.player.log and win.lvwSegments.current_row() == 0
           and win.lvwSegments.row_count() == 1 and win.lvwSegments.topLevelItem(0).text(0) == "01"
           and len(load_segments(os.path.join(tmp, "seekwin", "MediaMaker.json"))) == 1,
-          "Löschen: der Nachfolger wird ausgewählt und geladen")
+          "delete: the successor is selected and loaded")
     win.cmdCommand_Click(5)
-    check("not been ported" in win.messages[-1], "Beschnitt/Logo: Hinweis")
+    check("not been ported" in win.messages[-1], "crop/logo: note")
     win.answer = False
     win.cmdCommand_Click(3)
-    check(len(win.segments) == 1, "Alles entfernen: Nein")
+    check(len(win.segments) == 1, "remove all: no")
     win.answer = True
     win.cmdCommand_Click(3)
     check(win.segments == [] and win.lvwSegments.row_count() == 0 and win.lblText[0].text() == "00:00:00"
-          and load_segments(os.path.join(tmp, "seekwin", "MediaMaker.json")) == [], "Alles entfernen: Ja")
-    # --- Auswahl nach dem Löschen: letzter Eintrag -> neuer letzter, Eintrag in der Mitte -> Nachfolger, zuletzt leere Liste
+          and load_segments(os.path.join(tmp, "seekwin", "MediaMaker.json")) == [], "remove all: yes")
+    # --- selection after deleting: last entry -> new last, entry in the middle -> successor, finally empty list
     sample = os.path.join(videos, "sample.ts")
     dwin = seek_window(tmp, videos, ("sample2.ts", "sample3.ts", "sample.ts"), workdir="delwin")
     dwin.lvwSegments.select_row(2)
@@ -863,17 +863,17 @@ def test_segments(tmp, videos):
     dwin.player.log.clear()
     dwin.cmdCommand_Click(0)
     check([x.path for x in dwin.segments] == [s2, s3] and dwin.current == 1 and dwin.lvwSegments.current_row() == 1
-          and f"load {s3}" in dwin.player.log, f"letzten Eintrag gelöscht: der neue letzte ist ausgewählt ({dwin.current}, Zeile {dwin.lvwSegments.current_row()})")
+          and f"load {s3}" in dwin.player.log, f"last entry deleted: the new last one is selected ({dwin.current}, row {dwin.lvwSegments.current_row()})")
     dwin.lvwSegments.select_row(0)
     dwin.lvwSegments_Click()
     dwin.cmdCommand_Click(0)
-    check([x.path for x in dwin.segments] == [s3] and dwin.current == 0 and dwin.lvwSegments.current_row() == 0, "mittleren/ersten gelöscht: Nachfolger ausgewählt")
+    check([x.path for x in dwin.segments] == [s3] and dwin.current == 0 and dwin.lvwSegments.current_row() == 0, "middle/first deleted: successor selected")
     dwin.cmdCommand_Click(0)
-    check(dwin.segments == [] and dwin.current == -1 and dwin.lvwSegments.row_count() == 0, "den letzten verbliebenen gelöscht: leere Liste")
+    check(dwin.segments == [] and dwin.current == -1 and dwin.lvwSegments.row_count() == 0, "last remaining deleted: empty list")
     dwin.cmdCommand_Click(0)
-    check(dwin.segments == [], "leere Liste: Knopf wirkt nicht")
+    check(dwin.segments == [], "empty list: button has no effect")
 
-    # --- duplizieren mit Suche nach dem Filmbeginn (vorgetäuschte Randerkennung: Film ab Bild 130)
+    # --- duplicate with search for the start of the movie (simulated border detection: movie from frame 130)
     probes = []
     def border(path, n, fps, opts):
         probes.append(n)
@@ -884,23 +884,23 @@ def test_segments(tmp, videos):
     seg.crop_top, seg.mask = 5, "0.1 0.2 0.3 0.4"
     win._go(100)
     win.cmdPos_Click(8)
-    check(seg.end == 100, "Marker B auf 100")
+    check(seg.end == 100, "marker B at 100")
     win.cmdCommand_Click(4)
     new = win.segments[1]
     check((new.start, new.end, new.path, new.crop_top, new.mask) == (100, 148, s2, 5, "0.1 0.2 0.3 0.4") and win.current == 1,
-          f"neues Segment: {new.start}/{new.end}")
+          f"new segment: {new.start}/{new.end}")
     check(win.Slider1.value() == 130 and win.player.time == 5200 and win.lblInfo.text() == f"Frame {130 - new.first_frame}",
-          f"Suche nach dem Filmbeginn: Bild {win.Slider1.value()}, Zeit {win.player.time}")
+          f"search for the start of the movie: frame {win.Slider1.value()}, time {win.player.time}")
     check(min(probes) >= 125 and len(probes) < 40 and win.dialogs[-1].closed and "Seeking" in win.dialogs[-1].message,
-          f"Suche beginnt hinter der Mindestlänge der Werbung (pause): {min(probes)}, {len(probes)} Proben")
-    check(len(load_segments(os.path.join(tmp, "dupwin", "MediaMaker.json"))) == 2, "gespeichert")
-    # Marker B am Ende des Films: nichts zu duplizieren
+          f"search starts behind the minimum length of a commercial (pause): {min(probes)}, {len(probes)} probes")
+    check(len(load_segments(os.path.join(tmp, "dupwin", "MediaMaker.json"))) == 2, "saved")
+    # marker B at the end of the movie: nothing to duplicate
     win.lvwSegments.select_row(0)
     win.lvwSegments_Click()
     seg.end = seg.total_frames
     win.cmdCommand_Click(4)
-    check(len(win.segments) == 2 and "nothing left" in win.messages[-1], "Duplizieren am Ende der Datei")
-    # mehrere Quelldateien in der Liste: die Suche läuft trotzdem (anders als in VB6)
+    check(len(win.segments) == 2 and "nothing left" in win.messages[-1], "duplicate at the end of the file")
+    # several source files in the list: the search runs anyway (unlike VB6)
     win = seek_window(tmp, videos, ("sample3.ts", "sample2.ts"), workdir="dupwin2", border_fn=border)
     win.settings.set_option("pause", 1)
     probes.clear()
@@ -909,12 +909,12 @@ def test_segments(tmp, videos):
     win._go(100)
     win.cmdPos_Click(8)
     win.cmdCommand_Click(4)
-    check(win.multiple() and probes != [] and win.Slider1.value() == 130, f"mehrere Quellen: Suche läuft, Bild {win.Slider1.value()}")
-    # Zwischenstände im Wartefenster
+    check(win.multiple() and probes != [] and win.Slider1.value() == 130, f"several sources: search runs, frame {win.Slider1.value()}")
+    # intermediate results in the wait window
     texts = win.dialogs[-1].texts
     check(texts and texts[0].startswith("Seeking, please wait...\nframe ") and "border" in texts[0] and "about 72" in texts[0]
-          and any("border 72" in t for t in texts) and len(texts) == len(probes), f"Wartefenster zeigt jede Probe: {texts[:2]}")
-    # weder Beschnitt noch Logo: Meldung, keine Suche
+          and any("border 72" in t for t in texts) and len(texts) == len(probes), f"wait window shows every probe: {texts[:2]}")
+    # neither crop nor logo: message, no search
     win = seek_window(tmp, videos, workdir="dupwin3", border_fn=border)
     win.settings.set_option("crop", 0)
     win.settings.set_option("pause", 1)
@@ -923,11 +923,11 @@ def test_segments(tmp, videos):
     win._go(100)
     win.cmdPos_Click(8)
     win.cmdCommand_Click(4)
-    check(probes == [] and "neither a cropping value" in win.messages[-1] and len(win.segments) == 2, f"ohne Beschnitt und Logo: {win.messages[-1:]}")
+    check(probes == [] and "neither a cropping value" in win.messages[-1] and len(win.segments) == 2, f"without crop and logo: {win.messages[-1:]}")
     win.mnuNext_Click()
-    check("neither a cropping value" in win.messages[-1], "auch bei Suche nach der nächsten Werbung")
+    check("neither a cropping value" in win.messages[-1], "also when seeking the next commercial")
 
-    # --- Suche mit dem Senderlogo (vorgetäuschte Erkennung: Logo ab Bild 90, Szenenwechsel bei Bild 60)
+    # --- search with the station logo (simulated detection: logo from frame 90, scene change at frame 60)
     elysium = parse_batch_header(open(os.path.join(HERE, "sample_Elysium.bat"), encoding="latin-1").read())
     conf = lambda path, n, fps, ref, opts: 0.9 if n >= 90 else 0.0
     avg = lambda path, f, fps, opts: (10, 10, 10) if f >= 60 else (200, 10, 10)
@@ -935,28 +935,28 @@ def test_segments(tmp, videos):
     win.settings.set_option("crop", 0)
     win.segments[0].mask = elysium.segments[0].mask
     win.mnuEnd_Click()
-    check(win.Slider1.value() == 60, f"Logo: erstes Bild mit Logo, dann zurück zum Szenenwechsel: {win.Slider1.value()}")
-    check(any("logo confidence 0.90" in t for t in win.dialogs[-1].texts), "Logosuche meldet jede Probe")
+    check(win.Slider1.value() == 60, f"logo: first frame with logo, then back to the scene change: {win.Slider1.value()}")
+    check(any("logo confidence 0.90" in t for t in win.dialogs[-1].texts), "logo search reports every probe")
     win._go(0)
     conf = lambda path, n, fps, ref, opts: 0.9 if n < 50 else 0.0
     win._conf_fn = conf
     win.mnuNext_Click()
-    check(win.Slider1.value() == 50, f"Logo: Beginn der nächsten Werbung (kein Logo mehr): {win.Slider1.value()}")
+    check(win.Slider1.value() == 50, f"logo: start of the next commercial (no more logo): {win.Slider1.value()}")
 
-    # --- echte Aufnahmen (ffmpeg): Werbung -> Film (sample3) und Film -> Werbung (sample2) mit crop = 72
+    # --- real recordings (ffmpeg): commercial -> movie (sample3) and movie -> commercial (sample2) with crop = 72
     win = seek_window(tmp, videos, ("sample3.ts",), workdir="realwin")
     win._go(0)
     win.mnuEnd_Click()
-    check(win.Slider1.value() == 59, f"echte Aufnahme, Ende der Werbung: {win.Slider1.value()} (erwartet 59)")
+    check(win.Slider1.value() == 59, f"real recording, end of the commercial: {win.Slider1.value()} (expected 59)")
     win = seek_window(tmp, videos, ("sample2.ts",), workdir="realwin2")
     win._go(0)
     win.mnuNext_Click()
-    check(win.Slider1.value() == 76, f"echte Aufnahme, nächste Werbung: {win.Slider1.value()} (erwartet 76)")
+    check(win.Slider1.value() == 76, f"real recording, next commercial: {win.Slider1.value()} (expected 76)")
 
-    # --- Abbruch
+    # --- cancel
     try:
         seek.seek_border("/x", Fraction(25), 1000, 0, 72, True, 1000, {}, lambda *a: 0, lambda: True)
-        check(False, "Abbruch löst keine Ausnahme aus")
+        check(False, "cancel raises no exception")
     except seek.SeekCancelled:
         pass
     got = []
@@ -964,22 +964,22 @@ def test_segments(tmp, videos):
     worker.done.connect(got.append)
     worker.failed.connect(got.append)
     worker.run()
-    check(got == [], "abgebrochene Suche meldet nichts")
-    worker = seek.SeekWorker(lambda cancel: (_ for _ in ()).throw(RuntimeError("kaputt")))
+    check(got == [], "cancelled search reports nothing")
+    worker = seek.SeekWorker(lambda cancel: (_ for _ in ()).throw(RuntimeError("broken")))
     worker.failed.connect(got.append)
     worker.run()
-    check(got == ["kaputt"], "Fehler wird gemeldet")
-    print("Segmente und Suche: OK (verschieben, löschen, alles entfernen, duplizieren mit Suche, Logo, echte Aufnahmen, Abbruch)")
+    check(got == ["broken"], "error is reported")
+    print("Segments and search: OK (move, delete, remove all, duplicate with search, logo, real recordings, cancel)")
 
 
 def test_thumbnail_errors(tmp, videos):
-    """Fehler beim Laden der Vorschaubilder werden gemeldet; fehlende Startzeiten ("N/A") bringen nichts zu Fall."""
+    """Errors when loading the thumbnails are reported; missing start times ("N/A") do not break anything."""
     import types
     import numpy as np
     import ffmpeg_cmd
     import timeline as tl
     from PySide6 import QtWidgets
-    # --- Startzeiten
+    # --- start times
     check(ffmpeg_cmd._start_fraction("N/A", Fraction(7)) == 7 and ffmpeg_cmd._start_fraction(None, Fraction(1)) == 1
           and ffmpeg_cmd._start_fraction("1.400000", Fraction(0)) == Fraction(7, 5) and ffmpeg_cmd._start_fraction("", Fraction(2)) == 2,
           "_start_fraction")
@@ -992,38 +992,38 @@ def test_thumbnail_errors(tmp, videos):
                                  (b'{"format": {"start_time": "1.400000"}, "streams": [{"start_time": "1.824000"}]}',
                                   (Fraction(7, 5), Fraction(228, 125))), (b'{}', (0, 0)), (b'', (0, 0))):
             ffmpeg_cmd.subprocess.run = fake_run(output)
-            check(ffmpeg_cmd.stream_times_of.__wrapped__("/x") == expected, f"Startzeiten {output!r}")
+            check(ffmpeg_cmd.stream_times_of.__wrapped__("/x") == expected, f"start times {output!r}")
     finally:
         ffmpeg_cmd.subprocess.run = real_run
-    # --- Fehler im Hintergrund-Thread
+    # --- error in the background thread
     errors = []
     def broken(path, first, count, fps, size, on_start=None):
-        raise RuntimeError("ffmpeg kaputt")
+        raise RuntimeError("ffmpeg broken")
     loader = tl.ThumbLoader(3, "/x", 0, 9, Fraction(25), (53, 42), broken)
     loader.failed.connect(lambda token, text: errors.append((token, text)))
     loader.run()
-    check(errors == [(3, "RuntimeError: ffmpeg kaputt")], f"Fehler wird gemeldet: {errors}")
+    check(errors == [(3, "RuntimeError: ffmpeg broken")], f"error is reported: {errors}")
     loader = tl.ThumbLoader(4, "/x", 0, 9, Fraction(25), (53, 42), broken)
     loader.failed.connect(lambda token, text: errors.append((token, text)))
     loader.cancelled = True
     loader.run()
-    check(len(errors) == 1, "abgebrochene Anforderung meldet keinen Fehler")
-    # --- Hauptfenster: einmalige Meldung, Titel
+    check(len(errors) == 1, "cancelled request reports no error")
+    # --- main window: one-time message, title
     win = seek_window(tmp, videos, workdir="thumberr", names=())
     win._thumb_fn = broken
     win.OpenVideo(os.path.join(videos, "sample2.ts"))
     shown = [m for m in win.messages if "thumbnails could not be loaded" in m]
-    check(len(shown) == 1 and "ffmpeg kaputt" in shown[0], f"Meldung zum Fehler: {win.messages}")
+    check(len(shown) == 1 and "ffmpeg broken" in shown[0], f"message about the error: {win.messages}")
     titles = [a[0] for a in win.called("setWindowTitle")]
     check(not win._thumbs_busy and titles[-1] == "MediaMaker " + __import__("mediamaker").VERSION and any("loading thumbnails" in t for t in titles),
-          f"Titel während und nach dem Laden: {titles[-3:]}")
+          f"title during and after loading: {titles[-3:]}")
     win.timeline_mode = "B"
     win._thumb_token += 1
-    win.thumbs_failed(win._thumb_token, "zweiter Fehler")
-    check(len([m for m in win.messages if "thumbnails could not" in m]) == 1, "Meldung nur einmal")
-    win.thumbs_failed(win._thumb_token - 5, "überholt")
-    check(len([m for m in win.messages if "thumbnails could not" in m]) == 1, "überholte Fehler werden ignoriert")
-    # --- Platzhalter für noch nicht geladene Bilder
+    win.thumbs_failed(win._thumb_token, "second error")
+    check(len([m for m in win.messages if "thumbnails could not" in m]) == 1, "message only once")
+    win.thumbs_failed(win._thumb_token - 5, "superseded")
+    check(len([m for m in win.messages if "thumbnails could not" in m]) == 1, "superseded errors are ignored")
+    # --- placeholders for pictures not yet loaded
     class Painter:
         def __init__(self): self.fills, self.lines = [], []
         def drawImage(self, *a): pass
@@ -1033,18 +1033,18 @@ def test_thumbnail_errors(tmp, videos):
     painter = Painter()
     tl.draw_strip(painter, __import__("PySide6.QtWidgets", fromlist=["Rect"]).Rect(2, 2, 1085, 45),
                   [("pending", None)] * 20)
-    check(len(painter.fills) == 21 and painter.lines == [], f"20 graue Platzhalter und der Strich: {len(painter.fills)}")
-    print("Vorschaubilder-Fehler: OK (Startzeiten ohne Angabe, Fehlermeldung, einmalig, Titel, Platzhalter)")
+    check(len(painter.fills) == 21 and painter.lines == [], f"20 grey placeholders and the line: {len(painter.fills)}")
+    print("Thumbnail errors: OK (start times without value, error message, once, title, placeholders)")
 
 
 def test_first_frame(tmp, videos):
-    """Beginnt der Ton früher als das Video, hat das erste Videobild nicht die Nummer 0: Der Beginn des Segments steht dann
-    auf dem ersten echten Bild, und die Zeitleiste zeigt rechts vom Strich sofort Vorschaubilder."""
+    """If the sound starts earlier than the video, the first video frame does not have the number 0: the start of the segment is then
+        on the first real frame, and the timeline shows thumbnails right of the line immediately."""
     import ffmpeg_cmd
     import timeline as tl
     from mediaprobe import first_frame_number
     check([first_frame_number(os.path.join(videos, n), Fraction(25)) for n in ("sample.ts", "sample2.ts", "sample3.ts")] == [33, 10, 14],
-          "Nummer des ersten Bildes")
+          "number of the first frame")
     work = os.path.join(tmp, "firstwin")
     os.makedirs(work, exist_ok=True)
     s2 = os.path.join(videos, "sample2.ts")
@@ -1053,61 +1053,61 @@ def test_first_frame(tmp, videos):
     win.OpenVideo(s2)
     seg = win.segments[0]
     check((seg.first_frame, seg.start, seg.end, seg.total_frames) == (10, 10, 158, 158), f"Segment: {seg.first_frame}/{seg.start}/{seg.end}")
-    check((win.Slider1.minimum(), win.Slider1.maximum(), win.Slider1.value()) == (10, 158, 10), "Schieber beginnt beim ersten Bild")
+    check((win.Slider1.minimum(), win.Slider1.maximum(), win.Slider1.value()) == (10, 158, 10), "slider starts at the first frame")
     cells = win.timeline_cells()
-    check([c[0] for c in cells] == ["cross"] * 10 + ["image"] * 10, f"Zeitleiste: 10 Kreuze links, 10 Bilder rechts: {[c[0] for c in cells]}")
+    check([c[0] for c in cells] == ["cross"] * 10 + ["image"] * 10, f"timeline: 10 crosses left, 10 pictures right: {[c[0] for c in cells]}")
     check(win.lblInfo.text() == "Frame 0" and win.lvwSegments.topLevelItem(0).text(3) == "0"
-          and win.lvwSegments.topLevelItem(0).text(6) == "148", "Anzeige: Zählung ab dem ersten Videobild (Nummer 0)")
-    # Grenzen
+          and win.lvwSegments.topLevelItem(0).text(6) == "148", "display: counting from the first video frame (number 0)")
+    # limits
     win.cmdPos_Click(0)
-    check(win.Slider1.value() == 10, "Anfang")
+    check(win.Slider1.value() == 10, "start")
     win.cmdPos_Click(6)
-    check(win.Slider1.value() == 158, "Ende")
+    check(win.Slider1.value() == 158, "end")
     win.cmdPos_Click(9)
-    check(win.timeline_center == 10, "Zeitleiste um den Beginn")
+    check(win.timeline_center == 10, "timeline around the start")
     def click(index):
         area = win.picTimeline.contentsRect()
         win._mouse_x = area.x() + index * tl.cell_width(area.width()) + 5
         win.picTimeline_Click()
     click(0)
-    check(seg.start == 10, f"Marker A nicht vor dem ersten Bild: {seg.start}")
+    check(seg.start == 10, f"marker A not before the first frame: {seg.start}")
     win._go(60)
     win.cmdPos_Click(7)
     win.cmdPos_Click(11)
-    check((seg.start, seg.end) == (10, 158), "Marker zurücksetzen auf erstes und letztes Bild")
+    check((seg.start, seg.end) == (10, 158), "reset markers to first and last frame")
     win.cmdPos_Click(10)
     cells = win.timeline_cells()
-    check([c[0] for c in cells][:10] == ["image"] * 10 and [c[0] for c in cells][10:] == ["cross"] * 10, "Ende: Bilder links, Kreuze rechts")
-    # gespeichert, ganze Datei = kein trim im Befehl
-    check(load_segments(os.path.join(work, "MediaMaker.json"))[0].first_frame == 10, "first_frame gespeichert")
+    check([c[0] for c in cells][:10] == ["image"] * 10 and [c[0] for c in cells][10:] == ["cross"] * 10, "end: frames on the left, crosses on the right")
+    # saved, whole file = no trim in the command
+    check(load_segments(os.path.join(work, "MediaMaker.json"))[0].first_frame == 10, "first_frame saved")
     job = Job(os.path.join(tmp, "o.mp4"), {"scale": "720:576", "sws_flags": "lanczos", "fps": "25.000", "bv": "3072k", "ba": "192k",
                                           "acodec_out": "aac", "ar": "48000"}, {}, [seg])
     times = {s2: (Fraction(7, 5), Fraction(228, 125))}
     cmd = ffmpeg_cmd.build_command(job, stream_times=times)
-    check("trim=" not in cmd[cmd.index("-filter_complex") + 1], "ganze Datei: kein trim")
+    check("trim=" not in cmd[cmd.index("-filter_complex") + 1], "whole file: no trim")
     seg.start = 60
     cmd = ffmpeg_cmd.build_command(job, stream_times=times)
-    check("trim=" in cmd[cmd.index("-filter_complex") + 1], "Ausschnitt: trim")
-    # alte Listen ohne first_frame verhalten sich wie bisher
+    check("trim=" in cmd[cmd.index("-filter_complex") + 1], "excerpt: trim")
+    # old lists without first_frame behave as before
     legacy = Segment(1, s2, "sample2.ts", 0, 148, 148, Fraction(25), 720, 576, 0, 0, "a", 0, 0, 0, 0, 48000, "")
-    check(legacy.first_frame == 0 and not (legacy.end - legacy.start < legacy.total_frames - legacy.first_frame), "alte Liste: ganze Datei")
-    # genaue Zählung: Gesamtzahl = erstes Bild + Anzahl der Bilder
+    check(legacy.first_frame == 0 and not (legacy.end - legacy.start < legacy.total_frames - legacy.first_frame), "old list: whole file")
+    # exact count: total = first frame + number of frames
     seg.start, seg.end = 10, 158
     win.frames_counted(s2, 140, 8, 0.0)
-    check((seg.total_frames, seg.end) == (150, 150), f"nach der Zählung: {seg.total_frames}/{seg.end}")
-    check(win.Slider1.minimum() == 10 and win.Slider1.maximum() == 150, "Schieber nach der Zählung")
-    print("Erstes Bild: OK (Segmentbeginn auf dem ersten Videobild, Zeitleiste, Grenzen, Speichern, Befehl ohne trim)")
+    check((seg.total_frames, seg.end) == (150, 150), f"after counting: {seg.total_frames}/{seg.end}")
+    check(win.Slider1.minimum() == 10 and win.Slider1.maximum() == 150, "slider after counting")
+    print("First frame: OK (segment start on the first video frame, timeline, limits, saving, command without trim)")
 
 
 def test_marker_start(tmp, videos):
-    """Ein Segment mit Marker A > 0 wird beim Anklicken an dieser Stelle angezeigt (nicht am Dateianfang); alte Listen werden
-    auf das erste Videobild umgestellt; VLC bekommt die Startposition als Medienoption."""
+    """A segment with marker A > 0 is shown at this position when clicked (not at the start of the file); old lists are converted
+        to the first video frame; VLC receives the start position as a media option."""
     import types
     from types import SimpleNamespace
     import player as pl
     from PySide6.QtCore import QTimer
     s2 = os.path.join(videos, "sample2.ts")
-    # --- alte Liste (ohne first_frame): Aktualisierung beim Laden
+    # --- old list (without first_frame): update on loading
     work = os.path.join(tmp, "legacywin")
     os.makedirs(work, exist_ok=True)
     legacy = [Segment(1, s2, "sample2.ts", 0, 148, 148, Fraction(25), 720, 576, 3000, 192, "a", 0, 0, 0, 0, 48000, ""),
@@ -1117,26 +1117,26 @@ def test_marker_start(tmp, videos):
     win = make_window(work, thumb_fn=quick_thumbs, first_fn=lambda path, fps: 10)
     win.showEvent(None)
     got = [(s.first_frame, s.start, s.end, s.total_frames) for s in win.segments]
-    check(got == [(10, 10, 158, 158), (10, 50, 158, 158), (10, 20, 90, 158)], f"alte Liste umgestellt: {got}")
-    check([(s.first_frame, s.start, s.end, s.total_frames) for s in load_segments(os.path.join(work, "MediaMaker.json"))] == got, "umgestellt gespeichert")
-    win2 = make_window(work, thumb_fn=quick_thumbs, first_fn=lambda path, fps: 99)           # nicht noch einmal umstellen
+    check(got == [(10, 10, 158, 158), (10, 50, 158, 158), (10, 20, 90, 158)], f"old list converted: {got}")
+    check([(s.first_frame, s.start, s.end, s.total_frames) for s in load_segments(os.path.join(work, "MediaMaker.json"))] == got, "converted and saved")
+    win2 = make_window(work, thumb_fn=quick_thumbs, first_fn=lambda path, fps: 99)           # do not convert again
     win2.showEvent(None)
-    check([(s.first_frame, s.total_frames) for s in win2.segments] == [(10, 158)] * 3, "bereits umgestellte Liste bleibt unverändert")
-    # --- Anklicken: Anzeige an Marker A, nicht am Dateianfang
+    check([(s.first_frame, s.total_frames) for s in win2.segments] == [(10, 158)] * 3, "already converted list stays unchanged")
+    # --- clicking: display at marker A, not at the start of the file
     win2.lvwSegments.select_row(1)
     win2.lvwSegments_Click()
     check(win2.player.log[-1] == "show_at 2000" and win2.Slider1.value() == 50 and win2.lblInfo.text() == "Frame 40",
-          f"Segment mit A=50: {win2.player.log[-2:]}, Schieber {win2.Slider1.value()}, {win2.lblInfo.text()}")
-    # Zeitmeldungen von VLC unmittelbar danach (von der alten Stelle) verändern Anzeige und Schieber nicht
+          f"segment with A=50: {win2.player.log[-2:]}, slider {win2.Slider1.value()}, {win2.lblInfo.text()}")
+    # time messages from VLC right afterwards (from the old position) do not change display and slider
     win2.player.time_changed.emit(0)
-    check(win2.lblInfo.text() == "Frame 40" and win2.Slider1.value() == 50 and win2.last_frame == 50, "alte Zeitmeldung wird ignoriert")
+    check(win2.lblInfo.text() == "Frame 40" and win2.Slider1.value() == 50 and win2.last_frame == 50, "old time message is ignored")
     now = [100.0]
     win2._clock = lambda: now[0]
     win2._ignore_time_until = 101.5
     now[0] = 102.0
     win2.player.time_changed.emit(4000)
-    check(win2.lblInfo.text() == "Frame 90", f"später gelten Zeitmeldungen wieder: {win2.lblInfo.text()}")
-    # --- VLC: Startposition als Medienoption und Nachprüfung
+    check(win2.lblInfo.text() == "Frame 90", f"later time messages count again: {win2.lblInfo.text()}")
+    # --- VLC: start position as media option and re-check
     class Media:
         def __init__(self, path): self.path, self.options = path, []
         def add_option(self, o): self.options.append(o)
@@ -1178,71 +1178,71 @@ def test_marker_start(tmp, videos):
         player.load("/x/film.ts")
         player.show_at(193_000)
         check(("set_media", "/x/film.ts", (":start-time=193.000",)) in mp.calls and ("play",) in mp.calls and player._pending_show == 193_000,
-              f"Startposition als Medienoption: {mp.calls}")
+              f"start position as media option: {mp.calls}")
         QTimer.pending.clear()
         mp.calls.clear()
-        player.playing.emit()                                       # VLC meldet: läuft
-        check(("pause", 1) in mp.calls and len(QTimer.pending) == 1 and QTimer.pending[0][0] == 150, f"danach anhalten: {mp.calls}")
-        mp.t = 0                                                    # VLC steht noch am Anfang: wird nachgeholt, wiederholt
+        player.playing.emit()                                       # VLC reports: running
+        check(("pause", 1) in mp.calls and len(QTimer.pending) == 1 and QTimer.pending[0][0] == 150, f"then pause: {mp.calls}")
+        mp.t = 0                                                    # VLC is still at the start: caught up, repeatedly
         QTimer.pending.pop(0)[1]()
         check(("set_time", 193_000) in mp.calls and len(QTimer.pending) == 1 and player._awaiting_position == 193_000,
-              f"Nachprüfung springt und prüft erneut: {mp.calls}")
-        mp.t = 193_100                                              # jetzt erreicht
+              f"re-check jumps and checks again: {mp.calls}")
+        mp.t = 193_100                                              # reached now
         mp.calls.clear()
         QTimer.pending.pop(0)[1]()
-        check(player._awaiting_position is None and QTimer.pending == [] and mp.calls == [], "Position erreicht: fertig")
-        check(mp.mutes[:1] == [True] and mp.mutes[-1] is False and player._muted is False, f"Ton: erst stumm, nach Erreichen wieder an: {mp.mutes}")
-        # VLC meldet "seekable": sofort an die Stelle springen (früher als "Playing")
+        check(player._awaiting_position is None and QTimer.pending == [] and mp.calls == [], "position reached: done")
+        check(mp.mutes[:1] == [True] and mp.mutes[-1] is False and player._muted is False, f"sound: muted first, on again after reaching: {mp.mutes}")
+        # VLC reports "seekable": jump to the position immediately (earlier than "Playing")
         mp.state = 5
         player.show_at(41_000)
         mp.calls.clear()
         player.seekable.emit(False)
-        check(("set_time", 41_000) not in mp.calls, "nicht seekable: kein Sprung")
+        check(("set_time", 41_000) not in mp.calls, "not seekable: no jump")
         player.seekable.emit(True)
-        check(("set_time", 41_000) in mp.calls, f"seekable: Sprung an die Stelle: {mp.calls}")
-        player.play()                                              # Benutzer startet: nichts mehr abwarten, Ton an
-        check(player._awaiting_position is None and player._muted is False and mp.mutes[-1] is False, "play() beendet das Anfahren und schaltet den Ton ein")
+        check(("set_time", 41_000) in mp.calls, f"seekable: jump to the position: {mp.calls}")
+        player.play()                                              # the user starts: stop waiting, sound on
+        check(player._awaiting_position is None and player._muted is False and mp.mutes[-1] is False, "play() ends the approach and switches the sound on")
         player.seekable.emit(True)
-        check(mp.calls.count(("set_time", 41_000)) == 1, "nach play() kein weiterer Sprung")
+        check(mp.calls.count(("set_time", 41_000)) == 1, "no further jump after play()")
         mp.state = 5
         QTimer.pending.clear()
-        player.show_at(5000)                                        # Zustand Gestoppt: wieder über start-time
+        player.show_at(5000)                                        # state stopped: again via start-time
         QTimer.pending.clear()
         player.playing.emit()
         mp.t = 5100
         mp.calls.clear()
         QTimer.pending[0][1]()
-        check(mp.calls == [] and player._awaiting_position is None, "Position erreicht: kein zusätzlicher Sprung")
-        # überholte Anforderung: eine zweite Stelle wurde inzwischen angefordert
+        check(mp.calls == [] and player._awaiting_position is None, "position reached: no additional jump")
+        # superseded request: a second position has been requested in the meantime
         player.show_at(9000)
         QTimer.pending.clear()
         player.playing.emit()
         player.stop()
         mp.calls.clear()
         QTimer.pending[0][1]()
-        check(mp.calls == [], "überholte Nachprüfung tut nichts")
+        check(mp.calls == [], "superseded re-check does nothing")
         mp.state = 5
         player.show_at(9000)
         QTimer.pending.clear()
         player.playing.emit()
-        mp.t = -1                                                   # VLC kennt die Zeit nicht: höchstens 30 Versuche
+        mp.t = -1                                                   # VLC does not know the time: at most 30 attempts
         for _ in range(60):
             if not QTimer.pending:
                 break
             QTimer.pending.pop(0)[1]()
-        check(player._awaiting_position is None, "nach höchstens 30 Versuchen wird aufgegeben")
+        check(player._awaiting_position is None, "give up after at most 30 attempts")
         mp.state = 5
-        mp.state = 4                                                # pausiert: direkter Sprung
+        mp.state = 4                                                # paused: direct jump
         mp.calls.clear()
         player.show_at(7000)
-        check(mp.calls == [("set_time", 7000)], f"pausiert: direkter Sprung: {mp.calls}")
+        check(mp.calls == [("set_time", 7000)], f"paused: direct jump: {mp.calls}")
     finally:
         del sys.modules["vlc"]
-    print("Marker A beim Anklicken: OK (Anzeige an Marker A, alte Listen, Zeitmeldungen, VLC-Startposition)")
+    print("Marker A on click: OK (display at marker A, old lists, time messages, VLC start position)")
 
 
 def test_jump_to_frame(tmp, videos):
-    """Klick auf die Bildnummer: Eingabe einer Bildnummer, zu der gesprungen wird."""
+    """Click on the frame number: input of a frame number to jump to."""
     s2 = os.path.join(videos, "sample2.ts")
     work = os.path.join(tmp, "jumpwin")
     os.makedirs(work, exist_ok=True)
@@ -1253,53 +1253,53 @@ def test_jump_to_frame(tmp, videos):
     handler = win.lblInfo._vb_filter.handlers["click"]
     win.answer_int = 99
     handler()
-    check(asked == [], "ohne Segment passiert nichts")
+    check(asked == [], "nothing happens without a segment")
     win.OpenVideo(s2)
     win.answer_int = 99
     handler()
-    check(asked[-1][2:] == (0, 0, 148) and "0 to 148" in asked[-1][1], f"Eingabe in angezeigten Nummern mit Vorgabe und Bereich: {asked[-1]}")
+    check(asked[-1][2:] == (0, 0, 148) and "0 to 148" in asked[-1][1], f"input in displayed numbers with default and range: {asked[-1]}")
     check(win.Slider1.value() == 109 and win.lblInfo.text() == "Frame 99" and win.player.time == 4360,
-          f"Eingabe 99 = absolut 109: {win.Slider1.value()} {win.player.time}")
+          f"input 99 = absolute 109: {win.Slider1.value()} {win.player.time}")
     win._go(40)
-    win.answer_int = None                                         # abgebrochen
+    win.answer_int = None                                         # cancelled
     handler()
-    check(asked[-1][2] == 30, "Vorgabe ist das aktuelle Bild (angezeigt: 40 - 10)")
-    check(win.Slider1.value() == 40, "Abbruch ändert nichts")
-    win.answer_int = 30                                           # gleiche Stelle (angezeigt 30 = absolut 40): Bild wird neu angezeigt
+    check(asked[-1][2] == 30, "default is the current frame (displayed: 40 - 10)")
+    check(win.Slider1.value() == 40, "cancel changes nothing")
+    win.answer_int = 30                                           # same position (displayed 30 = absolute 40): picture is shown again
     shows = len([e for e in win.player.log if e.startswith("show_at")])
     handler()
-    check(len([e for e in win.player.log if e.startswith("show_at")]) == shows + 1 and win.Slider1.value() == 40, "gleiche Stelle: Bild neu anzeigen")
-    win.answer_int = 5000                                         # außerhalb: Schieber begrenzt
+    check(len([e for e in win.player.log if e.startswith("show_at")]) == shows + 1 and win.Slider1.value() == 40, "same position: show picture again")
+    win.answer_int = 5000                                         # outside: slider limited
     handler()
-    check(win.Slider1.value() == 158, "Wert außerhalb des Bereichs wird begrenzt")
+    check(win.Slider1.value() == 158, "value outside the range is limited")
     check(win.lblInfo.called("setToolTip") != [], "Tooltip")
-    print("Sprung zu einer Bildnummer: OK (Eingabe, Vorgabe, Bereich, Abbruch, gleiche Stelle)")
+    print("Jump to a frame number: OK (input, default, range, cancel, same position)")
 
 
 def test_media_info(tmp, videos):
-    """Media info (Strg+K): Bericht aus ffprobe mit Abschnitt "MediaMaker", Dialog mit Reitern und Kopieren; Tooltip der Zeitleiste."""
+    """Media info (Ctrl+K): report from ffprobe with section "MediaMaker", dialog with buttons and copying; tooltip of the timeline."""
     import mediainfo
     from mediaprobe import first_frame_number
     from PySide6.QtWidgets import QApplication
     s2 = os.path.join(videos, "sample2.ts")
-    # --- Bericht
+    # --- report
     sections = mediainfo.build_sections(s2)
     names = [n for n, _ in sections]
-    check(names == ["General", "Video #1", "Audio #1 (deu)", "MediaMaker"], f"Abschnitte: {names}")
+    check(names == ["General", "Video #1", "Audio #1 (deu)", "MediaMaker"], f"sections: {names}")
     text = dict(sections)
     check("720 x 576" in text["Video #1"] and "25.000 fps" in text["Video #1"] and "mpegts" in text["General"]
-          and "Complete name" in text["General"], "Inhalt der Abschnitte")
+          and "Complete name" in text["General"], "content of the sections")
     first = first_frame_number(s2, Fraction(25))
     mm = text["MediaMaker"]
     check(mediainfo._kv("First video frame offset", first) in mm and "Container start" in mm and "Video start" in mm
-          and "Selected segment" not in mm, f"MediaMaker-Abschnitt: {mm[:300]}")
+          and "Selected segment" not in mm, f"MediaMaker section: {mm[:300]}")
     seg = Segment(1, s2, "sample2.ts", first, 100, 148 + first, Fraction(25), 720, 576, 0, 0, "a", 1, 2, 3, 4, 48000, "")
     seg.first_frame = first
     mm = dict(mediainfo.build_sections(s2, seg))["MediaMaker"]
     check("Marker A (start)" in mm and f": {first}" in mm and "Frames in the segment" in mm and "1/2/3/4" in mm and "Logo mask / area           : none" in mm.replace("  ", " ").replace(" :", "  :") or "Logo mask" in mm,
-          "Abschnitt mit Segment")
-    check(mediainfo.full_text(sections).count("\n\n") >= 3, "voller Text")
-    # --- Menü
+          "section with segment")
+    check(mediainfo.full_text(sections).count("\n\n") >= 3, "full text")
+    # --- menu
     work = os.path.join(tmp, "infowin")
     os.makedirs(work, exist_ok=True)
     win = make_window(work, thumb_fn=quick_thumbs, fresh=True)
@@ -1307,36 +1307,36 @@ def test_media_info(tmp, videos):
     shown = []
     win.show_media_info = lambda title, secs: shown.append((title, [n for n, _ in secs]))
     win.mnuMediaInfo_Click()
-    check(shown == [], "ohne Segment passiert nichts")
+    check(shown == [], "nothing happens without a segment")
     win.OpenVideo(s2)
     win.mnuMediaInfo_Click()
-    check(shown == [("sample2.ts", names)], f"Menü: {shown}")
+    check(shown == [("sample2.ts", names)], f"menu: {shown}")
     real_build = mediainfo.build_sections
-    mediainfo.build_sections = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("ffprobe fehlt"))
+    mediainfo.build_sections = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("ffprobe missing"))
     try:
         win.mnuMediaInfo_Click()
     finally:
         mediainfo.build_sections = real_build
-    check("could not be collected" in win.messages[-1] and "ffprobe fehlt" in win.messages[-1], "Fehler wird gemeldet")
-    # --- Dialog: veränderbar, Knöpfe gleichmäßig verteilt, Text kopierbar
+    check("could not be collected" in win.messages[-1] and "ffprobe missing" in win.messages[-1], "error is reported")
+    # --- dialog: resizable, buttons evenly distributed, text copyable
     from mediainfo_dialog import frmMediaInfo
     from PySide6.QtWidgets import QHBoxLayout, QSizePolicy
     dialog = frmMediaInfo("sample2.ts", sections)
     check(dialog.called("setWindowTitle")[-1] == ("Media info for sample2.ts",) and dialog.TabStrip1.called("hide") != []
-          and dialog.lblMediaInfo.called("hide") != [] and dialog.text.toPlainText() == text["General"], "Dialog: Titel, erster Abschnitt")
+          and dialog.lblMediaInfo.called("hide") != [] and dialog.text.toPlainText() == text["General"], "dialog: title, first section")
     flags = dialog.called("setWindowFlag")
     check(dialog.called("setMaximumSize") == [(16777215, 16777215)] and dialog.called("setMinimumSize") != []
-          and "WindowMaximizeButtonHint" in repr(flags[-1][0]) and flags[-1][1] is True, "Fenster ist in der Größe veränderbar")
-    check(len(dialog.tab_buttons) == 4 and [b._args[0] for b in dialog.tab_buttons] == names, "ein Knopf je Abschnitt")
+          and "WindowMaximizeButtonHint" in repr(flags[-1][0]) and flags[-1][1] is True, "window is resizable")
+    check(len(dialog.tab_buttons) == 4 and [b._args[0] for b in dialog.tab_buttons] == names, "one button per section")
     check(all(len(b.called("setSizePolicy")) == 1 and "Ignored" in repr(b.called("setSizePolicy")[0][0]) for b in dialog.tab_buttons),
-          "Größenregel: unabhängig vom Text der Knöpfe")
+          "size policy: independent of the text of the buttons")
     check([w for w, _ in dialog.tab_row.added_] == dialog.tab_buttons and [st for _, st in dialog.tab_row.added_] == [1, 1, 1, 1],
-          "alle Knöpfe mit gleichem Anteil an der Breite")
+          "all buttons with the same share of the width")
     dialog.tab_buttons[3].clicked.emit(False)
-    check(dialog.text.toPlainText() == text["MediaMaker"] and dialog.tab_buttons[3].called("setChecked")[-1] == (True,), "Knopf zeigt den Abschnitt")
+    check(dialog.text.toPlainText() == text["MediaMaker"] and dialog.tab_buttons[3].called("setChecked")[-1] == (True,), "button shows the section")
     dialog.copy_all()
-    check(QApplication._Clipboard.text_ == mediainfo.full_text(sections), "alles kopieren")
-    # --- Tooltip der Zeitleiste mit der Bildnummer
+    check(QApplication._Clipboard.text_ == mediainfo.full_text(sections), "copy all")
+    # --- tooltip of the timeline with the frame number
     import timeline as tl
     area = win.picTimeline.contentsRect()
     cw = tl.cell_width(area.width())
@@ -1348,56 +1348,56 @@ def test_media_info(tmp, videos):
     check(tip.startswith(f"Frame {center + 3}") and "Click timeline to adjust left" in tip, f"Tooltip: {tip!r}")
     win.picTimeline_MouseMove(0, 0, area.x() + 2, 10)
     tip = win.picTimeline.called("setToolTip")[-1][0]
-    check(tip.startswith(f"Frame {center - 10} (no picture)"), f"Tooltip vor dem ersten Bild: {tip!r}")
-    print("Media info: OK (Bericht, Segmentwerte, Menü, Dialog, Kopieren, Tooltip mit Bildnummer)")
+    check(tip.startswith(f"Frame {center - 10} (no picture)"), f"tooltip before the first frame: {tip!r}")
+    print("Media info: OK (report, segment values, menu, dialog, copying, tooltip with frame number)")
 
 
 def test_autocrop(tmp, videos):
-    """Auto crop (Strg+R): schwarze Zeilen am Bildrand zählen, als Wert für die Option crop vorschlagen und übernehmen."""
+    """Auto crop (Ctrl+R): count black lines at the picture edge, suggest them as value for the option crop and take it over."""
     s2 = os.path.join(videos, "sample2.ts")
     asked = []
-    # --- mit echter Randerkennung an einem Bild des Films (der Beispielfilm hat einen Rand von etwa 72 Zeilen)
+    # --- with real border detection at a frame of the movie (the sample movie has a border of about 72 lines)
     win = seek_window(tmp, videos, workdir="autocropwin")
     win.ask_int = lambda title, label, value, low, high: (asked.append((title, label, value, low, high)), win.answer_int)[1]
     win.answer_int = None
-    check(win.options["crop"] == "72" or int(win.options["crop"]) == 72, f"Ausgangswert: {win.options['crop']}")
+    check(win.options["crop"] == "72" or int(win.options["crop"]) == 72, f"initial value: {win.options['crop']}")
     win._go(win.segment.first_frame + 30)
     win.mnuAutoCrop_Click()
     title, label, value, low, high = asked[-1]
     check(abs(value - 72) <= 3 and low == 0 and high == 144 and "Current value in the options: 72" in label
           and f"{value} black lines at frame 30" in label and win.dialogs[-1].closed and "Auto-cropping" in win.dialogs[-1].message,
-          f"vorgeschlagener Wert: {value}, Bereich {low}..{high}: {label!r}")
-    check("was NOT changed" in win.messages[-1] and int(win.options["crop"]) == 72, "Abbruch: Wert bleibt")
+          f"suggested value: {value}, range {low}..{high}: {label!r}")
+    check("was NOT changed" in win.messages[-1] and int(win.options["crop"]) == 72, "cancel: value stays")
     win.answer_int = 70
     win.mnuAutoCrop_Click()
-    check(int(win.options["crop"]) == 70 and int(win.settings.options["crop"]) == 70, "übernommen (angepasster Wert)")
-    # --- vorgetäuschte Erkennung: nichts gefunden, sehr großer Rand
+    check(int(win.options["crop"]) == 70 and int(win.settings.options["crop"]) == 70, "taken over (adjusted value)")
+    # --- simulated detection: nothing found, very large border
     found = {"n": 0}
     win = seek_window(tmp, videos, workdir="autocropwin2", border_fn=lambda path, n, fps, opts: found["n"])
     win.ask_int = lambda title, label, value, low, high: (asked.append((title, label, value, low, high)), win.answer_int)[1]
     win.answer_int = 0
     win.mnuAutoCrop_Click()
     check(asked[-1][2] == 0 and "No black border line(s) found" in asked[-1][1] and int(win.options["crop"]) == 0,
-          f"nichts gefunden: Vorgabe 0, Option 0: {asked[-1][1]!r}")
+          f"nothing found: default 0, option 0: {asked[-1][1]!r}")
     found["n"] = 180
     win.answer_int = 180
     win.mnuAutoCrop_Click()
-    check(asked[-1][2] == 180 and asked[-1][4] == 180 and int(win.options["crop"]) == 180, "Obergrenze wächst mit dem gefundenen Wert")
-    # --- ohne Segment passiert nichts; Fehler in der Erkennung wird gemeldet
+    check(asked[-1][2] == 180 and asked[-1][4] == 180 and int(win.options["crop"]) == 180, "upper limit grows with the found value")
+    # --- nothing happens without a segment; error in the detection is reported
     win2 = seek_window(tmp, videos, names=(), workdir="autocropwin3")
     count = len(asked)
     win2.mnuAutoCrop_Click()
-    check(len(asked) == count, "ohne Segment passiert nichts")
+    check(len(asked) == count, "nothing happens without a segment")
     def broken(path, n, fps, opts):
-        raise RuntimeError("ffmpeg kaputt")
+        raise RuntimeError("ffmpeg broken")
     win3 = seek_window(tmp, videos, workdir="autocropwin4", border_fn=broken)
     win3.mnuAutoCrop_Click()
-    check("Auto-cropping failed" in win3.messages[-1] and "ffmpeg kaputt" in win3.messages[-1], f"Fehler wird gemeldet: {win3.messages[-1:]}")
-    print("Auto crop: OK (Zählung am aktuellen Bild, Vorschlag mit Vergleichswert, Übernahme, Abbruch, Fehler)")
+    check("Auto-cropping failed" in win3.messages[-1] and "ffmpeg broken" in win3.messages[-1], f"error is reported: {win3.messages[-1:]}")
+    print("Auto crop: OK (counting at the current frame, suggestion with comparison value, taking over, cancel, error)")
 
 
 def test_input_box(tmp, videos):
-    """Eingabefelder (Schätzen von Audio-/Video-kb/s u. a.): feste Breite wie die InputBox von VB6, Text wird umgebrochen."""
+    """Input fields (estimating audio/video kb/s and others): fixed width like the InputBox of VB6, text is wrapped."""
     import dialogs
     from PySide6.QtWidgets import QDialog
     long_text = ("The average video bitrate has been calculated to 3072k bits/s and will be saved in your current profile "
@@ -1406,79 +1406,79 @@ def test_input_box(tmp, videos):
     box = dialogs._input_box(None, "Estimate video kb/s", long_text, dialogs.QtWidgets.QInputDialog.InputMode.TextInput)
     check(box.called("setFixedWidth") == [(440,)] and box.called("resize")[-1][0] == 440 and box.label_.called("setWordWrap") == [(True,)]
           and box.called("setWindowTitle") == [("Estimate video kb/s",)] and box.called("setLabelText") == [(long_text,)],
-          "feste Breite, Umbruch, Titel, Text")
-    check(dialogs.ask_text_box(None, "T", long_text, "3072k") == "2500", "Text eingeben")
+          "fixed width, wrapping, title, text")
+    check(dialogs.ask_text_box(None, "T", long_text, "3072k") == "2500", "enter text")
     QDialog.exec_result = 0
-    check(dialogs.ask_text_box(None, "T", long_text, "3072k") is None, "Abbruch ergibt None")
+    check(dialogs.ask_text_box(None, "T", long_text, "3072k") is None, "cancel gives None")
     QDialog.exec_result, QDialog.on_exec = 1, lambda d: d.setIntValue(70)
-    check(dialogs.ask_int_box(None, "Auto crop", "label", 72, 0, 144) == 70, "ganze Zahl eingeben")
+    check(dialogs.ask_int_box(None, "Auto crop", "label", 72, 0, 144) == 70, "enter whole number")
     box = dialogs._input_box(None, "x", "y", dialogs.QtWidgets.QInputDialog.InputMode.IntInput)
-    check(box.called("setInputMode") != [], "Eingabeart gesetzt")
+    check(box.called("setInputMode") != [], "input mode set")
     QDialog.exec_result, QDialog.on_exec = 1, None
-    print("Eingabefelder: OK (feste Breite 440 px, Umbruch, Text und Zahl, Abbruch)")
+    print("Input fields: OK (fixed width 440 px, wrapping, text and number, cancel)")
 
 
 def test_option_changes(tmp, videos):
-    """Umsortierung: pad im Profil, focus entfällt, neue Suchparameter, gegliederter Dialog, Schrittweiten in Sekunden."""
+    """Rearrangement: pad in the profile, focus dropped, new search parameters, grouped dialog, step widths in seconds."""
     import logo
     import seek
     from profiles import HIDDEN_OPTIONS, OPTION_GROUPS, ordered_profile, validate_options, validate_profile
     from settings import DEFAULT_TOOLTIPS, default_options
-    # --- Standardwerte und Prüfung
+    # --- defaults and checking
     d = default_options()
     check("pad" not in d and "focus" not in d and d["step_end"] == "40" and d["step_next"] == "240" and d["border_tol"] == "3"
-          and d["logo_rewind"] == "1.8" and d["logo_edge"] == "18" and d["logo_conf"] == "0.2", "Standardwerte")
-    check(validate_options(d) == [], "Standardwerte sind gültig")
+          and d["logo_rewind"] == "1.8" and d["logo_edge"] == "18" and d["logo_conf"] == "0.2", "defaults")
+    check(validate_options(d) == [], "defaults are valid")
     check(len(validate_options({"step_end": "0"})) == 1 and len(validate_options({"border_tol": "-1"})) == 1
           and len(validate_options({"logo_rewind": "abc"})) == 1 and validate_options({"logo_rewind": "2.5"}) == []
-          and len(validate_options({"logo_conf": "1.5"})) == 1 and len(validate_options({"logo_edge": "0"})) == 1, "Prüfung der neuen Werte")
+          and len(validate_options({"logo_conf": "1.5"})) == 1 and len(validate_options({"logo_edge": "0"})) == 1, "checking of the new values")
     check(all(k in DEFAULT_TOOLTIPS for k in ("pad", "step_end", "step_next", "border_tol", "logo_rewind", "logo_edge", "logo_conf")),
-          "Erklärungen für neue Schlüssel")
+          "explanations for new keys")
     grouped = [k for _, keys in OPTION_GROUPS for k in keys]
-    check(sorted(grouped + sorted(HIDDEN_OPTIONS)) == sorted(d), f"jede Option gehört zu einer Gruppe oder ist versteckt: {sorted(set(d) ^ set(grouped + sorted(HIDDEN_OPTIONS)))}")
+    check(sorted(grouped + sorted(HIDDEN_OPTIONS)) == sorted(d), f"every option belongs to a group or is hidden: {sorted(set(d) ^ set(grouped + sorted(HIDDEN_OPTIONS)))}")
     check(list(ordered_profile({"ba": "192k", "scale": "720:576", "fps": "25.000"})) == ["scale", "pad", "fps", "ba"]
-          and ordered_profile({"scale": "1:2"})["pad"] == "False", "Profil: pad nach sws_flags, Vorgabe False")
-    # --- Schrittweiten in Sekunden
+          and ordered_profile({"scale": "1:2"})["pad"] == "False", "profile: pad after sws_flags, default False")
+    # --- step widths in seconds
     check(seek.step_frames(40, Fraction(25)) == 1000 and seek.step_frames(240, Fraction(25)) == 6000
-          and seek.step_frames(40, Fraction(30000, 1001)) == 1199 and seek.step_frames(0, Fraction(25)) == 1, "Schrittweite aus Sekunden")
-    # --- Schrittweite der Suche nach der nächsten Werbung ist durch "pause" begrenzt
+          and seek.step_frames(40, Fraction(30000, 1001)) == 1199 and seek.step_frames(0, Fraction(25)) == 1, "step width from seconds")
+    # --- step width of the search for the next commercial is limited by "pause"
     check(seek.step_seconds({"step_next": "240", "pause": "160"}, False) == 160 and seek.step_seconds({"step_next": "100", "pause": "160"}, False) == 100
           and seek.step_seconds({"step_next": "240", "pause": "0"}, False) == 240 and seek.step_seconds({"step_end": "40", "pause": "10"}, True) == 40
-          and seek.step_seconds({}, True) == 40 and seek.step_seconds({}, False) == 160, "Schrittweite höchstens so groß wie pause")
-    # Praxisfall: Werbeblock von 165 s (125998..130123) zwischen zwei Filmteilen; mit 240 s Schrittweite fällt keine Probe hinein
+          and seek.step_seconds({}, True) == 40 and seek.step_seconds({}, False) == 160, "step width at most as large as pause")
+    # real case: commercial break of 165 s (125998..130123) between two movie parts; with a 240 s step no probe falls into it
     breaks = [(84798, 89048), (125998, 130123), (163523, 170909)]
     inside = lambda path, n, fps, opts: 0 if any(a <= n < b for a, b in breaks) else 72
     skipped = seek.seek_border("/x", Fraction(25), 170909, 89048, 72, False, seek.step_frames(240, Fraction(25)), {}, inside)
     found = seek.seek_border("/x", Fraction(25), 170909, 89048, 72, False, seek.step_frames(seek.step_seconds({"step_next": "240", "pause": "160"}, False), Fraction(25)), {}, inside)
-    check(skipped == 163523 and found == 125998, f"Werbeblock wird nicht mehr übersprungen: {found} (mit 240 s: {skipped})")
-    # --- Toleranz der Randsuche
+    check(skipped == 163523 and found == 125998, f"commercial break is no longer skipped: {found} (with 240 s: {skipped})")
+    # --- tolerance of the border search
     near = lambda path, n, fps, opts: 74 if n >= 130 else 0
     args = ("/x", Fraction(25), 300, 0, 72, True, 100)
     check(seek.seek_border(*args, {"border_tol": "3"}, near) == 130 and seek.seek_border(*args, {"border_tol": "1"}, near) == 300,
-          "Toleranz 3 findet den Rand 74 (Soll 72), Toleranz 1 nicht")
-    # --- Logo: Rückspulen, Kantenschwelle, Mindest-Übereinstimmung
+          "tolerance 3 finds the border 74 (target 72), tolerance 1 does not")
+    # --- logo: rewinding, edge threshold, minimum match
     scene = lambda start: (lambda f: (10, 10, 10) if f >= start else (200, 10, 10))
     calls = []
     def avg_of(start):
         base = scene(start)
         return lambda f: (calls.append(f), base(f))[1]
-    check(logo.rewind(1000, scene(960)) == 960, "Rückspulen wie VB6 (45 Bilder)")
-    check(logo.rewind(1000, scene(900)) == 1000 - 45 + 1, "kein Szenenwechsel in 45 Bildern: wie VB6")
+    check(logo.rewind(1000, scene(960)) == 960, "rewinding like VB6 (45 frames)")
+    check(logo.rewind(1000, scene(900)) == 1000 - 45 + 1, "no scene change within 45 frames: like VB6")
     calls.clear()
-    check(logo.rewind(1000, avg_of(800), 250) == 800 and len(calls) < 60, f"langes Rückspulen findet den Szenenanfang: {len(calls)} Proben")
+    check(logo.rewind(1000, avg_of(800), 250) == 800 and len(calls) < 60, f"long rewinding finds the start of the scene: {len(calls)} probes")
     calls.clear()
-    check(logo.rewind(1000, avg_of(960), 250) == 960 and len(calls) < 25, "Szenenanfang nahe: wenige Proben")
-    check(logo.rewind(1000, scene(0), 0) == 1000 and logo.rewind(1000, scene(0), 10) == 990, "kein bzw. kurzes Rückspulen")
+    check(logo.rewind(1000, avg_of(960), 250) == 960 and len(calls) < 25, "scene start near: few probes")
+    check(logo.rewind(1000, scene(0), 0) == 1000 and logo.rewind(1000, scene(0), 10) == 990, "no or short rewinding")
     import numpy as np
-    grey = np.tile(np.arange(10, dtype=np.uint8) * 10, (4, 1))               # benachbarte Pixel unterscheiden sich um 10
-    check(logo.edge_map(grey, 5).sum() > 0 and logo.edge_map(grey, 18).sum() == 0, "Kantenschwelle als Parameter")
+    grey = np.tile(np.arange(10, dtype=np.uint8) * 10, (4, 1))               # neighbouring pixels differ by 10
+    check(logo.edge_map(grey, 5).sum() > 0 and logo.edge_map(grey, 18).sum() == 0, "edge threshold as parameter")
     seen = []
     conf = lambda path, n, fps, ref, opts: (seen.append(n), 0.3 if n >= 90 else 0.0)[1]
     avg = lambda path, f, fps, opts: (10, 10, 10)
     r1 = seek.seek_logo("/x", Fraction(25), 300, 0, None, True, 100, {"logo_conf": "0.2", "logo_rewind": "0"}, conf, avg)
     r2 = seek.seek_logo("/x", Fraction(25), 300, 0, None, True, 100, {"logo_conf": "0.5", "logo_rewind": "0"}, conf, avg)
-    check(r1 == 89 and r2 == 299, f"Mindest-Übereinstimmung (Fund ab Bild 90 bzw. nirgends): {r1}, {r2}")
-    # --- Hauptfenster: Migration, Dialog
+    check(r1 == 89 and r2 == 299, f"minimum match (found from frame 90 or nowhere): {r1}, {r2}")
+    # --- main window: migration, dialog
     work = os.path.join(tmp, "migrate")
     os.makedirs(work)
     shutil.copy(os.path.join(HERE, "sample_MediaMaker.ini"), os.path.join(work, "MediaMaker.ini"))
@@ -1488,78 +1488,78 @@ def test_option_changes(tmp, videos):
     st.set_option("focus", "0")
     st.set_option("logo_edge", "20")
     st.save()
-    check("pad" not in st.profile, "Ausgangslage: pad nur in den Optionen")
+    check("pad" not in st.profile, "starting point: pad only in the options")
     win = make_window(work)
     win.showEvent(None)
     st = Settings(ini)
     check(st.profile.get("pad") == "True" and "pad" not in st.options and "focus" not in st.options and st.options["logo_edge"] == "20",
-          f"Migration: pad ins Profil, focus entfällt, versteckter Wert bleibt: {st.profile.get('pad')} {sorted(st.options)}")
-    check(win.profile["pad"] == "True" and list(win.profile)[:4] == ["description", "scale", "sws_flags", "pad"], "Profil mit pad in der Reihenfolge")
-    check("pad" not in win.options and "focus" not in win.options, "Optionen ohne pad und focus")
-    # Profil hat schon pad: bleibt unverändert
+          f"migration: pad into the profile, focus dropped, hidden value stays: {st.profile.get('pad')} {sorted(st.options)}")
+    check(win.profile["pad"] == "True" and list(win.profile)[:4] == ["description", "scale", "sws_flags", "pad"], "profile with pad in the order")
+    check("pad" not in win.options and "focus" not in win.options, "options without pad and focus")
+    # profile already has pad: stays unchanged
     st.set_option("pad", "False")
     st.save()
     win2 = make_window(work)
     win2.showEvent(None)
-    check(Settings(ini).profile["pad"] == "True" and "pad" not in Settings(ini).options, "vorhandenes pad im Profil gewinnt")
-    # Optionsdialog: gegliedert, ohne versteckte Schlüssel; Speichern behält versteckte Werte
+    check(Settings(ini).profile["pad"] == "True" and "pad" not in Settings(ini).options, "existing pad in the profile wins")
+    # options dialog: grouped, without hidden keys; saving keeps hidden values
     shown = []
     win.edit_pairs = lambda title, pairs, groups=None: (shown.append((title, list(pairs), groups)), dict(pairs, border_tol="5"))[1]
     win.mnuOptions_Click()
     title, keys, groups = shown[-1]
     check(title == "Options" and groups == OPTION_GROUPS and not (set(keys) & HIDDEN_OPTIONS) and "pad" not in keys and "focus" not in keys
-          and "border_tol" in keys and "step_end" in keys, f"Optionsdialog: {keys}")
+          and "border_tol" in keys and "step_end" in keys, f"options dialog: {keys}")
     st = Settings(ini)
-    check(st.options["border_tol"] == "5" and st.options["logo_edge"] == "20" and "focus" not in st.options, "gespeichert: Änderung und versteckter Wert")
-    # Profildialog zeigt pad; Speichern schreibt es ins Profil
+    check(st.options["border_tol"] == "5" and st.options["logo_edge"] == "20" and "focus" not in st.options, "saved: change and hidden value")
+    # profile dialog shows pad; saving writes it into the profile
     win.edit_pairs = lambda title, pairs, groups=None: (shown.append((title, list(pairs), groups)), dict(pairs, pad="False"))[1]
     win.mnuProfile_Click()
     check(shown[-1][1][:4] == ["description", "scale", "sws_flags", "pad"] and shown[-1][2] is None and Settings(ini).profile["pad"] == "False",
-          "Profildialog mit pad")
-    # --- Dialog mit Überschriften
+          "profile dialog with pad")
+    # --- dialog with headings
     import dialogs
     from PySide6.QtWidgets import QDialog
     QDialog.exec_result, QDialog.on_exec = 1, None
-    pairs = {"audio": "1", "pause": "160", "unbekannt": "x", "crop": "72"}
+    pairs = {"audio": "1", "pause": "160", "unknown": "x", "crop": "72"}
     dialogs.edit_pairs(None, "Options", pairs, {}, {}, OPTION_GROUPS)
     from PySide6.QtWidgets import QFormLayout
     rows = [(l._args[0], e is None) for l, e in QFormLayout.instances[-1].rows]
     check(rows == [("<b>Border detection</b>", True), ("crop", False), ("<b>Seeking commercials</b>", True), ("pause", False),
-                   ("<b>Audio and subtitles</b>", True), ("audio", False), ("<b>Other</b>", True), ("unbekannt", False)],
-          f"Überschriften und Reihenfolge: {rows}")
+                   ("<b>Audio and subtitles</b>", True), ("audio", False), ("<b>Other</b>", True), ("unknown", False)],
+          f"headings and order: {rows}")
     dialogs.edit_pairs(None, "Profile", {"scale": "720:576", "fps": "25.000"}, {}, {})
-    check([l._args[0] for l, e in QFormLayout.instances[-1].rows] == ["scale", "fps"], "ohne Gruppen: wie bisher")
-    print("Umsortierung und neue Parameter: OK (pad im Profil, focus entfällt, Suchwerte, Gliederung, Migration)")
+    check([l._args[0] for l, e in QFormLayout.instances[-1].rows] == ["scale", "fps"], "without groups: as before")
+    print("Rearrangement and new parameters: OK (pad in the profile, focus dropped, search values, grouping, migration)")
 
 
 def test_info(tmp, videos):
-    """Menü Information: Lage der Segmente im fertigen Film, Gesamtlänge, voraussichtliche Größe, Dialog."""
+    """Menu Information: position of the segments in the finished film, total length, expected size, dialog."""
     import info
     from project import format_time
     s2 = os.path.join(videos, "sample2.ts")
     profile = {"scale": "720:576", "fps": "25.000", "bv": "3072k", "ba": "192k"}
-    # Segmente: 100 Bilder ab Bild 20 (erstes Bild 10), 50 Bilder ab 0 mit 29,97 FPS, eine fehlende Datei
+    # segments: 100 frames from frame 20 (first frame 10), 50 frames from 0 at 29.97 FPS, one missing file
     a = Segment(1, s2, "sample2.ts", 30, 130, 158, Fraction(25), 720, 576, 3000, 192, "a", 0, 0, 0, 0, 48000, "")
     a.first_frame = 10
     b = Segment(2, s2, "sample2.ts", 0, 50, 200, Fraction(30000, 1001), 1280, 720, 4000, 128, "a", 0, 0, 0, 0, 44100, "")
-    gone = Segment(3, "/nicht/da.ts", "da.ts", 0, 10, 10, Fraction(25), 720, 576, 1, 1, "a", 0, 0, 0, 0, 48000, "")
+    gone = Segment(3, "/not/there.ts", "da.ts", 0, 10, 10, Fraction(25), 720, 576, 1, 1, "a", 0, 0, 0, 0, 48000, "")
     rows, summary = info.build_info([a, b, gone], profile)
     size = f"{os.path.getsize(s2):,}"
-    check(len(rows) == 3 and all(len(r) == len(info.HEADERS) for r in rows), "Zeilen mit allen Spalten")
+    check(len(rows) == 3 and all(len(r) == len(info.HEADERS) for r in rows), "rows with all columns")
     check(rows[0] == ["01", s2, size, "00:00:06", "20", "120", "00:00:04.000", "00:00:00.000", "00:00:04.000", "720x576", "25.000", "48000", "3000", "192"],
-          f"Zeile 1 (Nummern ab dem ersten Bild: 30-10 und 130-10): {rows[0]}")
+          f"row 1 (numbers from the first frame: 30-10 and 130-10): {rows[0]}")
     check(rows[1][4:9] == ["0", "50", "00:00:01.668", "00:00:04.000", "00:00:05.668"] and rows[1][9:11] == ["1280x720", "29.970"],
-          f"Zeile 2: Startzeit = Ende des vorigen Segments, Länge aus 29,97 FPS: {rows[1]}")
-    check(rows[2][:3] == ["03", "/nicht/da.ts", info.NOT_FOUND] and rows[2][3:] == [""] * 11, "fehlende Datei gekennzeichnet")
+          f"row 2: start time = end of the previous segment, length from 29.97 FPS: {rows[1]}")
+    check(rows[2][:3] == ["03", "/not/there.ts", info.NOT_FOUND] and rows[2][3:] == [""] * 11, "missing file marked")
     total = Fraction(100, 25) + Fraction(50 * 1001, 30000)
     mib = (3072 + 192) * 1000 / 8 * float(total) / 2 ** 20
     check(summary.startswith("3 segments; expected length of the result: 00:00:05.668") and f"{mib:,.1f} MiB" in summary
           and "3072k (video) + 192k (audio)" in summary and "target 720x576, 25.000 FPS" in summary and "1 source file not found" in summary,
-          f"Zusammenfassung: {summary}")
+          f"summary: {summary}")
     check("MiB" not in info.build_info([a], {"scale": "720:576"})[1] and info.build_info([], profile)[1].startswith("0 segments;"),
-          "ohne Bitraten keine Größe; leere Liste")
-    check(format_time(Fraction(3725, 1)) == "01:02:05.000" and format_time(Fraction(1, 3)) == "00:00:00.333", "Zeitformat")
-    # --- Menü
+          "no size without bit rates; empty list")
+    check(format_time(Fraction(3725, 1)) == "01:02:05.000" and format_time(Fraction(1, 3)) == "00:00:00.333", "time format")
+    # --- menu
     work = os.path.join(tmp, "infowin2")
     os.makedirs(work, exist_ok=True)
     win = make_window(work, thumb_fn=quick_thumbs, fresh=True)
@@ -1567,63 +1567,63 @@ def test_info(tmp, videos):
     shown = []
     win.show_info = lambda rows, summary: shown.append((rows, summary))
     win.mnuInfo_Click()
-    check(shown == [] and win.messages[-1] == "There are no segments in the list.", "leere Liste: Meldung")
+    check(shown == [] and win.messages[-1] == "There are no segments in the list.", "empty list: message")
     win.OpenVideo(s2)
     win.mnuInfo_Click()
     rows, summary = shown[-1]
     seg = win.segment
     check(len(rows) == 1 and rows[0][4] == "0" and rows[0][5] == str(seg.total_frames - seg.first_frame) and rows[0][7] == "00:00:00.000"
-          and "1 segment;" in summary, f"Menü: {rows[0]} {summary}")
+          and "1 segment;" in summary, f"menu: {rows[0]} {summary}")
     # --- Dialog
     from info_dialog import frmInfo
     from PySide6.QtWidgets import QDialog
     dialog = frmInfo(rows, summary)
     flags = dialog.called("setWindowFlag")
     check(dialog.called("setWindowTitle")[-1] == ("Loaded segments information",) and dialog.called("setMaximumSize")[-1] == (16777215, 16777215)
-          and "WindowMaximizeButtonHint" in repr(flags[-1][0]) and flags[-1][1] is True, "Dialog ist veränderbar")
-    check(dialog.lvwInfo.called("setHeaderLabels")[-1][0] == list(info.HEADERS) and dialog.lvwInfo.row_count() == 1, "Spalten und Zeilen")
+          and "WindowMaximizeButtonHint" in repr(flags[-1][0]) and flags[-1][1] is True, "dialog is resizable")
+    check(dialog.lvwInfo.called("setHeaderLabels")[-1][0] == list(info.HEADERS) and dialog.lvwInfo.row_count() == 1, "columns and rows")
     item = dialog.lvwInfo.topLevelItem(0)
-    check(all(col in item.align_ for col in info.RIGHT_ALIGNED) and 1 not in item.align_, "Zahlen rechtsbündig, Dateiname links")
+    check(all(col in item.align_ for col in info.RIGHT_ALIGNED) and 1 not in item.align_, "numbers right-aligned, file name left")
     widths = {a[0]: a[1] for a in dialog.lvwInfo.called("setColumnWidth")}
-    check(1 not in widths and widths[6] > widths[4] and widths[2] > widths[0], f"Spaltenbreiten aus der Schrift: {widths}")
-    check(dialog.lblSummary.text() == summary and dialog.lblSummary.called("setWordWrap") == [(True,)], "Zusammenfassung unter der Liste")
-    print("Information: OK (Segmentübersicht, Lage im fertigen Film, Zusammenfassung, Menü, Dialog)")
+    check(1 not in widths and widths[6] > widths[4] and widths[2] > widths[0], f"column widths from the font: {widths}")
+    check(dialog.lblSummary.text() == summary and dialog.lblSummary.called("setWordWrap") == [(True,)], "summary below the list")
+    print("Information: OK (segment overview, position in the finished film, summary, menu, dialog)")
 
 
 def test_tooltip_wrap(tmp, videos):
-    """Lange Tooltip-Texte werden mehrzeilig umgebrochen (Qt tut das bei reinem Text nicht selbst)."""
+    """Long tooltip texts are wrapped into several lines (Qt does not do this by itself for plain text)."""
     import dialogs
     from settings import DEFAULT_TOOLTIPS
     long_text = DEFAULT_TOOLTIPS["logo_rewind"]
     wrapped = dialogs.wrap_tooltip(long_text)
     lines = wrapped.split("\n")
-    check(len(lines) >= 2 and all(len(line) <= 70 for line in lines) and " ".join(lines) == long_text, f"umgebrochen: {lines}")
-    check(dialogs.wrap_tooltip("kurz") == "kurz" and dialogs.wrap_tooltip("") == "", "kurze und leere Texte bleiben")
+    check(len(lines) >= 2 and all(len(line) <= 70 for line in lines) and " ".join(lines) == long_text, f"wrapped: {lines}")
+    check(dialogs.wrap_tooltip("short") == "short" and dialogs.wrap_tooltip("") == "", "short and empty texts stay")
     url = "See https://ffmpeg.org/ffmpeg-scaler.html#Scaler-Options for the flags " + "x" * 80
     check(any("https://ffmpeg.org/ffmpeg-scaler.html#Scaler-Options" in l for l in dialogs.wrap_tooltip(url).split("\n"))
-          and "x" * 80 in dialogs.wrap_tooltip(url), "Adressen und lange Wörter bleiben ganz")
-    check(dialogs.wrap_tooltip("Zeile eins\n\nZeile drei") == "Zeile eins\n\nZeile drei", "vorhandene Zeilenumbrüche bleiben")
-    # im Dialog
+          and "x" * 80 in dialogs.wrap_tooltip(url), "addresses and long words stay whole")
+    check(dialogs.wrap_tooltip("line one\n\nline three") == "line one\n\nline three", "existing line breaks stay")
+    # in the dialog
     from PySide6.QtWidgets import QDialog, QFormLayout
     QDialog.exec_result, QDialog.on_exec = 1, None
     dialogs.edit_pairs(None, "Options", {"logo_rewind": "1.8"}, {"logo_rewind": long_text}, {})
     label, editor = QFormLayout.instances[-1].rows[-1]
     tip = label.called("setToolTip")[-1][0]
-    check(tip == wrapped and editor.called("setToolTip")[-1][0] == wrapped, "Tooltips im Dialog sind umgebrochen")
-    print("Tooltips: OK (Umbruch bei 70 Zeichen, Wörter und Adressen bleiben ganz)")
+    check(tip == wrapped and editor.called("setToolTip")[-1][0] == wrapped, "tooltips in the dialog are wrapped")
+    print("Tooltips: OK (wrapping at 70 characters, words and addresses stay whole)")
 
 
 def test_shutdown(tmp, videos):
-    """Beim Schließen des Fensters wird die Wiedergabe beendet, auch mitten im Abspielen."""
+    """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
     win.showEvent(None)
     win.OpenVideo(os.path.join(videos, "sample2.ts"))
     win.cmdPos_Click(3)
-    check(win.player.is_playing, "Wiedergabe läuft")
+    check(win.player.is_playing, "playback is running")
     win.closeEvent(None)
-    check(win.player.shut_down and not win.player.is_playing, "Player nach dem Schließen heruntergefahren")
-    win.player.shutdown()                                      # zweimal ist harmlos
-    print("Beenden: OK (Player wird beim Schließen heruntergefahren, auch mitten im Abspielen)")
+    check(win.player.shut_down and not win.player.is_playing, "player shut down after closing")
+    win.player.shutdown()                                      # twice is harmless
+    print("Quit: OK (player is shut down when closing, even in the middle of playing)")
 
 
 def test_throttle():
@@ -1633,14 +1633,14 @@ def test_throttle():
     t.request(1)
     t.request(2)
     t.request(3)
-    check(done == [1], f"erster Sprung sofort, weitere zurückgehalten: {done}")
+    check(done == [1], f"first jump immediately, further ones held back: {done}")
     t.timer.fire()
-    check(done == [1, 3] and t.timer.isActive(), f"zuletzt angeforderter Wert nach Ablauf: {done}")
+    check(done == [1, 3] and t.timer.isActive(), f"last requested value after the delay: {done}")
     t.timer.fire()
-    check(done == [1, 3] and not t.timer.isActive(), "nichts mehr offen")
+    check(done == [1, 3] and not t.timer.isActive(), "nothing left open")
     t.request(4)
-    check(done == [1, 3, 4], "nach Ruhe wieder sofort")
-    print("Sprung-Drossel: OK (erster sofort, danach gebündelt, letzter Wert kommt an)")
+    check(done == [1, 3, 4], "immediately again after a pause")
+    print("Jump throttle: OK (first immediately, then combined, last value arrives)")
 
 
 def main():
@@ -1674,11 +1674,11 @@ def main():
     test_shutdown(tmp, sys.argv[1])
     test_throttle()
     if errors:
-        print(f"\n{len(errors)} FEHLER:")
+        print(f"\n{len(errors)} ERRORS:")
         for e in errors:
             print("  -", e)
         sys.exit(1)
-    print("Alle Prüfungen bestanden.")
+    print("All checks passed.")
 
 
 if __name__ == "__main__":

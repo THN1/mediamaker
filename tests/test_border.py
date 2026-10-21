@@ -1,5 +1,5 @@
-"""Tests für Rand-Erkennung und Werbe-Suche mit einer synthetischen Aufnahme:
-100 Bilder mit schwarzem Rand (72 Zeilen oben/unten, leichtes Rauschen (alls=3)), danach 100 Bilder ohne Rand ('Werbung')."""
+"""Tests for border detection and commercial search with a synthetic recording:
+100 frames with a black border (72 lines top/bottom, slight noise (alls=3)), then 100 frames without border ('commercial')."""
 import os, subprocess, sys, tempfile
 from fractions import Fraction
 
@@ -24,21 +24,21 @@ def main():
     make_source(src)
     opts = {"floor": "2", "blackness": "12", "allowance": "1000"}
     img = grab_frame(src, 50, FPS)
-    print("Bildgröße:", img.shape[1], "x", img.shape[0])
+    print("frame size:", img.shape[1], "x", img.shape[0])
     b1, b2 = border_at(src, 50, FPS, opts), border_at(src, 150, FPS, opts)
-    print(f"Rand bei Bild 50: {b1} (erwartet etwa 72); bei Bild 150 (ohne Rand): {b2} (erwartet 0)")
-    assert abs(b1 - 72) <= 3 and b2 == 0   # Chroma-Unterabtastung und Kompression verwischen die Kante um 1-2 Zeilen
+    print(f"border at frame 50: {b1} (expected about 72); at frame 150 (without border): {b2} (expected 0)")
+    assert abs(b1 - 72) <= 3 and b2 == 0   # chroma subsampling and compression blur the edge by 1-2 lines
     calls = []
     def of(f):
         calls.append(f); return border_at(src, f, FPS, opts)
-    # 'Werbung beginnt' (Rand verschwindet): ab Bild 10, Rand 72, equal=False
+    # 'commercial starts' (border disappears): from frame 10, border 72, equal=False
     a = where_border(of, 10, 199, 72, False, 50)
-    print(f"Wechsel Film -> Werbung bei Bild {a} (erwartet 100), {len(calls)} Bildanalysen")
+    print(f"change movie -> commercial at frame {a} (expected 100), {len(calls)} frame analyses")
     assert abs(a - 100) <= 1
     calls.clear()
-    # 'Werbung endet' (Rand kommt zurück) wird mit umgekehrter Reihenfolge geprüft: Rand = 0 ab Bild 100
+    # 'commercial ends' (border returns) is tested with reversed order: border = 0 from frame 100
     z = where_border(of, 10, 199, 0, True, 50)
-    print(f"Erstes Bild ohne Rand ab Bild 10: {z} (erwartet 100), {len(calls)} Bildanalysen")
+    print(f"first frame without border from frame 10: {z} (expected 100), {len(calls)} frame analyses")
     assert abs(z - 100) <= 1
     print("OK")
 

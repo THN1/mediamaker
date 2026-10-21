@@ -1,4 +1,4 @@
-"""Eigene Dialoge (Qt): Bearbeiten von Schlüssel-Wert-Paaren für Profil und Optionen."""
+"""Own dialogs (Qt): editing of key-value pairs for profile and options."""
 from __future__ import annotations
 
 import textwrap
@@ -8,14 +8,14 @@ from PySide6 import QtCore, QtWidgets
 
 from profiles import wrapped_lines
 
-FIELD_WIDTH = 230                  # Breite der Eingabefelder in Pixeln; längere Werte werden umbrochen
-LONG_TEXT_KEYS = ("description",)  # Schlüssel mit langem Freitext: immer mehrzeilig (mindestens 2 Zeilen)
+FIELD_WIDTH = 230                  # width of the input fields in pixels; longer values are wrapped
+LONG_TEXT_KEYS = ("description",)  # keys with long free text: always multi-line (at least 2 lines)
 _ENTER_KEYS = (0x01000004, 0x01000005)
 
 
 class WrappedEdit(QtWidgets.QPlainTextEdit):
-    """Mehrzeiliges Eingabefeld für lange Werte. Der Zeilenumbruch gilt nur der Anzeige: Der Wert bleibt eine Zeile,
-    Enter bestätigt den Dialog, Tab springt zum nächsten Feld."""
+    """Multi-line input field for long values. The line wrapping is only for display: the value stays one line,
+        Enter confirms the dialog, Tab jumps to the next field."""
 
     def __init__(self, text: str, on_enter):
         super().__init__()
@@ -39,12 +39,12 @@ class WrappedEdit(QtWidgets.QPlainTextEdit):
         return self.toPlainText().replace("\n", " ")
 
 
-TOOLTIP_WIDTH = 70               # Zeichen je Zeile in Tooltips
+TOOLTIP_WIDTH = 70               # characters per line in tooltips
 
 
 def wrap_tooltip(text: str, width: int = TOOLTIP_WIDTH) -> str:
-    """Bricht einen langen Tooltip-Text in mehrere Zeilen um. Qt bricht reinen Text im Tooltip nicht selbst um; Zeilenumbrüche
-    im Text bleiben aber erhalten. Wörter (auch lange Adressen) werden nicht getrennt."""
+    """Wraps a long tooltip text into several lines. Qt does not wrap plain text in a tooltip by itself; line breaks
+        in the text are kept, though. Words (also long addresses) are not split."""
     if not text:
         return ""
     return "\n".join(textwrap.fill(line, width=width, break_long_words=False, break_on_hyphens=False) if line.strip() else ""
@@ -52,14 +52,14 @@ def wrap_tooltip(text: str, width: int = TOOLTIP_WIDTH) -> str:
 
 
 def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, groups=None) -> Optional[dict]:
-    """Zeigt je Schlüssel eine Zeile (Beschriftung mit Erklärung, Eingabefeld, bei Vorschlägen eine Auswahlliste).
+    """Shows one row per key (caption with explanation, input field, a selection list for suggestions).
 
-    Rückgabe: die geänderten Werte als Wörterbuch oder None bei Abbruch. Ersetzt frmProfile aus VB6, ohne das Fenster
-    zur Laufzeit von Hand zu vergrößern: Die Anordnung übernimmt ein Layout; lange Werte (z. B. die Beschreibung)
-    brechen in einem mehrzeiligen Feld um, damit der Dialog schmal bleibt.
+        Returns: the changed values as a dictionary or None on cancel. Replaces frmProfile from VB6, without enlarging the window
+        by hand at run time: a layout takes care of the arrangement; long values (e.g. the description)
+        wrap in a multi-line field so that the dialog stays narrow.
 
-    groups = ((Überschrift, (Schlüssel, ...)), ...) gliedert die Zeilen unter Überschriften; Schlüssel, die in keiner Gruppe
-    vorkommen, folgen am Ende unter "Other". Ohne groups erscheinen alle Zeilen in der Reihenfolge von `pairs`.
+        groups = ((heading, (key, ...)), ...) arranges the rows under headings; keys that do not occur in any group
+        follow at the end under "Other". Without groups all rows appear in the order of `pairs`.
     """
     dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle(title)
@@ -105,13 +105,13 @@ def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, g
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
     layout.addWidget(buttons)
-    if not dialog.exec():                                      # 1 = angenommen, 0 = abgebrochen
+    if not dialog.exec():                                      # 1 = accepted, 0 = cancelled
         return None
     return {key: getter().strip() for key, getter in getters.items()}
 
 
 class WaitDialog(QtWidgets.QDialog):
-    """Meldung "..., please wait..." während einer längeren Arbeit (VB6: frmWait). Abbrechen (Knopf oder Esc) ruft on_cancel."""
+    """Message "..., please wait..." during a longer task (VB6: frmWait). Cancel (button or Esc) calls on_cancel."""
 
     def __init__(self, parent, message: str, on_cancel):
         super().__init__(parent)
@@ -139,13 +139,13 @@ class WaitDialog(QtWidgets.QDialog):
         super().reject()
 
 
-# ----------------------------------------------------------------------------- Eingabefelder wie die InputBox von VB6
-INPUT_BOX_WIDTH = 440            # Breite in Pixeln (etwa die einer VB6-InputBox); lange Texte werden umgebrochen
+# ----------------------------------------------------------------------------- input fields like the InputBox of VB6
+INPUT_BOX_WIDTH = 440            # width in pixels (about that of a VB6 InputBox); long texts are wrapped
 
 
 def _input_box(parent, title: str, prompt: str, mode) -> QtWidgets.QInputDialog:
-    """Eingabedialog mit fester Breite und umgebrochenem Text. Qt macht den Dialog sonst so breit wie die längste Zeile
-    des Textes, was bei den langen Erklärungen (z. B. beim Schätzen der Bitrate) viel zu breit wird."""
+    """Input dialog with a fixed width and wrapped text. Otherwise Qt makes the dialog as wide as the longest line
+        of the text, which gets far too wide with the long explanations (e.g. when estimating the bit rate)."""
     box = QtWidgets.QInputDialog(parent)
     box.setWindowTitle(title)
     box.setInputMode(mode)
@@ -162,14 +162,14 @@ def _input_box(parent, title: str, prompt: str, mode) -> QtWidgets.QInputDialog:
 
 
 def ask_text_box(parent, title: str, prompt: str, default: str = "") -> Optional[str]:
-    """Text eingeben (VB6: InputBox). None bei Abbruch."""
+    """Enter text (VB6: InputBox). None on cancel."""
     box = _input_box(parent, title, prompt, QtWidgets.QInputDialog.InputMode.TextInput)
     box.setTextValue(default)
     return box.textValue() if box.exec() else None
 
 
 def ask_int_box(parent, title: str, prompt: str, value: int, low: int, high: int) -> Optional[int]:
-    """Ganze Zahl eingeben. None bei Abbruch."""
+    """Enter a whole number. None on cancel."""
     box = _input_box(parent, title, prompt, QtWidgets.QInputDialog.InputMode.IntInput)
     box.setIntRange(low, high)
     box.setIntValue(value)

@@ -1,7 +1,7 @@
-"""Oberfläche von frmCrop - automatisch erzeugt von frm2qt.py aus frmCrop.frm.
+"""User interface of frmCrop - generated automatically by frm2qt.py from frmCrop.frm.
 
-Nicht von Hand ändern: Die Datei wird beim erneuten Erzeugen überschrieben.
-Logik gehört in eine abgeleitete Klasse mit den VB6-Prozedurnamen (siehe frmCrop.py).
+Do not change by hand: the file is overwritten when it is generated again.
+Logic belongs in a derived class with the VB6 procedure names (see frmCrop.py).
 """
 import os
 
@@ -20,7 +20,7 @@ class frmCropBase(QtWidgets.QDialog):
         self._connect()
 
     def _vb(self, procedure, *args):
-        """Ruft die VB6-Prozedur (falls in der abgeleiteten Klasse vorhanden) auf."""
+        """Calls the VB6 procedure (if present in the derived class)."""
         fn = getattr(self, procedure, None)
         return fn(*args) if fn else None
 
@@ -28,7 +28,7 @@ class frmCropBase(QtWidgets.QDialog):
         return lambda *signal_args: self._vb(procedure, *fixed)
 
     def _callv(self, procedure, *fixed):
-        """Wie _call, reicht aber die Argumente des Ereignisses weiter (Maus, Tasten, Dateien)."""
+        """Like _call, but passes on the arguments of the event (mouse, keys, files)."""
         return lambda *event_args: self._vb(procedure, *fixed, *event_args)
 
     def _build(self):
@@ -39,7 +39,7 @@ class frmCropBase(QtWidgets.QDialog):
 
         self.setWindowTitle('Form1')
         self.setWindowFlag(QtCore.Qt.WindowType.FramelessWindowHint, True)
-        self.setFont(vbqt.make_font('MS Sans Serif', 8.25, 400, 0, 0, 0))      # VB6-Standardschrift des Formulars
+        self.setFont(vbqt.make_font('MS Sans Serif', 8.25, 400, 0, 0, 0))      # VB6 default font of the form
         self.resize(281, 161)
 
         # lblLabel(0): VB.Label

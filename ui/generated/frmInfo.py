@@ -1,4 +1,4 @@
-"""Logik von frmInfo: Prozeduren mit den VB6-Namen; Vorlage von frm2qt.py."""
+"""Logic of frmInfo: procedures with the VB6 names; template from frm2qt.py."""
 from ui_frmInfo import frmInfoBase
 
 

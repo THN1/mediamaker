@@ -1,12 +1,12 @@
-"""Übersetzt VB6-Formulare (.frm) in PySide6-Code.
+"""Translates VB6 forms (.frm) into PySide6 code.
 
-Aufruf:  python3 frm2qt.py Formular.frm [weitere.frm ...] [--out ORDNER] [--stub]
+Usage:  python3 frm2qt.py form.frm [more.frm ...] [--out FOLDER] [--stub]
 
-Für jedes Formular entsteht ui_<Formularname>.py mit der Klasse <Formularname>Base (Oberfläche, Menüs, Ereignisse).
-Die Logik gehört nicht dorthin, sondern in eine abgeleitete Klasse mit den Prozedurnamen aus VB6, z. B.
-cmdOK_Click(self). Mit --stub wird dafür eine Vorlage <Formularname>.py angelegt (vorhandene Dateien bleiben unberührt).
-Symbole aus der .frx-Datei werden nach ORDNER/icons als PNG geschrieben. Am Ende steht ein Bericht über alles,
-was nicht übernommen werden konnte.
+For every form a file ui_<formname>.py with the class <formname>Base (user interface, menus, events) is created.
+The logic does not belong there but in a derived class with the VB6 procedure names, e.g.
+cmdOK_Click(self). With --stub a template <formname>.py is created for this (existing files are left untouched).
+Icons from the .frx file are written as PNG to FOLDER/icons. At the end there is a report about everything
+that could not be taken over.
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import sys
 from frmparse import Control, Form, Resource, TWIPS_PER_PIXEL, container_scale, form_client_px, geometry_px, parse_frm, vb_color
 from frx import picture_to_png, read_list, read_picture, read_text
 
-# Eigenschaften, die entweder ausgewertet werden oder bewusst keine Entsprechung brauchen
+# properties that are either evaluated or deliberately need no counterpart
 IGNORED = {"Left", "Top", "Width", "Height", "TabIndex", "Index", "_ExtentX", "_ExtentY", "_Version", "LinkTopic",
            "ScaleHeight", "ScaleWidth", "ClientLeft", "ClientTop", "ClientWidth", "ClientHeight", "AutoRedraw",
            "ScaleMode", "OLEDropMode", "Appearance", "NumItems", "LabelWrap", "HideSelection", "TickStyle",
@@ -40,7 +40,7 @@ DEFAULT_FORE = {"VB.CommandButton": 18}
 FOCUSABLE = {"VB.CommandButton", "VB.TextBox", "VB.ComboBox", "VB.CheckBox", "VB.OptionButton", "MSComctlLib.ListView",
              "VB.VScrollBar", "VB.HScrollBar", "MSComctlLib.Slider", "MSComctlLib.TabStrip"}
 
-# (Steuerelementtyp, Ereignis) -> Code zum Verbinden; {w} = Steuerelement, {cb} = Funktion
+# (control type, event) -> code to connect; {w} = control, {cb} = function
 EVENTS = {
     ("VB.CommandButton", "Click"): "{w}.clicked.connect({cb})",
     ("VB.CommandButton", "MouseDown"): "vbqt.on_mouse({w}, down={cbv})",
@@ -80,7 +80,7 @@ def ident(name: str) -> str:
 
 
 def css_color(value, default_system=None):
-    """Wert aus der .frm -> Stylesheet-Farbe ('rgb(...)' oder 'palette(...)'), None = Standard/unbekannt."""
+    """Value from the .frm -> stylesheet colour ('rgb(...)' or 'palette(...)'), None = default/unknown."""
     c = vb_color(value)
     if c is None:
         return None
@@ -98,14 +98,14 @@ class Generator:
         self.out_dir = out_dir
         self.frm_dir = os.path.dirname(os.path.abspath(form.path))
         self.lines: list[str] = []
-        self.report = collections.defaultdict(set)         # Kategorie -> Einträge
+        self.report = collections.defaultdict(set)         # category -> entries
         self.icons: list[str] = []
         self.tab_orders: list[list[tuple[int, str]]] = []
         self.arrays = self._find_arrays()
         self.menu_items = [c for c in form.root.children if c.type == "VB.Menu"]
         self.is_main_window = bool(self.menu_items)
 
-    # ------------------------------------------------------------------ Hilfen
+    # ------------------------------------------------------------------ Helpers
     def emit(self, text: str = "", indent: int = 2):
         self.lines.append("    " * indent + text if text else "")
 
@@ -123,12 +123,12 @@ class Generator:
     def icon_file(self, res: Resource) -> str | None:
         raw = read_picture(os.path.join(self.frm_dir, res.file), res.offset)
         if not raw:
-            self.report["Bild nicht lesbar"].add(f"{res.file}:{res.offset:04X}")
+            self.report["image not readable"].add(f"{res.file}:{res.offset:04X}")
             return None
         try:
             png = picture_to_png(raw)
-        except Exception as e:                              # nicht unterstütztes Bildformat
-            self.report["Bild nicht lesbar"].add(f"{res.file}:{res.offset:04X} ({e})")
+        except Exception as e:                              # unsupported image format
+            self.report["image not readable"].add(f"{res.file}:{res.offset:04X} ({e})")
             return None
         name = f"{os.path.splitext(res.file)[0]}_{res.offset:04X}.png"
         os.makedirs(os.path.join(self.out_dir, "icons"), exist_ok=True)
@@ -138,12 +138,12 @@ class Generator:
         return name
 
     def text(self, c: Control, key: str, default: str = "") -> str:
-        """Texteigenschaft; liegt der Text in der .frx-Datei, wird er von dort gelesen."""
+        """Text property; if the text is in the .frx file, it is read from there."""
         v = c.get(key, default)
         if isinstance(v, Resource):
             r = read_text(os.path.join(self.frm_dir, v.file), v.offset)
             if r is None:
-                self.report["Text nicht lesbar (.frx)"].add(f"{c.name}.{key}")
+                self.report["text not readable (.frx)"].add(f"{c.name}.{key}")
                 return default
             return r
         return v
@@ -186,12 +186,12 @@ class Generator:
     def unhandled(self, c: Control):
         for k in c.props:
             if k not in IGNORED and k not in HANDLED:
-                self.report[f"Eigenschaft nicht übernommen ({c.type})"].add(k)
+                self.report[f"property not taken over ({c.type})"].add(k)
 
-    # ------------------------------------------------------------------ Steuerelemente
+    # ------------------------------------------------------------------ Controls
     def build_children(self, parent: Control, parent_var: str):
         chain = []
-        # In der .frm steht das oberste Steuerelement zuerst; in Qt liegt das zuletzt erzeugte oben.
+        # In the .frm the topmost control comes first; in Qt the one created last is on top.
         for c in reversed(parent.children):
             if c.type == "VB.Menu":
                 continue
@@ -207,9 +207,9 @@ class Generator:
         self.emit(f"# {c.name}" + (f"({c.index})" if c.index is not None else "") + f": {t}", 2)
         make = getattr(self, "make_" + re.sub(r"\W", "_", t), None)
         if make is None:
-            self.report["Unbekannter Steuerelementtyp (als leere Fläche)"].add(t)
+            self.report["Unknown control type (as an empty area)"].add(t)
             self.emit(f"{w} = QtWidgets.QWidget({parent})")
-            self.emit(f"{w}.setToolTip({t + ' (nicht übersetzt)'!r})")
+            self.emit(f"{w}.setToolTip({t + ' (not translated)'!r})")
         else:
             make(c, w, parent)
         self.emit(f"{self.target(c)} = {w}")
@@ -337,17 +337,17 @@ class Generator:
         if c.flag("HideColumnHeaders"):
             self.emit(f"{w}.setHeaderHidden(True)")
         if c.flag("Sorted"):
-            self.report["ListView sortiert (Sorted): Sortierung im Code umsetzen"].add(c.name)
+            self.report["ListView sorted (Sorted): implement sorting in code"].add(c.name)
         if c.flag("Checkboxes"):
-            self.report["ListView mit Kontrollkästchen: Elemente beim Anlegen mit ItemIsUserCheckable versehen"].add(c.name)
+            self.report["ListView with check boxes: give the items ItemIsUserCheckable when creating them"].add(c.name)
 
     def make_AXVLCCtl_VLCPlugin2(self, c, w, parent):
-        self.emit(f"{w} = QtWidgets.QWidget({parent})      # Videofläche: Wiedergabe später z. B. mit python-vlc "
+        self.emit(f"{w} = QtWidgets.QWidget({parent})      # video area: playback later e.g. with python-vlc "
                   f"(set_xwindow(int({w}.winId())))")
-        self.report["VLC-Steuerelement (Videofläche): Platzhalter, Wiedergabe noch einzubinden"].add(c.name)
+        self.report["VLC control (video area): placeholder, playback still to be integrated"].add(c.name)
 
     def make_VB_Line(self, c, w, parent):
-        """Linie als schmales gefülltes Rechteck: Farbe (BorderColor) und Dicke (BorderWidth, in Pixeln) wie in VB6."""
+        """Line as a narrow filled rectangle: colour (BorderColor) and thickness (BorderWidth, in pixels) as in VB6."""
         k = container_scale(c.parent)
         x1, x2, y1, y2 = (round(c.num(n) * k) for n in ("X1", "X2", "Y1", "Y2"))
         bw = max(c.num("BorderWidth", 1), 1)
@@ -355,18 +355,18 @@ class Generator:
         self.emit(f"{w}.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)")
         color = css_color(c.get("BorderColor")) or "rgb(0, 0, 0)"
         self.emit(f"{w}.setAutoFillBackground(True)")
-        self.emit(f"{w}.setStyleSheet(\"background-color: {color};\")")   # ohne Kennung: gilt für das Steuerelement selbst
-        if abs(y2 - y1) >= abs(x2 - x1):                     # senkrecht: die Dicke zentriert um x
+        self.emit(f"{w}.setStyleSheet(\"background-color: {color};\")")   # without identifier: applies to the control itself
+        if abs(y2 - y1) >= abs(x2 - x1):                     # vertical: the thickness centred around x
             c.px_override = (min(x1, x2) - bw // 2, min(y1, y2), bw, max(abs(y2 - y1), 1))
-        else:                                                # waagerecht
+        else:                                                # horizontal
             c.px_override = (min(x1, x2), min(y1, y2) - bw // 2, max(abs(x2 - x1), 1), bw)
 
     def make_MediaMaker_ShellPipe(self, c, w, parent):
-        self.report["ShellPipe (nicht sichtbar): ersetzt durch runner.py"].add(c.name)
-        self.emit(f"{w} = QtWidgets.QWidget({parent})      # ShellPipe: siehe runner.py")
+        self.report["ShellPipe (not visible): replaced by runner.py"].add(c.name)
+        self.emit(f"{w} = QtWidgets.QWidget({parent})      # ShellPipe: see runner.py")
         self.emit(f"{w}.hide()")
 
-    # ------------------------------------------------------------------ Menüs
+    # ------------------------------------------------------------------ Menus
     @staticmethod
     def shortcut(value: str | None) -> str | None:
         if not value:
@@ -401,7 +401,7 @@ class Generator:
         self.emit(f"{w} = QtGui.QAction({caption!r}, self)")
         sc = self.shortcut(m.get("Shortcut"))
         if m.get("Shortcut") and not sc:
-            self.report["Tastenkürzel nicht übersetzt"].add(f"{m.name}: {m.get('Shortcut')}")
+            self.report["shortcut not translated"].add(f"{m.name}: {m.get('Shortcut')}")
         if sc:
             self.emit(f"{w}.setShortcut(QtGui.QKeySequence({sc!r}))")
         if m.flag("Checked"):
@@ -414,7 +414,7 @@ class Generator:
         self.emit(f"{parent}.addAction({w})")
         self.emit(f"{self.target(m)} = {w}")
 
-    # ------------------------------------------------------------------ Formular
+    # ------------------------------------------------------------------ Form
     def generate(self) -> str:
         form, root = self.form, self.form.root
         name = root.name
@@ -423,10 +423,10 @@ class Generator:
         fixed = root.get("BorderStyle", "2") in ("1", "3")
 
         out = [
-            f'"""Oberfläche von {name} - automatisch erzeugt von frm2qt.py aus {os.path.basename(form.path)}.',
+            f'"""User interface of {name} - generated automatically by frm2qt.py from {os.path.basename(form.path)}.',
             "",
-            "Nicht von Hand ändern: Die Datei wird beim erneuten Erzeugen überschrieben.",
-            f"Logik gehört in eine abgeleitete Klasse mit den VB6-Prozedurnamen (siehe {name}.py).",
+            "Do not change by hand: the file is overwritten when it is generated again.",
+            f"Logic belongs in a derived class with the VB6 procedure names (see {name}.py).",
             '"""',
             "import os",
             "",
@@ -445,7 +445,7 @@ class Generator:
             "        self._connect()",
             "",
             "    def _vb(self, procedure, *args):",
-            '        """Ruft die VB6-Prozedur (falls in der abgeleiteten Klasse vorhanden) auf."""',
+            '        """Calls the VB6 procedure (if present in the derived class)."""',
             "        fn = getattr(self, procedure, None)",
             "        return fn(*args) if fn else None",
             "",
@@ -453,7 +453,7 @@ class Generator:
             "        return lambda *signal_args: self._vb(procedure, *fixed)",
             "",
             "    def _callv(self, procedure, *fixed):",
-            '        """Wie _call, reicht aber die Argumente des Ereignisses weiter (Maus, Tasten, Dateien)."""',
+            '        """Like _call, but passes on the arguments of the event (mouse, keys, files)."""',
             "        return lambda *event_args: self._vb(procedure, *fixed, *event_args)",
             "",
             "    def _build(self):",
@@ -479,7 +479,7 @@ class Generator:
         if root.get("BorderStyle") == "0":
             self.emit("self.setWindowFlag(QtCore.Qt.WindowType.FramelessWindowHint, True)")
         if root.get("ShowInTaskbar") == "0":
-            self.report["ShowInTaskbar = False: nicht übernommen"].add(name)
+            self.report["ShowInTaskbar = False: not taken over"].add(name)
         css = css_color(root.get("BackColor"), 15)
         f = root.sub.get("Font") or {}
         font_expr = (f"vbqt.make_font({f.get('Name', 'MS Sans Serif')!r}, {float(f.get('Size', 8.25))}, "
@@ -488,11 +488,11 @@ class Generator:
         if self.is_main_window:
             self.emit("central = QtWidgets.QWidget(self)")
             self.emit("self.setCentralWidget(central)")
-            self.emit(f"central.setFont({font_expr})      # VB6-Standardschrift des Formulars (Menü behält die Systemschrift)")
+            self.emit(f"central.setFont({font_expr})      # VB6 default font of the form (menu keeps the system font)")
             self.emit(f"central.{'setFixedSize' if fixed else 'setMinimumSize'}({cw}, {ch})")
             parent = "central"
         else:
-            self.emit(f"self.setFont({font_expr})      # VB6-Standardschrift des Formulars")
+            self.emit(f"self.setFont({font_expr})      # VB6 default font of the form")
             self.emit(f"self.{'setFixedSize' if fixed else 'resize'}({cw}, {ch})")
             parent = "self"
         if css:
@@ -500,7 +500,7 @@ class Generator:
             self.emit(f"self.setObjectName({name!r})")
         self.emit()
         self.build_menus()
-        # Elternelement der Steuerelemente ist der Clientbereich
+        # parent element of the controls is the client area
         self.root_parent = parent
         self.build_children(root, parent)
         for chain in self.tab_orders:
@@ -527,8 +527,8 @@ class Generator:
             proc = f"{h.control}_{h.event}"
             if not template:
                 if h.event in KNOWN_EVENTS:
-                    self.report["Ereignis nicht verbunden (im Code nachbilden)"].add(f"{proc} ({t})")
-                    self.emit(f"# TODO: {proc} ({t}) hat keine automatische Entsprechung in Qt")
+                    self.report["event not connected (re-create it in code)"].add(f"{proc} ({t})")
+                    self.emit(f"# TODO: {proc} ({t}) has no automatic equivalent in Qt")
                 continue
             if h.control in self.arrays:
                 elems = [c for c in self.form.root.walk() if c.name == h.control and c is not self.form.root]
@@ -539,7 +539,7 @@ class Generator:
             else:
                 c = next(c for c in self.form.root.walk() if c.name == h.control)
                 if t == "VB.Menu" and any(k.type == "VB.Menu" for k in c.children):
-                    template = "{w}.aboutToShow.connect({cb})"       # Menü mit Untermenü: öffnet sich beim Klick
+                    template = "{w}.aboutToShow.connect({cb})"       # menu with submenu: opens on click
                 self.emit(template.format(w=self.target(c), cb=f"self._call({proc!r})", cbv=f"self._callv({proc!r})"))
         if len(self.lines) == n_before:
             self.emit("pass")
@@ -574,7 +574,7 @@ class Generator:
 
     def stub(self) -> str:
         name = self.form.root.name
-        lines = [f'"""Logik von {name}: Prozeduren mit den VB6-Namen; Vorlage von frm2qt.py."""',
+        lines = [f'"""Logic of {name}: procedures with the VB6 names; template from frm2qt.py."""',
                  f"from ui_{name} import {name}Base", "", "", f"class {name}({name}Base):"]
         seen = set()
         for h in self.form.handlers:
@@ -610,12 +610,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("frm", nargs="+")
     ap.add_argument("--out", default="ui_out")
-    ap.add_argument("--stub", action="store_true", help="Vorlage für die Logik anlegen (vorhandene Dateien bleiben)")
+    ap.add_argument("--stub", action="store_true", help="create the template for the logic (existing files stay)")
     args = ap.parse_args()
     for p in args.frm:
         r = convert(p, args.out, args.stub)
         n = len(list(r["form"].root.walk())) - 1
-        print(f"{os.path.basename(p)} -> {r['module']}  ({n} Steuerelemente, {len(r['icons'])} Symbole)")
+        print(f"{os.path.basename(p)} -> {r['module']}  ({n} controls, {len(r['icons'])} icons)")
         for cat, items in sorted(r["report"].items()):
             print(f"   - {cat}: {', '.join(sorted(items))}")
 

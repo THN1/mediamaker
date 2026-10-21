@@ -1,50 +1,50 @@
 # MediaMaker
 
-Schneidet TV-Aufnahmen (`.ts`): Werbung herausschneiden, schwarze Ränder und Senderlogo entfernen, als `.mp4` ausgeben.
-Neuimplementierung des VB6-Programms in Python mit PySide6; gerendert wird mit `ffmpeg`, die Vorschau macht VLC.
-Die Oberfläche wird weiterhin in der VB6-IDE entworfen und mit `ui/frm2qt.py` nach PySide6 übersetzt.
+Cuts TV recordings (`.ts`): removes commercials, black borders and the station logo, and writes the result as `.mp4`.
+A reimplementation of the VB6 program in Python with PySide6; rendering is done with `ffmpeg`, the preview with VLC.
+The user interface is still designed in the VB6 IDE and translated to PySide6 with `ui/frm2qt.py`.
 
-Der Stand der Arbeit steht in [CHANGELOG.md](CHANGELOG.md).
+The state of the work is described in [CHANGELOG.md](CHANGELOG.md).
 
-## Voraussetzungen
+## Requirements
 
-- Python 3.10 oder neuer
-- Pakete: siehe `requirements.txt` (PySide6, python-vlc, numpy, Pillow)
-- Programme: `ffmpeg` und `ffprobe` (im PATH), VLC mit libvlc
+- Python 3.10 or newer
+- Packages: see `requirements.txt` (PySide6, python-vlc, numpy, Pillow)
+- Programs: `ffmpeg` and `ffprobe` (in the PATH), VLC with libvlc
 
-## Einrichten und Starten
+## Setup and start
 
 ```
-cp MediaMaker.example.ini MediaMaker.ini      # danach an den eigenen Rechner anpassen (MediaMaker.ini wird nicht versioniert)
-python3 mediamaker.py Film.ts                 # neuer Auftrag mit dieser Datei
-python3 mediamaker.py                         # die zuletzt bearbeitete Schnittliste laden
-python3 run_job.py JOB.sh --output Film.mp4   # Auftrag ohne Oberfläche ausführen
+cp MediaMaker.example.ini MediaMaker.ini      # then adapt it to your computer (MediaMaker.ini is not versioned)
+python3 mediamaker.py movie.ts                # new job with this file
+python3 mediamaker.py                         # load the most recently edited segment list
+python3 run_job.py JOB.sh --output movie.mp4  # run a job without the user interface
 ```
 
-Nützliche Umgebungsvariablen: `MEDIAMAKER_DEBUG=1` (Protokoll in `mediamaker_debug.log`), `MEDIAMAKER_NO_FILTER=1` (Fehlerausgabe
-ungefiltert). In der INI-Datei, Abschnitt `[settings]`: `player=memory|embed`, `vlc_args=...`, `hide_messages=Text1|Text2`.
+Useful environment variables: `MEDIAMAKER_DEBUG=1` (log in `mediamaker_debug.log`), `MEDIAMAKER_NO_FILTER=1` (unfiltered error
+output). In the INI file, section `[settings]`: `player=memory|embed`, `vlc_args=...`, `hide_messages=Text1|Text2`.
 
 ## Tests
 
-Die Tests brauchen keine Oberfläche (Qt wird durch `ui/tests/qtstub` ersetzt) und kleine Beispielvideos (`sample.ts`, `sample2.ts`,
-`sample3.ts`), die nicht im Repository liegen:
+The tests need no user interface (Qt is replaced by `ui/tests/qtstub`) and small sample videos (`sample.ts`, `sample2.ts`,
+`sample3.ts`) that are not part of the repository:
 
 ```
-python3 tests/test_app.py /pfad/zu/den/beispielvideos
-python3 tests/test_border.py /pfad/zu/den/beispielvideos
-python3 tests/test_logo.py /pfad/zu/sample.ts
-python3 tests/test_build.py /pfad/zu/den/beispielvideos
-python3 ui/tests/test_frm2qt.py "/pfad/zum/VB6-Ordner"
+python3 tests/test_app.py /path/to/sample/videos
+python3 tests/test_border.py /path/to/sample/videos
+python3 tests/test_logo.py /path/to/sample.ts
+python3 tests/test_build.py /path/to/sample/videos
+python3 ui/tests/test_frm2qt.py "/path/to/VB6/folder"
 ```
 
-## Oberfläche aus VB6-Formularen erzeugen
+## Generating the user interface from VB6 forms
 
 ```
-python3 ui/frm2qt.py /pfad/zum/VB6-Ordner/*.frm --out ui/generated --stub
-python3 ui/show_form.py frmMain --dir ui/generated        # Vorschau eines Formulars
+python3 ui/frm2qt.py /path/to/VB6/folder/*.frm --out ui/generated --stub
+python3 ui/show_form.py frmMain --dir ui/generated        # preview of a form
 ```
 
-## Versionen
+## Versions
 
-Geänderte Stände werden mit Tags markiert (`v0.1`, `v0.2`, ...). Auf `main` wird die jeweils nächste Version entwickelt; die
-Versionsnummer steht in `mediamaker.py` (`VERSION`).
+Changed states are marked with tags (`v0.1`, `v0.2`, ...). The next version is developed on `main`; the version number is in
+`mediamaker.py` (`VERSION`).

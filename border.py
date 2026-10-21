@@ -1,6 +1,6 @@
-"""Erkennung schwarzer Ränder (Letterbox) und Suche nach Werbeblöcken über den Rand.
+"""Detection of black borders (letterbox) and search for commercial breaks using the border.
 
-Nachbau von border() und where_border() aus VB6.
+Port of border() and where_border() from VB6.
 """
 from __future__ import annotations
 
@@ -13,15 +13,15 @@ from frames import grab_frame
 
 
 def count_black_lines(img: np.ndarray, blackness: int = 12, allowance: int = 1000) -> int:
-    """Zählt die schwarzen Zeilen am UNTEREN Bildrand.
+    """Counts the black lines at the BOTTOM edge of the picture.
 
-    Pro Zeile werden alle Farbwerte (R, G, B einzeln), die größer als `blackness` sind, aufsummiert
-    (die Helligkeit selbst, nicht nur die Anzahl). Ist diese Summe größer als `allowance`, ist die Zeile
-    nicht mehr schwarz. Es werden höchstens 25 % der Bildhöhe untersucht. Ergebnis 0 heißt:
-    kein Rand gefunden (oder das ganze Prüfgebiet ist schwarz, z. B. bei einem Schwarzbild).
+        For every line all colour values (R, G, B separately) larger than `blackness` are summed up
+        (the brightness itself, not just the count). If this sum is larger than `allowance`, the line
+        is no longer black. At most 25 % of the picture height is examined. A result of 0 means:
+        no border found (or the whole examined area is black, e.g. in a black frame).
     """
     h = img.shape[0]
-    rows = img[::-1][: h // 4 + 1].astype(np.int32)           # von unten nach oben
+    rows = img[::-1][: h // 4 + 1].astype(np.int32)           # from bottom to top
     sums = np.where(rows > blackness, rows, 0).sum(axis=(1, 2))
     over = np.flatnonzero(sums > allowance)
     return int(over[0]) if over.size else 0
@@ -34,20 +34,21 @@ def border_at(path: str, frame: int, fps: Fraction, opts: dict, ffmpeg: str = "f
 
 def where_border(border_of: Callable[[int], int], pos: int, last: int, value: int,
                  equal: bool, stepping: int, lim: int = 3) -> int:
-    """Sucht ab Bild `pos` das nächste Bild, dessen Rand zu `value` passt (equal=True)
-    bzw. davon abweicht (equal=False). Grob-zu-fein: große Schritte, bei Treffer einen Schritt
-    zurück und die Schrittweite verkleinern, bis 1 erreicht ist.
+    """Starting at frame `pos`, searches for the next frame whose border matches `value` (equal=True)
+        or differs from it (equal=False). Coarse to fine: large steps; on a hit one step
+        back and the step width is reduced until it reaches 1.
 
-    VB6-Aufrufe: 'Ende der Werbung' = where_border(crop, True, 1000); 'nächste Werbung' = (crop, False, 6000).
-    Voraussetzung (wie in VB6): die Bedingung ist ab der Fundstelle dauerhaft erfüllt.
+        VB6 calls: 'end of commercial' = where_border(crop, True, 1000); 'next commercial' = (crop, False, 6000).
+        MediaMaker takes the step widths from the options step_end / step_next instead.
+        Prerequisite (as in VB6): from the place where it is found the condition holds permanently.
     """
     while stepping > 0:
         if pos + stepping > last:
-            stepping = (stepping + 8) // 10          # Dateiende: nur Schrittweite verkleinern
+            stepping = (stepping + 8) // 10          # end of file: only reduce the step width
             continue
         pos += stepping
         diff = abs(border_of(pos) - value)
         if (equal and diff < lim) or (not equal and diff > lim):
             pos -= stepping
-            stepping = (stepping + 8) // 10          # erreicht auf jeden Fall 1 vor 0
+            stepping = (stepping + 8) // 10          # reaches 1 in any case before 0
     return min(pos + 1, last)

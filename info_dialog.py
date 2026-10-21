@@ -1,4 +1,4 @@
-"""Dialog "Loaded segments information" (VB6: frmInfo): Tabelle aller Segmente mit Zusammenfassung; Größe veränderbar."""
+"""Dialog "Loaded segments information" (VB6: frmInfo): table of all segments with a summary; resizable."""
 from __future__ import annotations
 
 from PySide6 import QtCore, QtWidgets
@@ -17,7 +17,7 @@ class frmInfo(frmInfoBase):
     def __init__(self, rows: list, summary: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Loaded segments information")
-        # Der VB6-Entwurf hat feste Größe und neun Spalten; hier gibt es mehr Spalten und das Fenster lässt sich verändern.
+        # The VB6 design has a fixed size and nine columns; here there are more columns and the window can be resized.
         self.setMinimumSize(520, 240)
         self.setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX)
         self.setWindowFlag(QtCore.Qt.WindowType.WindowMaximizeButtonHint, True)

@@ -1,10 +1,10 @@
-"""Schnittgenauigkeit: Landet ein Schnitt [start, end) auf den Bildern, die man erwartet?
+"""Cut accuracy: does a cut [start, end) land on the frames one expects?
 
-Aufruf:  python3 tests/test_cut_accuracy.py "Aufnahme.ts" start end [origin]
-origin = Nullpunkt der Bildnummern: video (Standard), container oder vb6.
-Geschnitten wird einmal wie in VB6 (-ss vor -i, trim relativ) und einmal mit absoluten Zeitstempeln.
-Das erste/letzte Bild der erzeugten MP4 wird den Quellbildern zugeordnet (Ähnlichkeit auf verkleinerten Bildern).
-Bildnummern in der Ausgabe zählen ab Videobeginn.
+Usage:  python3 tests/test_cut_accuracy.py "recording.ts" start end [origin]
+origin = zero point of the frame numbers: video (default), container or vb6.
+The cut is made once as in VB6 (-ss before -i, trim relative) and once with absolute timestamps.
+The first/last frame of the produced MP4 is assigned to the source frames (similarity on reduced pictures).
+Frame numbers in the output count from the video start.
 """
 import math, os, subprocess, sys, tempfile
 from fractions import Fraction
@@ -28,32 +28,32 @@ ref_job = parse_batch_header(open(os.path.join(HERE, "sample_MediaMaker.sh"), en
 profile = dict(ref_job.profile, scale=f"{info.width}:{info.height}", fps=f"{float(FPS):.3f}")
 
 def decode(path):
-    """Alle Bilder in Dekodierreihenfolge, verkleinert auf 180x144 Graustufen."""
+    """All frames in decoding order, reduced to 180x144 greyscale."""
     p = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-map", "0:v:0", "-vf", "scale=180:144,format=gray",
                         "-fps_mode", "passthrough", "-f", "rawvideo", "-"], capture_output=True)
     size = 180 * 144
     return [np.frombuffer(p.stdout[i:i + size], np.uint8).astype(np.int16) for i in range(0, len(p.stdout) - size + 1, size)]
 
 src = decode(SRC)
-OFF = round(info.first_frame_offset * FPS)       # Bildnummer (ab Videobeginn) des ersten dekodierbaren Bildes
+OFF = round(info.first_frame_offset * FPS)       # frame number (from the video start) of the first decodable frame
 
-def number(img):                                  # Bildnummer ab Videobeginn
+def number(img):                                  # frame number from the video start
     return OFF + min(range(len(src)), key=lambda j: np.abs(img - src[j]).mean())
 
-def expected(origin, n):                          # Bildnummer ab Videobeginn, die zu n bei diesem Nullpunkt gehört
-    return math.ceil((frame_time(n, FPS, times, origin) - times[1]) * FPS - Fraction(1, 20))   # erstes Bild ab diesem Zeitpunkt
+def expected(origin, n):                          # frame number from the video start that belongs to n at this zero point
+    return math.ceil((frame_time(n, FPS, times, origin) - times[1]) * FPS - Fraction(1, 20))   # first frame from this point in time
 
-def expected_range(origin):                       # Ende = Start + Länge: wie in VB6 wird vom Startzeitpunkt aus gerechnet
+def expected_range(origin):                       # end = start + length: as in VB6 the calculation starts at the start time
     first = expected(origin, START)
     return first, first + (END - 1 - START)
 
-print(f"Schnitt {START}..{END-1} ({END-START} Bilder) in {os.path.basename(SRC)}; Nullpunkt der Bildnummern: {ORIGIN}")
-print("Erwartete Bilder (Nummern ab Videobeginn): " + ", ".join(
+print(f"cut {START}..{END-1} ({END-START} frames) in {os.path.basename(SRC)}; zero point of the frame numbers: {ORIGIN}")
+print("expected frames (numbers from the video start): " + ", ".join(
     f"{o}: {expected_range(o)[0]}..{expected_range(o)[1]}" for o in ("video", "container", "vb6")))
 if expected_range(ORIGIN)[0] < OFF:
-    print(f"Hinweis: Der Startzeitpunkt liegt vor dem ersten dekodierbaren Bild (Nummer {OFF}); der Schnitt beginnt dort.")
+    print(f"Note: The start time lies before the first decodable frame (number {OFF}); the cut starts there.")
 ok = True
-for label, st in (("VB6-Verfahren (relativ)    ", None), ("absolute Zeitstempel       ", {SRC: times})):
+for label, st in (("VB6 method (relative)      ", None), ("absolute timestamps        ", {SRC: times})):
     with tempfile.TemporaryDirectory() as d:
         out = os.path.join(d, "cut.mp4")
         seg = Segment(1, SRC, os.path.basename(SRC), START, END, info.frames, FPS, info.width, info.height,
@@ -68,6 +68,6 @@ for label, st in (("VB6-Verfahren (relativ)    ", None), ("absolute Zeitstempel 
         good = (first, last) == want and len(frames) == END - START or want[0] < OFF
         if st:
             ok &= good
-        print(f"{label}: erhalten {first}..{last} ({len(frames)} Bilder) -> entspricht Nullpunkt: "
-              f"{', '.join(match) or 'keinem'}" + ("  OK" if good else "  ABWEICHUNG"))
+        print(f"{label}: got {first}..{last} ({len(frames)} frames) -> corresponds to zero point: "
+              f"{', '.join(match) or 'none'}" + ("  OK" if good else "  DEVIATION"))
 sys.exit(0 if ok else 1)

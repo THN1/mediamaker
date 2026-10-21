@@ -1,7 +1,7 @@
-"""Senderlogo: Maske für removelogo, Isolierung des Logos, Erkennung und Suche im Film.
+"""Station logo: mask for removelogo, isolation of the logo, detection and search in the movie.
 
-Nachbau der VB6-Funktionen monochrome() / frmRemoveLogo, logo(), binary(), bin(), ones(),
-where_logo() und rewind(). Die Zahlenwerte (8, 5, 400, 18, 0.2, 25, 20, 100) stammen aus VB6.
+Port of the VB6 functions monochrome() / frmRemoveLogo, logo(), binary(), bin(), ones(),
+where_logo() and rewind(). The numerical values (8, 5, 400, 18, 0.2, 25, 20, 100) come from VB6.
 """
 from __future__ import annotations
 
@@ -16,45 +16,45 @@ from PIL import Image
 
 from frames import grab_frame
 
-THRESHOLD = 8        # frmRemoveLogo: Helligkeit ab 8 gilt als "weiß" (Logo)
-EXTRA = 5            # Rand um das isolierte Logo in Pixeln
-LINE_SUM = 400       # Summe der Bytes einer 1-Bit-Zeile, ab der sie als "Logo-Zeile" gilt
-BIN_MIN = 18         # bin(): Helligkeitsunterschied benachbarter Pixel, ab dem eine Kante gezählt wird
-MIN_CONF = 0.2       # where_logo(): Mindest-Übereinstimmung
+THRESHOLD = 8        # frmRemoveLogo: brightness from 8 counts as "white" (logo)
+EXTRA = 5            # border around the isolated logo in pixels
+LINE_SUM = 400       # sum of the bytes of a 1-bit line from which it counts as a "logo line"
+BIN_MIN = 18         # bin(): brightness difference of neighbouring pixels from which an edge is counted
+MIN_CONF = 0.2       # where_logo(): minimum match
 
 
 @dataclass
 class LogoRef:
-    rect: tuple[int, int, int, int]      # links, oben, rechts, unten (Pixel, rechts/unten exklusiv)
-    edges: np.ndarray                    # Kantenkarte des Referenzlogos (bool)
-    ones: int                            # Anzahl der Kanten in der Referenz
+    rect: tuple[int, int, int, int]      # left, top, right, bottom (pixels, right/bottom exclusive)
+    edges: np.ndarray                    # edge map of the reference logo (bool)
+    ones: int                            # number of edges in the reference
 
 
-# ----------------------------------------------------------------------------- Bausteine
+# ----------------------------------------------------------------------------- Building blocks
 def to_grey(img: np.ndarray) -> np.ndarray:
-    """RGB -> 8-Bit-Grau (Rec.709 wie FreeImage_ConvertToGreyscale)."""
+    """RGB -> 8-bit grey (Rec.709 like FreeImage_ConvertToGreyscale)."""
     r, g, b = (img[..., i].astype(np.float64) for i in range(3))
     return (0.2126 * r + 0.7152 * g + 0.0722 * b + 0.5).astype(np.uint8)
 
 
 def edge_map(grey: np.ndarray, bin_min: int = BIN_MIN) -> np.ndarray:
-    """bin(): Pixel x ist eine Kante, wenn |grau(x) - grau(x+1)| > bin_min (VB6: 18). Letzte Spalte bleibt leer."""
+    """bin(): pixel x is an edge if |grey(x) - grey(x+1)| > bin_min (VB6: 18). The last column stays empty."""
     m = np.zeros(grey.shape, dtype=bool)
     m[:, :-1] = np.abs(grey[:, 1:].astype(int) - grey[:, :-1].astype(int)) > bin_min
     return m
 
 
 def ones(m1: np.ndarray, m2: np.ndarray) -> int:
-    """Anzahl gemeinsamer Kanten. Wie in VB6 bleibt die letzte Zeile außen vor."""
+    """Number of common edges. As in VB6 the last line is left out."""
     return int((m1[:-1] & m2[:-1]).sum())
 
 
-# ----------------------------------------------------------------------------- Maske (removelogo)
+# ----------------------------------------------------------------------------- Mask (removelogo)
 def make_mask(frame_rgb: np.ndarray, threshold: int = THRESHOLD, blend: float = 0.0) -> np.ndarray:
-    """1-Bit-Maske eines (möglichst schwarzen) Bildes mit Logo: True = Logo.
+    """1-bit mask of a (preferably black) picture with a logo: True = logo.
 
-    blend (0..1): schwärzt ein Band um die Bildmitte (Höhe = blend * halbe Bildhöhe nach oben
-    und unten), um störende Reste mitten im Bild zu entfernen (hscBlend in frmRemoveLogo).
+        blend (0..1): blackens a band around the middle of the picture (height = blend * half the picture height upwards
+        and downwards) to remove disturbing remains in the middle of the picture (hscBlend in frmRemoveLogo).
     """
     mask = to_grey(frame_rgb) >= threshold
     if blend > 0:
@@ -65,9 +65,9 @@ def make_mask(frame_rgb: np.ndarray, threshold: int = THRESHOLD, blend: float = 
 
 
 def mask_to_png_b64(mask: np.ndarray) -> str:
-    """Wie VB6 (SubItems(18)): 1-Bit-PNG als Base64-Text ohne Zeilenumbrüche."""
+    """As in VB6 (SubItems(18)): 1-bit PNG as Base64 text without line breaks."""
     buf = io.BytesIO()
-    Image.fromarray(mask).save(buf, format="PNG")          # bool-Array -> Modus "1"
+    Image.fromarray(mask).save(buf, format="PNG")          # bool array -> mode "1"
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
@@ -75,18 +75,18 @@ def mask_from_png_b64(text: str) -> np.ndarray:
     return np.asarray(Image.open(io.BytesIO(base64.b64decode(text))).convert("1"))
 
 
-# ----------------------------------------------------------------------------- Logo isolieren
+# ----------------------------------------------------------------------------- Isolating the logo
 def isolate_logo(mask: np.ndarray, extra: int = EXTRA, bin_min: int = BIN_MIN) -> Optional[LogoRef]:
-    """Sucht das Logo im oberen Viertel der Maske und bildet das Referenzlogo (monochrome()).
+    """Looks for the logo in the upper quarter of the mask and forms the reference logo (monochrome()).
 
-    Zeilen zählen als "Logo-Zeile", wenn die Summe ihrer Bytes (1 Byte = 8 Pixel, linkes Pixel = höchstes
-    Bit) größer als 400 ist. Gefunden wird der erste zusammenhängende Block solcher Zeilen von oben.
+        Lines count as a "logo line" if the sum of their bytes (1 byte = 8 pixels, left pixel = highest
+        bit) is greater than 400. The first contiguous block of such lines from the top is found.
     """
     h, w = mask.shape
     packed = np.packbits(mask, axis=1)
     sums = packed.sum(axis=1, dtype=np.int64)
 
-    # 1. Schleife: obere linke Ecke (h0 = oberste Zeile in FreeImage-Zählung von unten, w0 = linkes Byte * 8)
+    # 1st loop: upper left corner (h0 = top line in FreeImage counting from the bottom, w0 = left byte * 8)
     h0 = w0 = 0
     for y in range(h - 1, h * 3 // 4 - 1, -1):
         r = h - 1 - y
@@ -101,7 +101,7 @@ def isolate_logo(mask: np.ndarray, extra: int = EXTRA, bin_min: int = BIN_MIN) -
     if w0 * h0 == 0:
         return None
 
-    # 2. Schleife: rechte untere Ecke, höchstens 50 Zeilen unterhalb von h0
+    # 2nd loop: lower right corner, at most 50 lines below h0
     w1 = 0
     for y in range(h0, h0 - 51, -1):
         r = h - 1 - y
@@ -121,23 +121,23 @@ def isolate_logo(mask: np.ndarray, extra: int = EXTRA, bin_min: int = BIN_MIN) -
     return None
 
 
-# ----------------------------------------------------------------------------- Referenz aus Rechteck (delogo)
+# ----------------------------------------------------------------------------- reference from rectangle (delogo)
 def absolute_rect(rel: str, width: int, height: int) -> tuple[int, int, int, int]:
-    """SubItems(18) im delogo-Modus: 'x y breite höhe' als Bruchteile des Bildes -> Pixel (absolute())."""
+    """SubItems(18) in delogo mode: 'x y width height' as fractions of the picture -> pixels (absolute())."""
     x, y, bw, bh = (float(t.replace(",", ".")) for t in rel.split(" ")[:4])
     return round(width * x), round(height * y), round(width * (x + bw)), round(height * (y + bh))
 
 
 def ref_from_rect(frame_rgb: np.ndarray, rect: tuple[int, int, int, int], bin_min: int = BIN_MIN) -> LogoRef:
-    """cmdLogo_Click ohne PNG-Maske: Referenz aus dem Rechteck des aktuellen Bildes."""
+    """cmdLogo_Click without PNG mask: reference from the rectangle of the current frame."""
     left, top, right, bottom = rect
     edges = edge_map(to_grey(frame_rgb[top:bottom, left:right]), bin_min)
     return LogoRef(rect, edges, ones(edges, edges))
 
 
-# ----------------------------------------------------------------------------- Erkennung
+# ----------------------------------------------------------------------------- Detection
 def logo_confidence(frame_rgb: np.ndarray, ref: LogoRef, bin_min: int = BIN_MIN) -> float:
-    """Anteil der Referenzkanten, die im Logo-Rechteck dieses Bildes ebenfalls vorkommen (0..1)."""
+    """Share of the reference edges that also occur in the logo rectangle of this frame (0..1)."""
     left, top, right, bottom = ref.rect
     edges = edge_map(to_grey(frame_rgb[top:bottom, left:right]), bin_min)
     return ones(edges, ref.edges) / ref.ones if ref.ones else 0.0
@@ -148,18 +148,18 @@ def confidence_at(path: str, frame: int, fps: Fraction, ref: LogoRef, opts: dict
                            int(opts.get("logo_edge", BIN_MIN)))
 
 
-INITIAL_REWIND = 25        # Bilder, die zuerst zurückgegangen wird (VB6); dort liegt die Referenzfarbe
-DEFAULT_MAX_REWIND = 45    # Bilder insgesamt (VB6: 25 + bis zu 20); bei 25 FPS 1,8 Sekunden
-COARSE_STEP = 5            # bei langem Rückspulen wird zuerst in Schritten von 5 Bildern gesucht
+INITIAL_REWIND = 25        # frames that are gone back first (VB6); the reference colour lies there
+DEFAULT_MAX_REWIND = 45    # frames in total (VB6: 25 + up to 20); 1.8 seconds at 25 FPS
+COARSE_STEP = 5            # when rewinding far, the search first uses steps of 5 frames
 
 
 def rewind(pos: int, bottom_line_avg: Callable[[int], tuple[int, int, int]], max_back: int = DEFAULT_MAX_REWIND) -> int:
-    """Geht vom gefundenen Logo-Beginn zurück und sucht den Szenenwechsel (rewind()).
+    """Goes back from the found start of the logo and looks for the scene change (rewind()).
 
-    Referenz ist der Mittelwert der untersten Bildzeile 25 Bilder vor `pos` (in VB6 FreeImage-Scanline 0); danach wird bis
-    `max_back` Bilder insgesamt zurückgegangen, bis sich die Farbe um mehr als 100 ändert (VB6: höchstens 20 weitere Bilder,
-    Bild für Bild). Bei längeren Strecken wird zuerst in Schritten von 5 Bildern gesucht und dann Bild für Bild verfeinert,
-    damit das Zurückspulen auch über mehrere Sekunden schnell bleibt.
+        The reference is the mean of the bottom picture line 25 frames before `pos` (in VB6 FreeImage scanline 0); then it goes back up to
+        `max_back` frames in total, until the colour changes by more than 100 (VB6: at most 20 further frames,
+        frame by frame). For longer distances the search first uses steps of 5 frames and then refines frame by frame,
+        so that rewinding stays fast even over several seconds.
     """
     if max_back <= 0:
         return pos
@@ -172,7 +172,7 @@ def rewind(pos: int, bottom_line_avg: Callable[[int], tuple[int, int, int]], max
     def changed(p: int) -> bool:
         return sum(abs(a - b) for a, b in zip(bottom_line_avg(p), ref)) > 100
 
-    if steps <= 20:                                  # wie VB6: Bild für Bild
+    if steps <= 20:                                  # as in VB6: frame by frame
         for _ in range(steps):
             pos -= 1
             if changed(pos):
@@ -181,7 +181,7 @@ def rewind(pos: int, bottom_line_avg: Callable[[int], tuple[int, int, int]], max
     moved = 0
     while moved < steps:
         n = min(COARSE_STEP, steps - moved)
-        if changed(pos - n):                         # der Wechsel liegt in diesen n Bildern: Bild für Bild nachsehen
+        if changed(pos - n):                         # the change lies in these n frames: look frame by frame
             for _ in range(n):
                 pos -= 1
                 if changed(pos):
@@ -199,13 +199,13 @@ def bottom_line_average(path: str, frame: int, fps: Fraction, opts: dict, ffmpeg
 
 def where_logo(conf_of: Callable[[int], float], pos: int, last: int, equal: bool, stepping: int,
                rewind_fn: Optional[Callable[[int], int]] = None, min_conf: float = MIN_CONF) -> int:
-    """Sucht ab Bild `pos` das nächste Bild MIT Logo (equal=True, danach rewind) bzw. OHNE Logo (equal=False).
+    """Starting at frame `pos`, searches for the next frame WITH logo (equal=True, then rewind) or WITHOUT logo (equal=False).
 
-    VB6-Aufrufe: 'Ende der Werbung' = (True, 1000), 'nächste Werbung' = (False, 6000).
+        VB6 calls: 'end of commercial' = (True, 1000), 'next commercial' = (False, 6000).
     """
     while stepping > 0:
         if pos + stepping >= last:
-            stepping = (stepping + 8) // 10          # Dateiende: nur Schrittweite verkleinern
+            stepping = (stepping + 8) // 10          # end of file: only reduce the step width
             continue
         pos += stepping
         c = conf_of(pos)

@@ -1,7 +1,7 @@
-"""Suche nach dem Ende bzw. dem Beginn einer Werbung (VB6: mnuEnd_Click / mnuNext_Click mit where_border / where_logo).
+"""Search for the end or the start of a commercial (VB6: mnuEnd_Click / mnuNext_Click with where_border / where_logo).
 
-Die Suche beginnt mit einer festen Schrittweite (1000 Bilder für "Ende der Werbung", 6000 für "nächste Werbung") und verfeinert
-sie jeweils um den Faktor 10, bis sie 1 erreicht. Sie läuft im Hintergrund und lässt sich abbrechen.
+The search starts with a fixed step width (options step_end / step_next in seconds; VB6: 1000 and 6000 frames at 25 FPS) and
+refines it by a factor of 10 each time until it reaches 1. It runs in the background and can be cancelled.
 """
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from border import border_at, where_border
 from logo import bottom_line_average, confidence_at, rewind, where_logo
 from player import debug_log
 
-DEFAULT_STEP_END_S = 40              # Schrittweite für "Seek end of commercial" in Sekunden (VB6: 1000 Bilder bei 25 FPS)
-DEFAULT_STEP_NEXT_S = 240            # Schrittweite für "Seek next commercial" in Sekunden (VB6: 6000 Bilder bei 25 FPS)
+DEFAULT_STEP_END_S = 40              # step width for "Seek end of commercial" in seconds (VB6: 1000 frames at 25 FPS)
+DEFAULT_STEP_NEXT_S = 240            # step width for "Seek next commercial" in seconds (VB6: 6000 frames at 25 FPS)
 
 
 def step_seconds(opts: dict, end: bool) -> float:
@@ -30,7 +30,7 @@ def step_seconds(opts: dict, end: bool) -> float:
 
 
 def step_frames(seconds, fps) -> int:
-    """Schrittweite in Bildern aus Sekunden und Bildrate (mindestens 1)."""
+    """Step width in frames from seconds and frame rate (at least 1)."""
     return max(1, round(float(seconds) * float(fps)))
 
 
@@ -40,44 +40,45 @@ class SeekCancelled(Exception):
 
 def seek_border(path, fps, total, pos, value, equal, stepping, opts, border_fn=border_at, cancel=lambda: False,
                 shown=lambda n: n) -> int:
-    """Sucht ab Bild `pos` das erste Bild, dessen schwarzer Rand zu `value` passt (equal=True: Film beginnt) bzw. davon
-    abweicht (equal=False: Werbung beginnt). `shown` rechnet Bildnummern für die Anzeige um; jede Probe wird im Wartefenster
-    (cancel.note) und im Protokoll gemeldet."""
+    """Starting at frame `pos`, searches for the first frame whose black border matches `value` (equal=True: movie starts) or
+        differs from it (equal=False: commercial starts). `shown` converts frame numbers for display; every probe is reported in the
+        wait window (cancel.note) and in the log.
+    """
     note = getattr(cancel, "note", None)
-    debug_log(f"Randsuche ab Bild {shown(pos)}: gesucht {'Rand ungefähr' if equal else 'Rand abweichend von'} {value} "
-              f"(Toleranz {int(opts.get('border_tol', 3))}), Schrittweite {stepping}, Ende bei {shown(total)}")
+    debug_log(f"border search from frame {shown(pos)}: looking for {'border about' if equal else 'border different from'} {value} "
+              f"(tolerance {int(opts.get('border_tol', 3))}), step width {stepping}, end at {shown(total)}")
 
     def border_of(n: int) -> int:
         if cancel():
             raise SeekCancelled()
         found = border_fn(path, n, fps, opts)
         text = f"frame {shown(n)}: border {found} (looking for {'about ' if equal else 'not '}{value})"
-        debug_log(f"Randsuche: {text}")
+        debug_log(f"border search: {text}")
         if note:
             note(text)
         return found
     tolerance = int(opts.get("border_tol", 3))
     result = where_border(border_of, pos, total, value, equal, stepping, lim=tolerance)
-    debug_log(f"Randsuche: Ergebnis Bild {shown(result)}")
+    debug_log(f"border search: result frame {shown(result)}")
     return result
 
 
 def seek_logo(path, fps, total, pos, ref, equal, stepping, opts, conf_fn=confidence_at, avg_fn=bottom_line_average,
               cancel=lambda: False, shown=lambda n: n) -> int:
-    """Wie seek_border, aber mit dem Senderlogo: equal=True sucht das nächste Bild MIT Logo und geht dann ein Stück zurück
-    (das Logo erscheint oft erst einige Sekunden nach Beginn des Films), equal=False das nächste Bild OHNE Logo."""
+    """Like seek_border, but with the station logo: equal=True looks for the next frame WITH logo and then goes back a bit
+        (the logo often appears only some seconds after the movie has started), equal=False for the next frame WITHOUT logo."""
     def check() -> None:
         if cancel():
             raise SeekCancelled()
 
     note = getattr(cancel, "note", None)
-    debug_log(f"Logosuche ab Bild {shown(pos)}: gesucht {'Logo vorhanden' if equal else 'Logo fehlt'}, Schrittweite {stepping}")
+    debug_log(f"logo search from frame {shown(pos)}: looking for {'logo present' if equal else 'logo missing'}, step width {stepping}")
 
     def conf_of(n: int) -> float:
         check()
         found = conf_fn(path, n, fps, ref, opts)
         text = f"frame {shown(n)}: logo confidence {found:.2f}"
-        debug_log(f"Logosuche: {text}")
+        debug_log(f"logo search: {text}")
         if note:
             note(text)
         return found
@@ -89,16 +90,16 @@ def seek_logo(path, fps, total, pos, ref, equal, stepping, opts, conf_fn=confide
         return rewind(p, lambda f: (check(), avg_fn(path, f, fps, opts))[1], max_back)
 
     result = where_logo(conf_of, pos, total, equal, stepping, rewind_fn, min_conf)
-    debug_log(f"Logosuche: Ergebnis Bild {shown(result)}")
+    debug_log(f"logo search: result frame {shown(result)}")
     return result
 
 
 class SeekWorker(QtCore.QThread):
-    """Führt eine Suche im Hintergrund aus."""
+    """Runs a search in the background."""
 
-    done = QtCore.Signal(int)                       # gefundenes Bild
+    done = QtCore.Signal(int)                       # frame found
     failed = QtCore.Signal(str)
-    progress = QtCore.Signal(str)                   # Zwischenstand für das Wartefenster
+    progress = QtCore.Signal(str)                   # intermediate result for the wait window
 
     def __init__(self, job: Callable[[Callable[[], bool]], int]):
         super().__init__()
@@ -114,7 +115,7 @@ class SeekWorker(QtCore.QThread):
     def run(self) -> None:
         worker = self
 
-        class Control:                              # abfragbar wie eine Funktion (abgebrochen?) und mit .note für Meldungen
+        class Control:                              # callable like a function (cancelled?) and with .note for messages
             def __call__(self) -> bool:
                 return worker.cancelled
 
@@ -124,7 +125,7 @@ class SeekWorker(QtCore.QThread):
             result = self.job(Control())
         except SeekCancelled:
             return
-        except Exception as e:                      # z. B. Datei nicht lesbar
+        except Exception as e:                      # e.g. file not readable
             if not self.cancelled:
                 self.failed.emit(str(e))
             return

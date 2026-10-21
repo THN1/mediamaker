@@ -1,9 +1,9 @@
-"""Wiedergabe: eine kleine Schnittstelle und zwei Umsetzungen (python-vlc und ein Ersatz für Tests).
+"""Playback: a small interface and two implementations (python-vlc and a replacement for tests).
 
-Die Oberfläche kennt nur die Klasse Player. Sie braucht dieselben Dinge, die das VB6-Programm vom VLC-Steuerelement
-benutzte: laden, abspielen, Pause, Stopp, Zeit lesen und setzen (in Millisekunden), Lautstärke, Seitenverhältnis und
-fünf Ereignisse (Abspielen, Pause, Stopp, Ende, Zeitänderung). Eine andere Engine (z. B. QtMultimedia) lässt sich später
-durch eine weitere Unterklasse einsetzen.
+The user interface only knows the class Player. It needs the same things the VB6 program used from the VLC control:
+load, play, pause, stop, read and set time (in milliseconds), volume, aspect ratio and
+five events (playing, pause, stop, end, time change). Another engine (e.g. QtMultimedia) can be inserted later
+by another subclass.
 """
 from __future__ import annotations
 
@@ -22,18 +22,18 @@ class Player(QtCore.QObject):
     paused = QtCore.Signal()
     stopped = QtCore.Signal()
     ended = QtCore.Signal()
-    time_changed = QtCore.Signal(int)          # Millisekunden
+    time_changed = QtCore.Signal(int)          # milliseconds
 
     def attach(self, widget) -> None:
-        """Videofläche festlegen (ein Steuerelement der Oberfläche)."""
+        """Set the video area (a control of the user interface)."""
         raise NotImplementedError
 
     def shutdown(self) -> None:
-        """Wiedergabe beenden und alle Ressourcen freigeben. Muss vor dem Schließen des Fensters laufen und darf
-        mehrfach aufgerufen werden."""
+        """End playback and release all resources. Must run before the window is closed and may be
+                called several times."""
 
     def load(self, path: str, size: Optional[tuple] = None) -> None:
-        """Datei laden. `size` = (Breite, Höhe) des Videos in Pixeln; nur für Spieler nötig, die selbst Bilder liefern."""
+        """Load a file. `size` = (width, height) of the video in pixels; only needed for players that deliver the pictures themselves."""
         raise NotImplementedError
 
     def play(self) -> None:
@@ -46,7 +46,7 @@ class Player(QtCore.QObject):
         raise NotImplementedError
 
     def show_at(self, ms: int) -> None:
-        """Zeigt das Bild bei `ms` im angehaltenen Zustand (Wiedergabe kurz starten, springen, anhalten)."""
+        """Shows the picture at `ms` in the paused state (briefly start playback, jump, pause)."""
         raise NotImplementedError
 
     @property
@@ -71,11 +71,11 @@ class Player(QtCore.QObject):
 
 
 class SeekThrottle(QtCore.QObject):
-    """Fasst schnelle Folgen von Sprüngen zusammen.
+    """Combines rapid sequences of jumps.
 
-    Der erste Sprung wird sofort ausgeführt, weitere höchstens alle `interval` Millisekunden, und zwar immer mit dem
-    zuletzt angeforderten Wert. So überschwemmt das Ziehen am Schieber die Wiedergabe nicht mit Sprüngen, und die
-    Endposition wird trotzdem sicher erreicht.
+        The first jump is executed immediately, further ones at most every `interval` milliseconds, always with the
+        most recently requested value. This way dragging the slider does not flood the playback with jumps, and the
+        end position is still reached reliably.
     """
 
     def __init__(self, action: Callable[[int], None], interval: int = 40):
@@ -101,14 +101,14 @@ class SeekThrottle(QtCore.QObject):
 
 
 def debug_log(text: str) -> None:
-    """Mit MEDIAMAKER_DEBUG=1 werden Ereignisse und Sprünge der Wiedergabe in mediamaker_debug.log protokolliert."""
+    """With MEDIAMAKER_DEBUG=1 events and jumps of the playback are logged in mediamaker_debug.log."""
     if os.environ.get("MEDIAMAKER_DEBUG"):
         with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "mediamaker_debug.log"), "a") as fh:
             fh.write(f"{time.strftime('%H:%M:%S')} {text}\n")
 
 
 class FakePlayer(Player):
-    """Ersatz ohne Bild und Ton: speichert nur Zustand und Zeit und löst die Ereignisse aus (für Tests)."""
+    """Replacement without picture and sound: only stores state and time and triggers the events (for tests)."""
 
     def __init__(self):
         super().__init__()
@@ -177,36 +177,36 @@ class FakePlayer(Player):
         self.aspect = ratio
 
     def tick(self, ms: int) -> None:
-        """Simuliert Wiedergabezeit."""
+        """Simulates playback time."""
         self.time += ms
         self.time_changed.emit(self.time)
 
 
 class VlcPlayer(Player):
-    """Wiedergabe mit libvlc (python-vlc). Unter Linux wird in ein X11-Fenster gezeichnet (unter Wayland über
-    XWayland, also mit QT_QPA_PLATFORM=xcb)."""
+    """Playback with libvlc (python-vlc). Under Linux it draws into an X11 window (under Wayland via
+        XWayland, i.e. with QT_QPA_PLATFORM=xcb)."""
 
-    seekable = QtCore.Signal(bool)                               # VLC kann springen (oder nicht mehr)
+    seekable = QtCore.Signal(bool)                               # VLC can seek (or no longer can)
 
     def __init__(self, extra_args: str = ""):
         super().__init__()
-        import vlc                                              # erst hier, damit das Modul auch ohne VLC ladbar ist
+        import vlc                                              # only here, so that the module can be loaded without VLC
         self._vlc = vlc
-        # Hardware-Dekodierung aus: Bei Sprüngen im angehaltenen Zustand blieb die Vorschau nach etwa 20 Bildern stehen
-        # (der Vorrat an Hardware-Oberflächen ist begrenzt). Für SD-/HD-Fernsehaufnahmen reicht die Software-Dekodierung.
-        # Weitere Argumente: Eintrag vlc_args= im Abschnitt [settings] der INI-Datei (dauerhaft) oder Umgebungsvariable
-        # MEDIAMAKER_VLC_ARGS (für Versuche), z. B. "--vout=xcb_x11". Spätere Angaben überstimmen frühere.
+        # Hardware decoding off: when jumping in the paused state the preview got stuck after about 20 frames
+        # (the supply of hardware surfaces is limited). Software decoding is enough for SD/HD television recordings.
+        # More arguments: entry vlc_args= in the section [settings] of the INI file (permanent) or environment variable
+        # MEDIAMAKER_VLC_ARGS (for experiments), e.g. "--vout=xcb_x11". Later specifications override earlier ones.
         args = (["--quiet", "--no-video-title-show", "--avcodec-hw=none"] + shlex.split(extra_args)
                 + shlex.split(os.environ.get("MEDIAMAKER_VLC_ARGS", "")))
-        debug_log(f"VLC-Argumente: {args}")
+        debug_log(f"VLC arguments: {args}")
         self.instance = vlc.Instance(*args)
         self.mp = self.instance.media_player_new()
         self._pending_show: Optional[int] = None
-        self._awaiting_position: Optional[int] = None         # Standbild wird angefordert, VLC ist noch nicht dort
+        self._awaiting_position: Optional[int] = None         # still picture is requested, VLC is not there yet
         self._path: Optional[str] = None
         self._closed = False
         self._throttle = SeekThrottle(self._do_seek)
-        self._callbacks = []                                    # Referenzen halten, sonst räumt Python die Funktionen ab
+        self._callbacks = []                                    # keep references, otherwise Python cleans up the functions
         self._event_types = []
         events = self.mp.event_manager()
         T = vlc.EventType
@@ -228,10 +228,10 @@ class VlcPlayer(Player):
         self.seekable.connect(self._after_seekable)
         self._muted = False
 
-    # Diese Funktionen laufen im VLC-Thread; nach dem Herunterfahren dürfen sie keine Qt-Signale mehr auslösen.
+    # These functions run in the VLC thread; after shutdown they must not trigger Qt signals any more.
     def _on_event(self, signal, name: str) -> None:
         if not self._closed:
-            debug_log(f"Ereignis {name}")
+            debug_log(f"event {name}")
             signal.emit()
 
     def _on_time(self, ms: int) -> None:
@@ -240,18 +240,18 @@ class VlcPlayer(Player):
 
     def _on_seekable(self, flag: bool) -> None:
         if not self._closed:
-            debug_log(f"Ereignis seekable={flag}")
+            debug_log(f"event seekable={flag}")
             self.seekable.emit(flag)
 
     def _after_seekable(self, flag: bool) -> None:
-        """Im Qt-Thread: Sobald VLC springen kann (das ist meist früher als "Playing"), wird an die gewünschte Stelle gesprungen,
-        damit vom Dateianfang möglichst nichts mehr zu hören oder zu sehen ist."""
+        """In the Qt thread: as soon as VLC can seek (this is usually earlier than "Playing"), it jumps to the requested position,
+                so that as little as possible of the start of the file is heard or seen."""
         if flag and self._awaiting_position is not None and not self._closed:
-            debug_log(f"seekable: springe zu {self._awaiting_position} ms")
+            debug_log(f"seekable: jumping to {self._awaiting_position} ms")
             self.mp.set_time(self._awaiting_position)
 
     def _mute(self, on: bool) -> None:
-        """Ton während des Anfahrens einer Stelle stumm schalten (wirkt nur, wenn die Tonausgabe schon besteht)."""
+        """Mute the sound while approaching a position (only works if the audio output already exists)."""
         try:
             self.mp.audio_set_mute(bool(on))
             self._muted = bool(on)
@@ -259,9 +259,9 @@ class VlcPlayer(Player):
             self._muted = False
 
     def shutdown(self) -> None:
-        """Geordnetes Beenden: erst die Rückrufe lösen, dann anhalten (wartet, bis VLC das Bild nicht mehr zeichnet),
-        dann freigeben. Beim Schließen des Fensters mitten in der Wiedergabe sonst: Speicherzugriffsfehler, weil VLC in ein
-        Fenster zeichnet, das Qt schon abgebaut hat, oder ein Rückruf ein Qt-Objekt anspricht, das nicht mehr existiert."""
+        """Orderly shutdown: first detach the callbacks, then stop (waits until VLC no longer draws the picture),
+                then release. When the window is closed in the middle of playback otherwise: memory access error, because VLC draws into a
+                window that Qt has already torn down, or a callback addresses a Qt object that no longer exists."""
         if self._closed:
             return
         self._closed = True
@@ -275,34 +275,34 @@ class VlcPlayer(Player):
             self.mp.stop()
             self.mp.release()
             self.instance.release()
-        except Exception as e:                                  # beim Beenden nie an einem Fehler scheitern
-            debug_log(f"Fehler beim Beenden: {e}")
+        except Exception as e:                                  # never fail with an error during shutdown
+            debug_log(f"Error during shutdown: {e}")
         self._callbacks.clear()
 
     def _after_playing(self) -> None:
-        """Im Qt-Thread, sobald VLC meldet, dass die Wiedergabe läuft: anhalten und die Startposition abwarten."""
+        """In the Qt thread, as soon as VLC reports that playback is running: pause and wait for the start position."""
         if self._pending_show is not None and not self._closed:
             ms, self._pending_show = self._pending_show, None
             self.mp.set_pause(1)
             self._mute(True)
             self._await_position(ms, 0)
 
-    # Die Startposition kommt über die Medienoption start-time. Falls VLC sie nicht beachtet (ein Sprung unmittelbar nach dem
-    # Start wird oft ignoriert), wird alle 150 ms nachgeprüft und notfalls erneut gesprungen, bis VLC an der Stelle steht.
+    # The start position comes via the media option start-time. If VLC ignores it (a jump right after the
+    # start is often ignored), it is checked every 150 ms and, if necessary, jumped again until VLC is at the position.
     POSITION_TOLERANCE_MS = 1500
-    POSITION_TRIES = 30                                      # etwa 4,5 Sekunden
+    POSITION_TRIES = 30                                      # about 4.5 seconds
 
     def _await_position(self, ms: int, tries: int) -> None:
         QtCore.QTimer.singleShot(150, lambda: self._check_position(ms, tries))
 
     def _check_position(self, ms: int, tries: int) -> None:
         if self._closed or self._awaiting_position != ms:
-            return                                           # überholt (anderes Bild angefordert, gestoppt)
+            return                                           # superseded (another frame requested, stopped)
         now = self.mp.get_time()
         if abs(now - ms) <= self.POSITION_TOLERANCE_MS or tries >= self.POSITION_TRIES:
             self._position_reached(ms)
             return
-        debug_log(f"Startposition {ms} ms noch nicht erreicht (VLC steht bei {now} ms): springe, Versuch {tries + 1}")
+        debug_log(f"start position {ms} ms not reached yet (VLC is at {now} ms): jumping, attempt {tries + 1}")
         self.mp.set_time(ms)
         self._await_position(ms, tries + 1)
 
@@ -325,7 +325,7 @@ class VlcPlayer(Player):
         self.mp.set_media(self.instance.media_new_path(path))
 
     def play(self) -> None:
-        self._awaiting_position = None                         # der Benutzer startet: nichts mehr abwarten, Ton an
+        self._awaiting_position = None                         # the user starts: stop waiting, sound on
         if self._muted:
             self._mute(False)
         self.mp.play()
@@ -348,8 +348,8 @@ class VlcPlayer(Player):
             if self.mp.is_playing():
                 self.mp.set_pause(1)
         else:
-            # Neues Medium: ein Sprung unmittelbar nach dem Start wird von VLC oft ignoriert. Zuverlässig ist die
-            # Medienoption start-time, mit der die Wiedergabe gleich an der gewünschten Stelle beginnt.
+            # New medium: a jump right after the start is often ignored by VLC. The reliable way is the
+            # media option start-time, with which playback starts at the desired position right away.
             self._pending_show = ms
             self._awaiting_position = ms
             debug_log(f"show_at {ms} ms (Medium {self._path})")
@@ -377,7 +377,7 @@ class VlcPlayer(Player):
     def _do_seek(self, ms: int) -> None:
         if self._closed:
             return
-        debug_log(f"set_time {ms} (Zustand {self.mp.get_state()})")
+        debug_log(f"set_time {ms} (state {self.mp.get_state()})")
         self.mp.set_time(ms)
 
     def set_volume(self, percent: int) -> None:
@@ -387,13 +387,13 @@ class VlcPlayer(Player):
         self.mp.video_set_aspect_ratio(ratio)
 
 
-# ----------------------------------------------------------------------------- Wiedergabe in den Arbeitsspeicher
+# ----------------------------------------------------------------------------- Playback into memory
 def fit_rect(width: int, height: int, aspect: tuple) -> tuple:
-    """Größtes Rechteck mit dem Seitenverhältnis `aspect` (Breite, Höhe), das in width x height passt, zentriert."""
+    """Largest rectangle with the aspect ratio `aspect` (width, height) that fits into width x height, centred."""
     num, den = aspect
     if width <= 0 or height <= 0 or num <= 0 or den <= 0:
         return (0, 0, max(width, 0), max(height, 0))
-    if width * den > height * num:                              # Fläche ist breiter als das Bild: Höhe bestimmt
+    if width * den > height * num:                              # area is wider than the picture: the height decides
         rw, rh = round(height * num / den), height
     else:
         rw, rh = width, round(width * den / num)
@@ -401,7 +401,7 @@ def fit_rect(width: int, height: int, aspect: tuple) -> tuple:
 
 
 class VideoSurface(QtWidgets.QWidget):
-    """Zeichenfläche für die Bilder des Spielers; füllt die Videofläche des Fensters, schwarzer Rand bei anderem Format."""
+    """Drawing area for the player's pictures; fills the video area of the window, black border for another format."""
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -431,22 +431,22 @@ class VideoSurface(QtWidgets.QWidget):
 
 
 class MemoryVlcPlayer(VlcPlayer):
-    """libvlc dekodiert in einen Speicherbereich (kein VLC-Fenster, keine VLC-Bildausgabe); die Bilder zeichnet Qt.
+    """libvlc decodes into a memory area (no VLC window, no VLC video output); Qt draws the pictures.
 
-    Vorteile gegenüber dem Einbetten in ein X11-Fenster: läuft nativ unter Wayland (kein XWayland nötig), und das
-    Einfrieren der Vorschau nach etwa 20 Sprüngen, das von der Bildausgabe von VLC ausging, kann nicht mehr auftreten.
+        Advantages over embedding into an X11 window: runs natively under Wayland (no XWayland needed), and the
+        freezing of the preview after about 20 jumps, which came from the video output of VLC, can no longer occur.
     """
 
-    frame_ready = QtCore.Signal(object)                          # (Bytes, Breite, Höhe) im Qt-Thread
+    frame_ready = QtCore.Signal(object)                          # (bytes, width, height) in the Qt thread
 
     def __init__(self, extra_args: str = ""):
         super().__init__(extra_args)
         self.surface: Optional[VideoSurface] = None
-        self._frames_shown = 0                                   # Zähler der angezeigten Bilder (für die Prüfung von Sprüngen)
+        self._frames_shown = 0                                   # counter of the pictures shown (for checking jumps)
         self._last_seek: Optional[int] = None
         self._size = (0, 0)
         self._buf = None
-        self._video_callbacks = []                               # nie freigeben: libvlc könnte sie noch aufrufen
+        self._video_callbacks = []                               # never release: libvlc might still call them
         self.frame_ready.connect(self._on_frame)
 
     def attach(self, widget) -> None:
@@ -455,7 +455,7 @@ class MemoryVlcPlayer(VlcPlayer):
         self.surface.show()
 
     def _install(self, width: int, height: int) -> None:
-        """Speicherbereich und Rückrufe für ein Video dieser Größe einrichten (nur im angehaltenen Zustand aufrufen)."""
+        """Set up memory area and callbacks for a video of this size (only call in the paused state)."""
         width, height = int(width) & ~1, int(height) & ~1
         if (width, height) == self._size:
             return
@@ -466,42 +466,42 @@ class MemoryVlcPlayer(VlcPlayer):
         deco = self._vlc.CallbackDecorators
 
         @deco.VideoLockCb
-        def lock(opaque, planes):                                # VLC fragt: wohin soll das nächste Bild?
+        def lock(opaque, planes):                                # VLC asks: where should the next picture go?
             planes[0] = pointer
             return None
 
         @deco.VideoDisplayCb
-        def display(opaque, picture):                            # läuft im VLC-Thread: Kopie an Qt weiterreichen
+        def display(opaque, picture):                            # runs in the VLC thread: pass a copy on to Qt
             if not self._closed:
                 self.frame_ready.emit((bytes(buf), width, height))
 
         self._video_callbacks.append((lock, display, buf))
         self.mp.video_set_callbacks(lock, None, display, None)
         self.mp.video_set_format("RV32", width, height, width * 4)
-        self.mp.video_set_aspect_ratio(f"{width}:{height}")      # Bild füllt den Speicherbereich ohne eigene schwarze Ränder
-        debug_log(f"Speicherausgabe {width}x{height}")
+        self.mp.video_set_aspect_ratio(f"{width}:{height}")      # picture fills the memory area without black borders of its own
+        debug_log(f"memory output {width}x{height}")
 
     def _position_reached(self, ms: int) -> None:
-        """Position erreicht: Bilder wieder anzeigen. Das Bild, das VLC schon geliefert hat, wurde verworfen; ein erneuter
-        Sprung im angehaltenen Zustand liefert eines für diese Stelle."""
+        """Position reached: show pictures again. The picture VLC has already delivered was discarded; another
+                jump in the paused state delivers one for this position."""
         super()._position_reached(ms)
         self.mp.set_time(ms)
 
     def _on_frame(self, frame) -> None:
         data, width, height = frame
         if self._awaiting_position is not None:
-            return                                           # VLC zeigt noch die falsche Stelle (z. B. den Dateianfang)
+            return                                           # VLC still shows the wrong position (e.g. the start of the file)
         if self.surface is not None and not self._closed:
             image = QtGui.QImage(data, width, height, width * 4, QtGui.QImage.Format.Format_RGB32).copy()
             self.surface.set_image(image)
             self._frames_shown += 1
 
-    SEEK_CHECK_MS = 600                                          # so lange auf das Bild nach einem Sprung warten
-    SEEK_CHECK_MIN_DISTANCE_MS = 100                             # nähere Sprünge liefern manchmal kein neues Bild
+    SEEK_CHECK_MS = 600                                          # how long to wait for the picture after a jump
+    SEEK_CHECK_MIN_DISTANCE_MS = 100                             # closer jumps sometimes deliver no new picture
 
     def _do_seek(self, ms: int) -> None:
-        """Sprung wie in der Basisklasse; im angehaltenen Zustand muss danach ein Bild kommen. VLC ignoriert manche Sprünge
-        (z. B. an den Dateianfang); dann wird das Medium mit der Startposition neu geladen."""
+        """Jump as in the base class; in the paused state a picture must arrive afterwards. VLC ignores some jumps
+                (e.g. to the start of the file); then the medium is reloaded with the start position."""
         before, here = self._frames_shown, self.mp.get_time()
         super()._do_seek(ms)
         self._last_seek = ms
@@ -510,21 +510,21 @@ class MemoryVlcPlayer(VlcPlayer):
 
     def _verify_seek(self, ms: int, frames_before: int) -> None:
         if self._closed or self._awaiting_position is not None or self._last_seek != ms:
-            return                                               # überholt: inzwischen kam ein anderer Sprung
+            return                                               # superseded: another jump has come in the meantime
         if self._frames_shown == frames_before and self.mp.get_state() == self._vlc.State.Paused:
-            debug_log(f"Sprung zu {ms} ms lieferte kein Bild: Medium wird neu geladen")
+            debug_log(f"jump to {ms} ms delivered no picture: reloading the medium")
             self.stop()
             self.show_at(ms)
 
     def load(self, path: str, size: Optional[tuple] = None) -> None:
-        self.stop()                                              # Umstellen des Speichers nur ohne laufende Wiedergabe
+        self.stop()                                              # change the memory only without running playback
         self._install(*(size or (720, 576)))
         if self.surface is not None:
             self.surface.clear()
         super().load(path, size)
 
     def set_aspect(self, ratio: str) -> None:
-        """Darstellungsformat in der Videofläche, z. B. "16:9" (die Bilder werden entsprechend gestreckt)."""
+        """Display format in the video area, e.g. "16:9" (the pictures are stretched accordingly)."""
         if self.surface is not None:
             num, _, den = ratio.partition(":")
             self.surface.set_aspect(int(num), int(den))

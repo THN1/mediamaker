@@ -1,7 +1,7 @@
-"""Liest VB6-Formulardateien (.frm): Steuerelemente, Eigenschaften, Menüs und Ereignisprozeduren.
+"""Reads VB6 form files (.frm): controls, properties, menus and event procedures.
 
-Das Ergebnis ist ein Baum aus Control-Objekten; er ist die Grundlage für die Vorschau (frm_preview.py) und
-für die Umsetzung nach Qt (frm2qt.py).
+The result is a tree of Control objects; it is the basis for the preview (frm_preview.py) and
+for the translation to Qt (frm2qt.py).
 """
 from __future__ import annotations
 
@@ -9,22 +9,22 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-TWIPS_PER_PIXEL = 15            # VB6 bei 96 dpi (Screen.TwipsPerPixelX/Y)
+TWIPS_PER_PIXEL = 15            # VB6 at 96 dpi (Screen.TwipsPerPixelX/Y)
 
 
 @dataclass
 class Resource:
-    """Verweis auf Binärdaten in der .frx-Datei, z. B. "frmMediaMaker.frx":0CCA"""
+    """Reference to binary data in the .frx file, e.g. "frmMediaMaker.frx":0CCA"""
     file: str
     offset: int
 
 
 @dataclass
 class Control:
-    type: str                                   # z. B. "VB.CommandButton", "MSComctlLib.ListView"
+    type: str                                   # e.g. "VB.CommandButton", "MSComctlLib.ListView"
     name: str
-    props: dict = field(default_factory=dict)   # rohe Eigenschaften (Text ohne Anführungszeichen, Resource, ...)
-    sub: dict = field(default_factory=dict)     # BeginProperty-Blöcke, z. B. "Font", "ColumnHeader(1)"
+    props: dict = field(default_factory=dict)   # raw properties (text without quotation marks, resource, ...)
+    sub: dict = field(default_factory=dict)     # BeginProperty blocks, e.g. "Font", "ColumnHeader(1)"
     children: list = field(default_factory=list)
     parent: Optional["Control"] = None
 
@@ -62,7 +62,7 @@ class Handler:
 class Form:
     root: Control
     path: str
-    handlers: list = field(default_factory=list)       # Ereignisprozeduren aus dem Code
+    handlers: list = field(default_factory=list)       # event procedures from the code
     code_lines: int = 0
 
     @property
@@ -133,7 +133,7 @@ def parse_frm(path: str) -> Form:
         if m and stack:
             (prop_stack[-1][1] if prop_stack else stack[-1].props)[m.group(1)] = parse_value(m.group(2))
     if root is None:
-        raise ValueError(f"{path}: kein Formular gefunden")
+        raise ValueError(f"{path}: no form found")
     handlers = []
     for raw in lines[code_start:]:
         m = _HANDLER.match(raw.strip())
@@ -142,16 +142,16 @@ def parse_frm(path: str) -> Form:
     return Form(root, path, handlers, len(lines) - code_start)
 
 
-# ----------------------------------------------------------------------------- Maße und Farben
+# ----------------------------------------------------------------------------- Dimensions and colours
 def container_scale(c: Control) -> float:
-    """Pixel pro Einheit der Koordinaten, die in diesem Container für seine Kinder gelten."""
+    """Pixels per unit of the coordinates that apply in this container for its children."""
     if c.type in ("VB.PictureBox", "VB.Form") and c.get("ScaleMode") == "3":
         return 1.0
     return 1.0 / TWIPS_PER_PIXEL
 
 
 def geometry_px(c: Control) -> tuple[int, int, int, int]:
-    """(links, oben, breite, höhe) in Pixeln relativ zum Elterncontainer."""
+    """(left, top, width, height) in pixels relative to the parent container."""
     k = container_scale(c.parent) if c.parent and c.parent.type != "VB.Menu" else 1.0 / TWIPS_PER_PIXEL
     return (round(c.num("Left") * k), round(c.num("Top") * k), round(c.num("Width") * k), round(c.num("Height") * k))
 
@@ -170,9 +170,9 @@ SYSTEM_COLORS = {0: (200, 200, 200), 1: (92, 92, 92), 2: (0, 84, 227), 3: (122, 
 
 
 def vb_color(value, default=None):
-    """Farbwert aus einer .frm-Datei: '&H000000FF&', '&H8000000F&' oder Dezimalzahl wie '-2147483640'.
+    """Colour value from a .frm file: '&H000000FF&', '&H8000000F&' or a decimal number like '-2147483640'.
 
-    Rückgabe: (r, g, b) oder, bei Systemfarben, ("system", Nummer); sonst `default`.
+        Returns: (r, g, b) or, for system colours, ("system", number); otherwise `default`.
     """
     v = None
     m = re.match(r"^&H([0-9A-Fa-f]+)&?$", str(value or ""))
@@ -188,7 +188,7 @@ def vb_color(value, default=None):
 
 
 def vb_color_rgb(value, default=None):
-    """Wie vb_color, aber Systemfarben werden durch feste RGB-Näherungen ersetzt (für die Vorschau)."""
+    """Like vb_color, but system colours are replaced by fixed RGB approximations (for the preview)."""
     c = vb_color(value)
     if c is None:
         return default

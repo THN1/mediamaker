@@ -1,9 +1,9 @@
-"""Test von frm2qt.py ohne installiertes Qt: erzeugt den Code für alle Formulare und führt ihn gegen einen streng
-modellierten Qt-Ersatz (tests/qtstub) aus. Geprüft werden Klassen, Lage, Texte, Sichtbarkeit, Elternbeziehung,
-Stapelreihenfolge, Menüs, Tastenkürzel, Tabulatorreihenfolge und die Verbindung der Ereignisse.
+"""Test of frm2qt.py without an installed Qt: generates the code for all forms and runs it against a strictly
+modelled Qt replacement (tests/qtstub). Checked are classes, position, texts, visibility, parent relationship,
+stacking order, menus, shortcuts, tab order and the connection of the events.
 
-Aufruf:  python3 tests/test_frm2qt.py ORDNER_MIT_FRM_DATEIEN
-Dieser Test ersetzt keinen Lauf mit PySide6; er findet aber Fehler in der Umsetzung und erfundene Qt-Methoden.
+Usage:  python3 tests/test_frm2qt.py FOLDER_WITH_FRM_FILES
+This test does not replace a run with PySide6; but it finds errors in the translation and invented Qt methods.
 """
 import glob
 import importlib.util
@@ -12,7 +12,7 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "qtstub"))        # der Ersatz hat Vorrang vor einem echten PySide6
+sys.path.insert(0, os.path.join(HERE, "qtstub"))        # the replacement takes precedence over a real PySide6
 sys.path.insert(1, os.path.dirname(HERE))
 
 import frm2qt
@@ -47,7 +47,7 @@ def widget_of(obj, c, arrays):
 
 
 def test_fit_labels():
-    """fit_labels verbreitert zu schmale Beschriftungen, aber nie über einen Nachbarn in derselben Zeile hinaus."""
+    """fit_labels widens captions that are too narrow, but never beyond a neighbour in the same row."""
     import vbqt
     from PySide6 import QtCore
     from PySide6.QtWidgets import FontMetrics
@@ -62,12 +62,12 @@ def test_fit_labels():
             if neighbour_left is not None:
                 box = QtWidgets.QLineEdit(parent)
                 box.setGeometry(neighbour_left, 10, 80, 17)
-                hidden = QtWidgets.QLineEdit(parent)       # versteckte Nachbarn zählen nicht
+                hidden = QtWidgets.QLineEdit(parent)       # hidden neighbours do not count
                 hidden.setGeometry(55, 10, 20, 17)
                 hidden.hide()
             vbqt.fit_labels(parent)
             width = label.geometry().width()
-            check(width == expected, f"fit_labels: Nachbar bei {neighbour_left}: Breite {width} statt {expected}")
+            check(width == expected, f"fit_labels: neighbour at {neighbour_left}: width {width} instead of {expected}")
     finally:
         FontMetrics.px_per_char = 1
 
@@ -86,7 +86,7 @@ def main():
         mod = load(res["module"])
         cls = getattr(mod, form.name + "Base")
         obj = cls()
-        gen = frm2qt.Generator(form, out)                     # nur für arrays/Menüs der Prüfung
+        gen = frm2qt.Generator(form, out)                     # only for arrays/menus of the check
         arrays = gen.arrays
         n_checked = 0
         for c in form.root.walk():
@@ -96,13 +96,13 @@ def main():
             w = widget_of(obj, c, arrays)
             n_checked += 1
             want_geo = getattr(c, "px_override", None) or geometry_px(c)
-            check(w.called("setGeometry") == [want_geo], f"{tag}: Lage {w.called('setGeometry')} statt {want_geo}")
+            check(w.called("setGeometry") == [want_geo], f"{tag}: position {w.called('setGeometry')} instead of {want_geo}")
             if c.type in EXPECT:
-                check(isinstance(w, EXPECT[c.type]), f"{tag}: Klasse {type(w).__name__} statt {EXPECT[c.type].__name__}")
+                check(isinstance(w, EXPECT[c.type]), f"{tag}: class {type(w).__name__} instead of {EXPECT[c.type].__name__}")
             if c.type in TEXT_TYPES and c.get("Caption") is not None and c.type != "VB.Label":
                 check(w.called("setText") == [(c.get("Caption"),)], f"{tag}: Text {w.called('setText')}")
             if not c.flag("Visible", True):
-                check(w.called("hide") != [], f"{tag}: unsichtbares Steuerelement wird nicht versteckt")
+                check(w.called("hide") != [], f"{tag}: invisible control is not hidden")
             # Elternbeziehung
             if c.parent is form.root:
                 expected_parent = obj.centralWidget_ if hasattr(obj, "centralWidget_") else obj
@@ -110,25 +110,25 @@ def main():
                 ok = w.parent_ is obj or (gen.is_main_window and w.parent_ in central)
                 check(ok, f"{tag}: falsches Elternelement")
             else:
-                check(w.parent_ is widget_of(obj, c.parent, arrays), f"{tag}: Elternelement ist nicht {c.parent.name}")
-        # Stapelreihenfolge: zuletzt in der Datei = zuerst erzeugt
+                check(w.parent_ is widget_of(obj, c.parent, arrays), f"{tag}: parent is not {c.parent.name}")
+        # stacking order: last in the file = created first
         top = [c for c in form.root.children if c.type != "VB.Menu"]
         if len(top) > 1:
             parent_w = widget_of(obj, top[0], arrays).parent_
             created = [x for x in parent_w.children_ if any(widget_of(obj, t, arrays) is x for t in top)]
             expected = [widget_of(obj, t, arrays) for t in reversed(top)]
-            check(created == expected, f"{form.name}: Stapelreihenfolge stimmt nicht")
-        # Menüs
+            check(created == expected, f"{form.name}: stacking order is wrong")
+        # menus
         leaves = [m for m in form.root.walk() if m.type == "VB.Menu" and m.get("Caption") != "-" and
                   not any(k.type == "VB.Menu" for k in m.children)]
         for m in leaves:
             act = widget_of(obj, m, arrays)
-            check(isinstance(act, QtGui.QAction), f"{form.name}.{m.name}: kein QAction")
+            check(isinstance(act, QtGui.QAction), f"{form.name}.{m.name}: no QAction")
             sc = gen.shortcut(m.get("Shortcut"))
             if sc:
                 got = act.called("setShortcut")
-                check(len(got) == 1 and got[0][0]._args == (sc,), f"{form.name}.{m.name}: Tastenkürzel {got} statt {sc}")
-        # Ereignisse: Unterklasse mit Aufzeichnung der Aufrufe
+                check(len(got) == 1 and got[0][0]._args == (sc,), f"{form.name}.{m.name}: shortcut {got} instead of {sc}")
+        # events: subclass that records the calls
         calls = []
         procs = {f"{h.control}_{h.event}" for h in form.handlers}
         Sub = type("Sub", (cls,), {p: (lambda self, *a, _p=p: calls.append((_p, a))) for p in procs})
@@ -151,18 +151,18 @@ def main():
                     sig = getattr(w, sig_name)
                 sig.emit(1)
                 expected = (f"{h.control}_{h.event}", (c.index,) if h.control in arrays else ())
-                check(calls == [expected], f"{form.name}: {h.control}_{h.event}: Aufruf {calls} statt {[expected]}")
+                check(calls == [expected], f"{form.name}: {h.control}_{h.event}: call {calls} instead of {[expected]}")
                 collections += 1
         total += n_checked
-        print(f"{os.path.basename(path):20s} {n_checked:3d} Steuerelemente, {len(leaves):2d} Menüeinträge, "
-              f"{len(QtWidgets.QWidget.setTabOrder_calls):2d} Tabulatorschritte, {len(form.handlers):2d} Ereignisprozeduren")
-    print(f"\nGeprüft: {total} Steuerelemente, {collections} Ereignisverbindungen (Signal -> Prozedur mit Index)")
+        print(f"{os.path.basename(path):20s} {n_checked:3d} controls, {len(leaves):2d} menu entries, "
+              f"{len(QtWidgets.QWidget.setTabOrder_calls):2d} tab steps, {len(form.handlers):2d} event procedures")
+    print(f"\nChecked: {total} controls, {collections} event connections (signal -> procedure with index)")
     if errors:
-        print(f"\n{len(errors)} FEHLER:")
+        print(f"\n{len(errors)} ERRORS:")
         for e in errors[:40]:
             print("  -", e)
         sys.exit(1)
-    print("Alle Prüfungen bestanden.")
+    print("All checks passed.")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""ffmpeg ausführen: Fortschritt lesen, abbrechen, Ergebnis prüfen (Nachbau von SP_ExecuteAndWait und track)."""
+"""Run ffmpeg: read progress, cancel, check the result (port of SP_ExecuteAndWait and track)."""
 from __future__ import annotations
 
 import queue
@@ -15,12 +15,12 @@ from progress import Progress, ProgressTracker
 
 
 def total_seconds(job: Job) -> float:
-    """Länge der Ausgabe in Sekunden (Summe der Segmente)."""
+    """Length of the output in seconds (sum of the segments)."""
     return float(sum(Fraction(s.frames) / s.fps for s in job.segments))
 
 
 def expected_frames(job: Job) -> int:
-    """Erwartete Bildanzahl der Ausgabe bei der Bildrate des Profils."""
+    """Expected number of frames of the output at the frame rate of the profile."""
     return round(sum(Fraction(s.frames) / s.fps for s in job.segments) * Fraction(job.profile["fps"]))
 
 
@@ -29,7 +29,7 @@ class RunResult:
     returncode: int
     cancelled: bool
     elapsed: float
-    errors: str                       # Fehlermeldungen von ffmpeg (stderr)
+    errors: str                       # error messages from ffmpeg (stderr)
 
     @property
     def ok(self) -> bool:
@@ -39,12 +39,12 @@ class RunResult:
 def run_ffmpeg(cmd: list[str], total: float, on_progress: Optional[Callable[[Progress], None]] = None,
                cwd: Optional[str] = None, cancel: Optional[Callable[[], bool]] = None,
                tracker: Optional[ProgressTracker] = None, poll: float = 0.2) -> RunResult:
-    """Startet ffmpeg, meldet den Fortschritt über on_progress und wartet auf das Ende.
+    """Starts ffmpeg, reports the progress via on_progress and waits for the end.
 
-    `total` = Länge der Ausgabe in Sekunden. Der Fortschritt kommt aus der maschinenlesbaren Ausgabe
-    (-progress pipe:1), nicht aus dem Text der Statuszeile. `cancel` wird regelmäßig gefragt; liefert es True,
-    wird ffmpeg beendet. on_progress wird im aufrufenden Thread aufgerufen (auch für GUI-Code geeignet,
-    solange dieser Thread die Oberfläche bedient und zwischendurch Ereignisse verarbeitet).
+        `total` = length of the output in seconds. The progress comes from the machine-readable output
+        (-progress pipe:1), not from the text of the status line. `cancel` is asked regularly; if it returns True,
+        ffmpeg is terminated. on_progress is called in the calling thread (also suitable for GUI code,
+        as long as this thread serves the user interface and processes events in between).
     """
     full = [cmd[0], "-progress", "pipe:1", "-nostats", "-loglevel", "error", *cmd[1:]]
     tracker = tracker or ProgressTracker(total)
@@ -70,7 +70,7 @@ def run_ffmpeg(cmd: list[str], total: float, on_progress: Optional[Callable[[Pro
         try:
             done = int(state.get("out_time_us", "")) / 1e6
         except ValueError:
-            return                                             # zu Beginn "N/A"
+            return                                             # "N/A" at the beginning
         frame = int(state["frame"]) if state.get("frame", "").isdigit() else None
         if on_progress:
             on_progress(tracker.update(done, frame=frame))
@@ -78,7 +78,7 @@ def run_ffmpeg(cmd: list[str], total: float, on_progress: Optional[Callable[[Pro
     def handle(line: str):
         key, _, val = line.strip().partition("=")
         state[key] = val
-        if key == "progress":                                  # Ende eines Meldungsblocks
+        if key == "progress":                                  # end of a message block
             emit()
 
     while True:
@@ -98,14 +98,14 @@ def run_ffmpeg(cmd: list[str], total: float, on_progress: Optional[Callable[[Pro
     while not lines.empty():
         handle(lines.get_nowait())
     if proc.returncode == 0 and not cancelled and on_progress:
-        on_progress(tracker.update(total))                     # 100 % melden
+        on_progress(tracker.update(total))                     # report 100 %
     return RunResult(proc.returncode, cancelled, time.monotonic() - tracker.t0, "".join(err).strip())
 
 
 def verify_output(path: str, expected: int, tolerance: int = 1) -> tuple[bool, int, str]:
-    """Prüft nach dem Lauf, ob die Ausgabedatei die erwartete Bildanzahl hat."""
+    """Checks after the run whether the output file has the expected number of frames."""
     actual = probe(path).video.frames
     ok = abs(actual - expected) <= tolerance
-    msg = (f"Bildanzahl stimmt: {actual}" if ok else
-           f"Bildanzahl weicht ab: erwartet {expected}, erhalten {actual} (Schnitt oder Aufnahme prüfen)")
+    msg = (f"Frame count is correct: {actual}" if ok else
+           f"Frame count differs: expected {expected}, got {actual} (check the cut or the recording)")
     return ok, actual, msg

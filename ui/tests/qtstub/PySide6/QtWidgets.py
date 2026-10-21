@@ -41,7 +41,7 @@ class Screen:
 
 
 class FontMetrics:
-    px_per_char = 1                      # klein, damit der Standardtest keine Beschriftung verbreitert
+    px_per_char = 1                      # small, so that the default test does not widen any caption
 
     def horizontalAdvance(self, text):
         return self.px_per_char * len(text)
@@ -345,7 +345,7 @@ class QMenu(QWidget):
         return m
 
     def _ret_addAction(self, action):
-        if isinstance(action, str):                    # addAction("Text") legt einen Eintrag an und liefert ihn
+        if isinstance(action, str):                    # addAction("text") creates an entry and returns it
             from .QtGui import QAction
             made = QAction(action, self)
             made.text_ = action
@@ -377,8 +377,8 @@ class QMainWindow(QWidget):
 
 class QDialog(QWidget):
     methods = {"accept", "reject"}
-    exec_result = 1                      # im Test einstellbar: 1 = angenommen, 0 = abgebrochen
-    on_exec = None                       # im Test einstellbar: Funktion(dialog), z. B. um Eingaben zu ändern
+    exec_result = 1                      # adjustable in the test: 1 = accepted, 0 = cancelled
+    on_exec = None                       # adjustable in the test: function(dialog), e.g. to change inputs
 
     def exec(self):
         if QDialog.on_exec:
@@ -387,7 +387,7 @@ class QDialog(QWidget):
 
 
 class QInputDialog(QDialog):
-    """Eingabedialog als Instanz (nicht die statischen getText/getInt): speichert Texte und Werte."""
+    """Input dialog as an instance (not the static getText/getInt): stores texts and values."""
     InputMode = EnumGroup("QInputDialog.InputMode", {"TextInput", "IntInput", "DoubleInput"})
     methods = {"setInputMode", "setLabelText", "setFixedWidth", "resize", "setWindowTitle", "setIntRange"}
 

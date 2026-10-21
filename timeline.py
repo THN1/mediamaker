@@ -1,8 +1,8 @@
-"""Zeitleiste (VB6: picTimeline): 20 Vorschaubilder um den Marker, rote Kreuze für fehlende Bilder, roter Schnittstrich.
+"""Timeline (VB6: picTimeline): 20 thumbnails around the marker, red crosses for missing frames, red cut line.
 
-Das Bild RECHTS vom Strich hat die Nummer des Markers (Marker A: erstes Bild des Segments; Marker B: das Segment endet mit
-dem Bild LINKS vom Strich). Ein Klick auf ein Bild verschiebt den Marker so, dass der Strich unmittelbar neben diesem Bild
-liegt; die beiden Bilder direkt am Strich bewirken nichts.
+The frame to the RIGHT of the line has the number of the marker (marker A: first frame of the segment; marker B: the segment ends with
+the frame to the LEFT of the line). A click on a frame moves the marker so that the line lies directly next to this frame;
+the two frames right at the line do nothing.
 """
 from __future__ import annotations
 
@@ -14,12 +14,12 @@ from PySide6 import QtCore, QtGui
 
 from player import debug_log
 
-RANGE = 20                       # Anzahl der Vorschaubilder
-LINE_WIDTH = 3                   # Breite des Schnittstrichs in Pixeln
+RANGE = 20                       # number of thumbnails
+LINE_WIDTH = 3                   # width of the cut line in pixels
 
 
 def window_numbers(center: int, count: int = RANGE) -> list:
-    """Bildnummern der Zeitleiste: von center - count/2 bis center + count/2 - 1; das Bild rechts vom Strich ist `center`."""
+    """Frame numbers of the timeline: from center - count/2 to center + count/2 - 1; the frame right of the line is `center`."""
     start = center - count // 2
     return list(range(start, start + count))
 
@@ -29,7 +29,7 @@ def cell_width(width: int, count: int = RANGE) -> int:
 
 
 def click_delta(index: int) -> int:
-    """Verschiebung des Markers bei Klick auf das Bild mit dem Index 0..19 (von links): wie picTimeline_Click in VB6."""
+    """Shift of the marker on a click on the frame with index 0..19 (from the left): like picTimeline_Click in VB6."""
     if index < 9:
         return index - 9
     if index > 10:
@@ -38,16 +38,16 @@ def click_delta(index: int) -> int:
 
 
 def click_index(x: int, width: int, count: int = RANGE) -> int:
-    """Index (0..count-1) des Bildes unter x (Pixel ab dem linken Rand der Zeichenfläche).
+    """Index (0..count-1) of the frame under x (pixels from the left edge of the drawing area).
 
-    Gerechnet wird mit der Zellenbreite, mit der auch gezeichnet wird (VB6 teilte durch die ganze Breite und lag am rechten
-    Rand dadurch um bis zu ein halbes Bild daneben); der Rest rechts außerhalb der Zellen zählt zum letzten Bild.
+        The calculation uses the cell width that is also used for drawing (VB6 divided by the whole width and was off by up to half a
+        frame at the right edge); the remainder to the right outside the cells counts as the last frame.
     """
     return max(0, min(count - 1, x // cell_width(width, count)))
 
 
 def thumb_size(src_width: int, src_height: int, cell: int) -> tuple:
-    """Größe eines Vorschaubildes: längste Seite = Zellenbreite - 1, das Pixelverhältnis der Quelle bleibt (wie FreeImage)."""
+    """Size of a thumbnail: longest side = cell width - 1, the pixel aspect of the source is kept (like FreeImage)."""
     side = max(cell - 1, 1)
     if src_width >= src_height:
         return side, max(1, round(side * src_height / src_width))
@@ -59,7 +59,7 @@ def frame_number(pts: float, container_start: float, fps: float) -> int:
 
 
 def draw_strip(painter, rect, cells: list) -> None:
-    """Zeichnet die Zeitleiste. cells = 20 Paare (Zustand, QImage): "image", "cross" (fehlt) oder "pending" (wird geladen)."""
+    """Draws the timeline. cells = 20 pairs (state, QImage): "image", "cross" (missing) or "pending" (being loaded)."""
     cw = cell_width(rect.width(), len(cells))
     top, height = rect.y(), rect.height()
     red = QtGui.QColor(255, 0, 0)
@@ -67,7 +67,7 @@ def draw_strip(painter, rect, cells: list) -> None:
         x0 = rect.x() + i * cw
         if state == "image" and image is not None:
             painter.drawImage(x0, top, image)
-        elif state == "pending":                            # wird noch geladen: hellgraue Fläche
+        elif state == "pending":                            # still being loaded: light grey area
             painter.fillRect(x0, top, cw - 1, height, QtGui.QColor(215, 215, 215))
         elif state == "cross":
             painter.setPen(red)
@@ -78,10 +78,10 @@ def draw_strip(painter, rect, cells: list) -> None:
 
 
 class ThumbLoader(QtCore.QThread):
-    """Holt die Vorschaubilder im Hintergrund (ein Aufruf von ffmpeg); ein Abbruch beendet ffmpeg."""
+    """Fetches the thumbnails in the background (one call of ffmpeg); cancelling terminates ffmpeg."""
 
-    loaded = QtCore.Signal(int, object, object)          # Marke, {Nummer: Array}, (erste, letzte angeforderte Nummer)
-    failed = QtCore.Signal(int, str)                     # Marke, Fehlermeldung
+    loaded = QtCore.Signal(int, object, object)          # token, {number: array}, (first, last requested number)
+    failed = QtCore.Signal(int, str)                     # token, error message
 
     def __init__(self, token: int, path: str, first: int, last: int, fps, size: tuple, grab_fn):
         super().__init__()
@@ -105,11 +105,11 @@ class ThumbLoader(QtCore.QThread):
         try:
             frames = self.grab_fn(self.path, self.first, self.last - self.first + 1, self.fps, self.size,
                                   on_start=self._remember)
-        except Exception as e:                             # nicht lesbar (oder abgebrochen): melden, nicht verschlucken
+        except Exception as e:                             # not readable (or cancelled): report it, do not swallow it
             if not self.cancelled:
-                debug_log(f"Vorschaubilder {self.first}..{self.last} fehlgeschlagen: {e!r}")
+                debug_log(f"thumbnails {self.first}..{self.last} failed: {e!r}")
                 self.failed.emit(self.token, f"{type(e).__name__}: {e}")
             return
-        debug_log(f"Vorschaubilder {self.first}..{self.last}: {len(frames)} Bilder in {time.monotonic() - started:.1f} s")
+        debug_log(f"thumbnails {self.first}..{self.last}: {len(frames)} frames in {time.monotonic() - started:.1f} s")
         if not self.cancelled:
             self.loaded.emit(self.token, frames, (self.first, self.last))

@@ -1,4 +1,4 @@
-"""Fortschrittsanzeige mit Prozentzahl und geschätzter Restlaufzeit (Nachbau von track() und bar())."""
+"""Progress display with percentage and estimated remaining time (port of track() and bar())."""
 from __future__ import annotations
 
 import time
@@ -10,20 +10,20 @@ from typing import Callable, Optional
 @dataclass
 class Progress:
     percent: float                    # 0..100
-    done: float                       # bisher verarbeitete Sekunden (Ausgabelänge)
-    total: float                      # Gesamtlänge der Ausgabe in Sekunden
-    elapsed: float                    # vergangene Zeit seit Start in Sekunden
-    speed: Optional[float] = None     # Ausgabesekunden pro Sekunde Rechenzeit (1.0 = Echtzeit), None = unbekannt
-    eta: Optional[float] = None       # geschätzte Restlaufzeit in Sekunden, None = noch nicht abschätzbar
+    done: float                       # seconds processed so far (output length)
+    total: float                      # total length of the output in seconds
+    elapsed: float                    # elapsed time since the start in seconds
+    speed: Optional[float] = None     # seconds of output per second of computing time (1.0 = real time), None = unknown
+    eta: Optional[float] = None       # estimated remaining time in seconds, None = cannot be estimated yet
     frame: Optional[int] = None
 
 
 class ProgressTracker:
-    """Rechnet verarbeitete Sekunden in Prozent und Restlaufzeit um.
+    """Converts processed seconds into percent and remaining time.
 
-    Die Restlaufzeit kommt aus der Geschwindigkeit der letzten `window` Sekunden Rechenzeit (gleitender
-    Mittelwert). Sie wird erst angezeigt, wenn mindestens `min_elapsed` Sekunden vergangen sind und
-    `min_percent` Prozent erreicht wurden; vorher wäre die Schätzung zu unsicher (Start, Suchen in der Datei).
+        The remaining time comes from the speed of the last `window` seconds of computing time (moving
+        average). It is shown only after at least `min_elapsed` seconds have passed and
+        `min_percent` percent have been reached; before that the estimate would be too uncertain (start, seeking in the file).
     """
 
     def __init__(self, total_seconds: float, window: float = 30.0, min_elapsed: float = 3.0,
@@ -45,7 +45,7 @@ class ProgressTracker:
         done = min(max(float(done), 0.0), self.total)
         self.samples.append((now, done))
         while len(self.samples) > 2 and now - self.samples[1][0] >= self.window:
-            self.samples.popleft()                 # Stützstellen außerhalb des Zeitfensters verwerfen
+            self.samples.popleft()                 # discard sampling points outside the time window
         percent = 100.0 * done / self.total
         elapsed = now - self.t0
         (t_a, d_a), (t_b, d_b) = self.samples[0], self.samples[-1]
@@ -66,10 +66,10 @@ def format_duration(seconds: float) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
-def format_progress(p: Progress, width: int = 30, message: str = "Speichern") -> str:
-    """Eine Textzeile wie  'Speichern [##########--------------------]  34.5 %  Restzeit 0:42  (3.2x)'."""
+def format_progress(p: Progress, width: int = 30, message: str = "Saving") -> str:
+    """A line of text like  'Saving [##########--------------------]  34.5 %  Remaining 0:42  (3.2x)'."""
     filled = int(width * p.percent / 100)
     bar = "#" * filled + "-" * (width - filled)
-    eta = f"Restzeit {format_duration(p.eta)}" if p.eta is not None else "Restzeit wird berechnet"
+    eta = f"Remaining {format_duration(p.eta)}" if p.eta is not None else "Remaining: calculating"
     speed = f"  ({p.speed:.1f}x)" if p.speed else ""
     return f"{message} [{bar}] {p.percent:5.1f} %  {eta}{speed}"

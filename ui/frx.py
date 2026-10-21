@@ -1,6 +1,6 @@
-"""Bilder aus .frx-Dateien (Ressourcen zu VB6-Formularen) lesen.
+"""Read pictures from .frx files (resources belonging to VB6 forms).
 
-Aufbau eines Bildeintrags: DWORD Länge | "lt" 00 00 | DWORD Datenlänge | Daten (Symbol, Bitmap, GIF, JPEG ...).
+Structure of a picture entry: DWORD length | "lt" 00 00 | DWORD data length | data (icon, bitmap, GIF, JPEG ...).
 """
 import io
 import struct
@@ -26,7 +26,7 @@ def picture_to_png(raw: bytes) -> bytes:
 
 
 def read_text(frx_path: str, offset: int) -> Optional[str]:
-    """Zeichenkette (Text-Eigenschaft eines Textfeldes u. a.): 0xFF, WORD Länge, Zeichen; kurze Texte: 1 Byte Länge."""
+    """String (Text property of a text box among others): 0xFF, WORD length, characters; short texts: 1 byte length."""
     data = open(frx_path, "rb").read()
     if offset >= len(data):
         return None
@@ -40,8 +40,8 @@ def read_text(frx_path: str, offset: int) -> Optional[str]:
 
 
 def read_list(frx_path: str, offset: int) -> Optional[list]:
-    """Listeneinträge einer ComboBox/ListBox (List) bzw. deren ItemData: WORD Anzahl, WORD größte Länge,
-    dann je Eintrag WORD Länge + Zeichen."""
+    """List entries of a ComboBox/ListBox (List) or their ItemData: WORD count, WORD greatest length,
+        then per entry WORD length + characters."""
     data = open(frx_path, "rb").read()
     if offset + 4 > len(data):
         return None

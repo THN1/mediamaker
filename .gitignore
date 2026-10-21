@@ -2,11 +2,11 @@
 __pycache__/
 *.pyc
 
-# persönliche Arbeitsdateien (werden vom Programm erzeugt bzw. enthalten Pfade des eigenen Rechners)
+# personal working files (created by the program or containing paths of your own computer)
 MediaMaker.ini
 MediaMaker.json
 mediamaker_debug.log
 *.bak
 
-# Testausgaben
+# test output
 /tmp/

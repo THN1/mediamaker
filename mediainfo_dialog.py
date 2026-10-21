@@ -1,7 +1,7 @@
-"""Dialog "Media info" (VB6: frmMediaInfo): Knöpfe für die Abschnitte des Berichts, Text auswählbar und kopierbar.
+"""Dialog "Media info" (VB6: frmMediaInfo): buttons for the sections of the report, selectable and copyable text.
 
-Das Fenster ist in der Größe veränderbar; die Knöpfe für General, Video, Audio ... teilen sich die ganze Fensterbreite zu
-gleichen Teilen, das Textfeld füllt den Rest.
+The window can be resized; the buttons for General, Video, Audio ... share the whole window width in
+equal parts, the text field fills the rest.
 """
 from __future__ import annotations
 
@@ -18,14 +18,14 @@ class frmMediaInfo(frmMediaInfoBase):
         self.file_title = title
         super().__init__(parent)
         self.setWindowTitle(f"Media info for {title}")
-        # Das VB6-Fenster hat feste Größe; hier soll es sich verändern lassen.
+        # The VB6 window has a fixed size; here it should be resizable.
         width, height = self.width(), self.height()
         self.setMinimumSize(360, 240)
         self.setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX)
         self.setWindowFlag(QtCore.Qt.WindowType.WindowMaximizeButtonHint, True)
         self.resize(width, height)
 
-        # Die Elemente des Entwurfs (Reiter, Beschriftung) werden durch Knöpfe und ein Textfeld ersetzt.
+        # The elements of the design (tabs, caption) are replaced by buttons and a text field.
         self.TabStrip1.hide()
         self.lblMediaInfo.hide()
         self.text = QtWidgets.QPlainTextEdit(self)
@@ -41,7 +41,7 @@ class frmMediaInfo(frmMediaInfoBase):
         for index, (name, _) in enumerate(sections):
             button = QtWidgets.QPushButton(name)
             button.setCheckable(True)
-            # "Ignored": die Größe richtet sich nicht nach dem Text, alle Knöpfe bekommen gleich viel Breite
+            # "Ignored": the size does not depend on the text, all buttons get the same width
             button.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
             button.clicked.connect(lambda checked=False, i=index: self.show_tab(i))
             self.tab_group.addButton(button, index)

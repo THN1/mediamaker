@@ -1,10 +1,10 @@
-"""Übersicht über alle Segmente (VB6: Menü Information, frmInfo): was die Liste ergibt, wenn sie so geschnitten wird.
+"""Overview of all segments (VB6: menu Information, frmInfo): what the list produces when it is cut like this.
 
-Zu jedem Segment stehen Quelldatei, Lage im fertigen Film (Start- und Endzeit, daran lassen sich die Schnittpunkte und später die
-Kapitel prüfen) und Eigenschaften der Quelle. Unter der Liste steht eine Zusammenfassung mit der Gesamtlänge und der
-voraussichtlichen Dateigröße bei den Bitraten des Profils.
+For every segment: source file, position in the finished film (start and end time, which allows checking the cut points and
+later the chapters) and properties of the source. Below the list is a summary with the total length and the
+expected file size at the bit rates of the profile.
 
-Bildnummern erscheinen wie in der Schnittliste: ab dem ersten Videobild gezählt (das erste Bild hat die Nummer 0).
+Frame numbers appear as in the segment list: counted from the first video frame (the first frame has the number 0).
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from project import format_hms, format_time
 
 HEADERS = ("#", "File", "FileSize", "Source duration", "First", "Last", "Length", "Start time", "End time", "Size", "FPS",
            "Sampling", "KB/s (v)", "KB/s (A)")
-RIGHT_ALIGNED = frozenset({0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13})        # alle Spalten außer "File"
+RIGHT_ALIGNED = frozenset({0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13})        # all columns except "File"
 NOT_FOUND = "file not found"
 
 
@@ -29,7 +29,7 @@ def _kbit(text: str) -> Optional[int]:
 
 def build_info(segments: Iterable[Segment], profile: dict, number: Callable[[int], str] = lambda n: f"{n:,}",
                size_of: Callable[[str], int] = os.path.getsize, exists: Callable[[str], bool] = os.path.exists) -> tuple[list, str]:
-    """(Zeilen, Zusammenfassung). Fehlende Quelldateien werden wie in VB6 gekennzeichnet und nicht mitgezählt."""
+    """(rows, summary). Missing source files are marked as in VB6 and not counted."""
     rows: list[list[str]] = []
     total = Fraction(0)
     found = missing = 0

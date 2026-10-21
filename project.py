@@ -1,7 +1,7 @@
-"""Segmentliste speichern und laden.
+"""Saving and loading the segment list.
 
-Die Liste wird als JSON-Datei gespeichert (benannte Felder, keine Spaltennummern wie SubItems(18) mehr). Alte CSV-Dateien
-aus der VB6-Version (und die Kommentarzeilen "C=" der Batchdateien) lassen sich weiterhin laden.
+The list is stored as a JSON file (named fields, no more column numbers like SubItems(18)). Old CSV files
+from the VB6 version (and the comment lines "C=" of the batch files) can still be loaded.
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def save_segments(path: str, segments: list[Segment]) -> None:
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2, ensure_ascii=False)
         fh.write("\n")
-    os.replace(tmp, path)                                    # entweder vollständig neu oder unverändert
+    os.replace(tmp, path)                                    # either completely new or unchanged
 
 
 def _read_text(path: str) -> str:
@@ -55,41 +55,41 @@ def _read_text(path: str) -> str:
 
 
 def load_segments(path: str) -> list[Segment]:
-    """Lädt eine .json-Datei oder eine alte VB6-.csv-Datei. Existiert die Datei nicht, ist die Liste leer."""
+    """Loads a .json file or an old VB6 .csv file. If the file does not exist the list is empty."""
     if not os.path.exists(path):
         return []
     text = _read_text(path)
     if text.lstrip().startswith("{"):
         data = json.loads(text)
         if data.get("format") != FORMAT:
-            raise ValueError(f"{path}: keine MediaMaker-Segmentliste")
+            raise ValueError(f"{path}: not a MediaMaker segment list")
         return [segment_from_dict(d, i) for i, d in enumerate(data.get("segments", []), 1)]
-    return parse_segments(text)                              # alte CSV-Datei
+    return parse_segments(text)                              # old CSV file
 
 
-# ----------------------------------------------------------------------------- Anzeige
+# ----------------------------------------------------------------------------- Display
 def format_hms(seconds: float) -> str:
-    """3725.4 -> '01:02:05' (Stunden können über 24 gehen)."""
+    """3725.4 -> '01:02:05' (hours may exceed 24)."""
     s = int(seconds + 0.5)
     return f"{s // 3600:02d}:{s % 3600 // 60:02d}:{s % 60:02d}"
 
 
 def format_time(seconds: Fraction) -> str:
-    """Sekunden (exakt als Bruch) -> 'HH:MM:SS.mmm' (auf Millisekunden gerundet)."""
+    """Seconds (exact as a fraction) -> 'HH:MM:SS.mmm' (rounded to milliseconds)."""
     ms = int(Fraction(seconds) * 1000 + Fraction(1, 2))
     return f"{ms // 3600000:02d}:{ms % 3600000 // 60000:02d}:{ms % 60000 // 1000:02d}.{ms % 1000:03d}"
 
 
 def timeof(frames: int, fps: Fraction) -> str:
-    """Bildnummer -> 'HH:MM:SS.mmm'."""
+    """Frame number -> 'HH:MM:SS.mmm'."""
     return format_time(Fraction(frames) / fps)
 
 
 def segment_row(s: Segment, number: int) -> list[str]:
-    """Die 19 Spalten der Liste in der Reihenfolge von VB6 (#, Path, Title, First, Last, Duration, Frames, FPS, ...).
+    """The 19 columns of the list in the order of VB6 (#, Path, Title, First, Last, Duration, Frames, FPS, ...).
 
-    Bildnummern werden vom ersten dekodierbaren Videobild an gezählt (das erste Bild hat die Nummer 0). Intern und in der
-    JSON-Datei gelten die Nummern ab dem Beginn des Containers; der Unterschied ist `first_frame` (0 bei Listen aus VB6)."""
+        Frame numbers are counted from the first decodable video frame (the first frame has the number 0). Internally and in the
+        JSON file the numbers count from the start of the container; the difference is `first_frame` (0 for lists from VB6)."""
     first = s.first_frame
     return [f"{number:02d}", s.path, s.name, str(s.start - first), str(s.end - first), format_hms(s.frames / float(s.fps)),
             str(s.total_frames - first), f"{float(s.fps):.3f}", str(s.width), str(s.height), str(s.vbitrate_kbit),

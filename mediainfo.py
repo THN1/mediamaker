@@ -1,8 +1,8 @@
-"""Medieninfo (VB6: Menü Media info, Strg+K): Eigenschaften einer Datei in Abschnitten wie "General", "Video #1", "Audio #1".
+"""Media info (VB6: menu Media info, Ctrl+K): properties of a file in sections like "General", "Video #1", "Audio #1".
 
-Der Bericht stammt von ffprobe (liest nur Anfang und Ende der Datei, auch über das Netz schnell). Der Abschnitt "MediaMaker"
-zeigt die Größen, mit denen das Programm arbeitet: Beginn von Container und Video, die Nummer des ersten Videobildes und, wenn ein
-Segment übergeben wird, dessen Marker. Der Text lässt sich im Dialog kopieren.
+The report comes from ffprobe (reads only the start and end of the file, quick even over the network). The section "MediaMaker"
+shows the values the program works with: start of container and video, the number of the first video frame and, if a
+segment is passed, its markers. The text can be copied in the dialog.
 """
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def _lang(stream: dict) -> str:
 
 
 def build_sections(path: str, segment: Optional[Segment] = None, ffprobe: str = "ffprobe", first_fn=first_frame_number) -> list:
-    """Liste von (Titel, Text) für die Reiter des Dialogs."""
+    """List of (title, text) for the tabs of the dialog."""
     out = subprocess.run([ffprobe, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", path],
                          capture_output=True, check=True).stdout
     data = json.loads(out or b"{}")

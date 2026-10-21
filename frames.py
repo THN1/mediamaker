@@ -1,10 +1,10 @@
-"""Einzelbild aus einer Aufnahme holen (Nachbau von oneframe() ohne temporäre BMP-Datei).
+"""Fetch a single frame from a recording (port of oneframe() without a temporary BMP file).
 
-Adressierung: Bild n ist das Bild zum Zeitpunkt  Videobeginn + n / fps  (origin="video"),
-Containerbeginn + n / fps (origin="container", Standard) oder nach dem Muster von VB6 (origin="vb6", siehe
-origin_base()). Der Sprung per -ss ist nur eine Beschleunigung;
-das Zielbild wird mit absoluten Zeitstempeln (-copyts + trim) bestimmt. Dadurch hängt das Ergebnis
-nicht davon ab, wie die jeweilige ffmpeg-Version -ss und Startzeiten behandelt (siehe check_seek.py).
+Addressing: frame n is the picture at the time  video start + n / fps  (origin="video"),
+container start + n / fps (origin="container", default) or following the pattern of VB6 (origin="vb6", see
+origin_base()). The jump with -ss is only an acceleration;
+the target frame is determined with absolute timestamps (-copyts + trim). The result therefore does not depend
+on how the respective ffmpeg version treats -ss and start times (see check_seek.py).
 """
 from __future__ import annotations
 
@@ -20,24 +20,24 @@ from PIL import Image
 from ffmpeg_cmd import fmt_seconds, origin_base, stream_times_of
 
 
-stream_times = stream_times_of      # Name für ältere Aufrufer
+stream_times = stream_times_of      # name for older callers
 
 
 def frame_time(frame: int, fps: Fraction, times: tuple[Fraction, Fraction], origin: str = "container",
                preroll: int = 2) -> Fraction:
-    """Absoluter Zeitstempel (Sekunden, auf Millisekunden abgeschnitten) von Bild `frame`."""
+    """Absolute timestamp (seconds, truncated to milliseconds) of frame `frame`."""
     t = origin_base(frame, fps, times[0], times[1], origin, preroll) + Fraction(frame) / fps
     return Fraction(floor(t * 1000), 1000)
 
 
 def seek_before(target: Fraction, container_start: Fraction, preroll: int) -> int:
-    """Ganze Sekunden für -ss (relativ zum Containerbeginn), `preroll` Sekunden vor dem Ziel."""
+    """Whole seconds for -ss (relative to the container start), `preroll` seconds before the target."""
     return max(0, floor(target - container_start) - preroll)
 
 
 def grab_frame(path: str, frame: int, fps: Fraction, preroll: int = 2, ffmpeg: str = "ffmpeg",
                origin: str = "container") -> np.ndarray:
-    """Liefert Bild `frame` als RGB-Array (Höhe x Breite x 3, Zeile 0 = OBERE Bildkante)."""
+    """Returns frame `frame` as an RGB array (height x width x 3, row 0 = TOP edge of the picture)."""
     times = stream_times_of(path)
     t = frame_time(frame, fps, times, origin, preroll)
     d = seek_before(t, times[0], preroll)
@@ -48,16 +48,16 @@ def grab_frame(path: str, frame: int, fps: Fraction, preroll: int = 2, ffmpeg: s
             "-frames:v", "1", "-map", "[v]", "-f", "image2pipe", "-c:v", "png", "-"]
     res = subprocess.run(cmd, capture_output=True)
     if res.returncode != 0 or not res.stdout:
-        raise RuntimeError(f"Bild {frame} konnte nicht gelesen werden: {res.stderr.decode(errors='replace')[-300:]}")
+        raise RuntimeError(f"Frame {frame} could not be read: {res.stderr.decode(errors='replace')[-300:]}")
     return np.asarray(Image.open(io.BytesIO(res.stdout)).convert("RGB"))
 
 
 def grab_window(path: str, first: int, count: int, fps: Fraction, size: tuple[int, int] = (180, 144),
                 preroll: int = 2, ffmpeg: str = "ffmpeg", origin: str = "container") -> tuple[int, np.ndarray]:
-    """Holt `count` aufeinanderfolgende Bilder ab Bild `first` in einem Aufruf, verkleinert auf `size`.
+    """Fetches `count` consecutive frames starting at frame `first` in one call, reduced to `size`.
 
-    Rückgabe: (Nummer des ersten gelieferten Bildes, Array Anzahl x Höhe x Breite x 3). Beginnt das Fenster vor
-    dem Dateianfang, wird bei Bild 0 begonnen; am Dateiende können weniger Bilder kommen.
+        Returns: (number of the first frame delivered, array count x height x width x 3). If the window begins before
+        the start of the file, it starts at frame 0; at the end of the file fewer frames may be returned.
     """
     first = max(0, first)
     times = stream_times_of(path)
@@ -74,12 +74,12 @@ def grab_window(path: str, first: int, count: int, fps: Fraction, size: tuple[in
 
 def grab_numbered(path: str, first: int, count: int, fps: Fraction, size: tuple, preroll: int = 2,
                   ffmpeg: str = "ffmpeg", on_start=None) -> dict:
-    """Holt bis zu `count` aufeinanderfolgende Bilder ab Bild `first` (Nummern ab Containerbeginn) in einem Aufruf.
+    """Fetches up to `count` consecutive frames starting at frame `first` (numbers counted from the container start) in one call.
 
-    Rückgabe: {Bildnummer: Array Höhe x Breite x 3}, verkleinert auf `size` = (Breite, Höhe). Die Nummer jedes Bildes wird aus
-    seinem Zeitstempel bestimmt, nicht aus der Reihenfolge. Liegt `first` vor dem ersten Bild der Datei (Aufnahmen, in denen der
-    Ton früher beginnt als das Video) oder hinter dem Ende, fehlen die entsprechenden Nummern im Ergebnis.
-    on_start(prozess) erhält den ffmpeg-Prozess, damit der Aufrufer ihn abbrechen kann.
+        Returns: {frame number: array height x width x 3}, reduced to `size` = (width, height). The number of each frame is determined
+        from its timestamp, not from the order. If `first` lies before the first frame of the file (recordings in which the
+        sound starts earlier than the video) or behind the end, the corresponding numbers are missing from the result.
+        on_start(process) receives the ffmpeg process so that the caller can cancel it.
     """
     times = stream_times_of(path)
     first = max(0, first)
@@ -95,7 +95,7 @@ def grab_numbered(path: str, first: int, count: int, fps: Fraction, size: tuple,
         on_start(proc)
     out, err = proc.communicate()
     if proc.returncode != 0 and not out:
-        raise RuntimeError(f"Bilder konnten nicht gelesen werden: {err.decode(errors='replace')[-300:]}")
+        raise RuntimeError(f"Frames could not be read: {err.decode(errors='replace')[-300:]}")
     pts = [float(x) for x in re.findall(r"pts_time:\s*(-?[0-9.]+)", err.decode(errors="replace"))]
     n = len(out) // (w * h * 3)
     frames = np.frombuffer(out[: n * w * h * 3], np.uint8).reshape(n, h, w, 3)

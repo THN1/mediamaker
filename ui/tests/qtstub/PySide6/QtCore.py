@@ -3,7 +3,7 @@ from ._model import Base, Enum, EnumGroup
 
 
 class Signal:
-    """Wie PySide6.QtCore.Signal: je Objekt ein eigenes Signal mit connect/emit."""
+    """Like PySide6.QtCore.Signal: every object gets its own signal with connect/emit."""
 
     def __init__(self, *types):
         self.name = None
@@ -50,7 +50,7 @@ class Qt:
 class QTimer(QObject):
     signals = {"timeout"}
     methods = {"setSingleShot", "setInterval", "stop"}
-    pending = []                         # im Test: (ms, Funktion) von QTimer.singleShot
+    pending = []                         # in the test: (ms, function) of QTimer.singleShot
 
     @staticmethod
     def singleShot(ms, fn):
@@ -63,13 +63,13 @@ class QTimer(QObject):
         return getattr(self, "_active", False)
 
     def fire(self):
-        """Nur im Test: Ablauf des Zeitgebers."""
+        """Test only: run of the timer."""
         self._active = False
         self.timeout.emit()
 
 
 class QThread(QObject):
-    """Im Test läuft run() sofort und im selben Thread."""
+    """In the test run() runs immediately and in the same thread."""
     methods = {"quit"}
 
     def start(self):

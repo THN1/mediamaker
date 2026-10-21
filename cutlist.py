@@ -1,10 +1,10 @@
-"""Datenmodell (Schnittliste, Profil, Optionen) und Import der Batch-Kopfzeilen.
+"""Data model (segment list, profile, options) and import of the batch header lines.
 
-Die VB6-Version speichert in der .bat/.sh-Datei als Kommentar (REM bzw. #):
-  J=  Ausgabedatei (Klartext)
-  P=  Profil    (Base64, UTF-16LE, Form: key="value" key="value" ...)
-  T=  Optionen  (Base64, UTF-16LE, gleiche Form)
-  C=  Schnittliste als CSV (Base64, UTF-16LE), eine Zeile pro Segment
+The VB6 version stores in the .bat/.sh file as comments (REM or #):
+  J=  output file (plain text)
+  P=  profile   (Base64, UTF-16LE, form: key="value" key="value" ...)
+  T=  options   (Base64, UTF-16LE, same form)
+  C=  segment list as CSV (Base64, UTF-16LE), one line per segment
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from mediaprobe import KNOWN_FPS
 
 
 def snap_fps(text: str) -> Fraction:
-    """'29.970' -> 30000/1001, '25.000' -> 25 (exakte Bruchwerte statt gerundeter Dezimalzahlen)."""
+    """'29.970' -> 30000/1001, '25.000' -> 25 (exact fractions instead of rounded decimal numbers)."""
     f = Fraction(text.strip().replace(",", "."))
     for k in KNOWN_FPS:
         if abs(f - k) < Fraction(1, 500):
@@ -33,25 +33,25 @@ def snap_fps(text: str) -> Fraction:
 
 @dataclass
 class Segment:
-    index: int                  # 1-basiert wie in der VB6-Liste
-    path: str                   # Quelldatei (so wie gespeichert, ggf. Windows-Pfad)
+    index: int                  # 1-based as in the VB6 list
+    path: str                   # source file (as stored, possibly a Windows path)
     name: str
-    start: int                  # erster Frame (inklusive)
-    end: int                    # Endframe; end-start Frames werden übernommen
-    total_frames: int           # Bildnummer hinter dem letzten Videobild (= first_frame + Anzahl der Bilder)
+    start: int                  # first frame (inclusive)
+    end: int                    # end frame; end-start frames are taken over
+    total_frames: int           # frame number behind the last video frame (= first_frame + number of frames)
     fps: Fraction
     width: int
     height: int
     vbitrate_kbit: int
     abitrate_kbit: int
-    audio_sel: str              # Streamauswahl für Audio, z. B. "a"
+    audio_sel: str              # stream selection for audio, e.g. "a"
     crop_top: int
     crop_bottom: int
     crop_left: int
     crop_right: int
     sample_rate: int
-    mask: str = ""              # Base64-PNG (removelogo) oder "x y w h" als Bruchteile (delogo)
-    first_frame: int = 0        # Nummer des ersten Videobildes der Datei (Zählung ab Containerbeginn; 0 bei alten Listen)
+    mask: str = ""              # Base64 PNG (removelogo) or "x y w h" as fractions (delogo)
+    first_frame: int = 0        # number of the first video frame of the file (counted from the container start; 0 for old lists)
 
     @property
     def frames(self) -> int:
@@ -59,7 +59,7 @@ class Segment:
 
     @property
     def has_png_mask(self) -> bool:
-        return self.mask.startswith("i")      # wie isPNG() in VB6
+        return self.mask.startswith("i")      # like isPNG() in VB6
 
     @property
     def has_delogo(self) -> bool:
@@ -100,7 +100,7 @@ class Job:
 
 
 def parse_batch_header(text: str) -> Job:
-    """Liest J/P/T/C aus einer .bat (REM ...) oder .sh (# ...) Datei von MediaMaker."""
+    """Reads J/P/T/C from a .bat (REM ...) or .sh (# ...) file of MediaMaker."""
     parts = {"P": "", "T": "", "C": ""}
     output = ""
     for line in text.splitlines():
@@ -118,9 +118,9 @@ def parse_batch_header(text: str) -> Job:
                segments=parse_segments(_decode(parts["C"])) if parts["C"] else [])
 
 
-# ----------------------------------------------------------------------------- ffmpeg-Aufruf in der Batchdatei
+# ----------------------------------------------------------------------------- ffmpeg call in the batch file
 def extract_command(text: str) -> Optional[str]:
-    """Die Zeile der .bat/.sh, die ffmpeg mit dem Filtergraphen aufruft (nicht die Kommentarzeilen)."""
+    """The line of the .bat/.sh that calls ffmpeg with the filter graph (not the comment lines)."""
     for line in text.splitlines():
         s = line.strip()
         if s and not s.startswith("#") and not s.upper().startswith("REM ") and " -filter_complex " in s:
@@ -129,8 +129,8 @@ def extract_command(text: str) -> Optional[str]:
 
 
 def split_args(line: str) -> list[str]:
-    """Zerlegt die Kommandozeile in Argumente (bash- oder Windows-Schreibweise)."""
-    if re.search(r"[A-Za-z]:\\", line):                    # Windows-Pfade: Backslashes nicht als Escape behandeln
+    """Splits the command line into arguments (bash or Windows notation)."""
+    if re.search(r"[A-Za-z]:\\", line):                    # Windows paths: do not treat backslashes as escapes
         return [t[1:-1] if len(t) > 1 and t[0] == t[-1] == '"' else t for t in shlex.split(line, posix=False)]
     return shlex.split(line)
 
@@ -140,7 +140,7 @@ def input_paths(args: list[str]) -> list[str]:
 
 
 def metadata_input(args: list[str]) -> tuple[Optional[str], int]:
-    """(Pfad der Kapitel-Metadatendatei oder None, Anzahl der Schnitt-Quellen)."""
+    """(path of the chapter metadata file or None, number of cut sources)."""
     paths = input_paths(args)
     if "-map_metadata" in args:
         n = int(args[args.index("-map_metadata") + 1])
@@ -149,11 +149,11 @@ def metadata_input(args: list[str]) -> tuple[Optional[str], int]:
 
 
 def resolve_source(path: str) -> str:
-    """Liefert den Pfad einer Quelldatei; findet sie auch, wenn sich ein KDE-kio-fuse-Verzeichnis geändert hat.
+    """Returns the path of a source file; also finds it if a KDE kio-fuse directory has changed.
 
-    Unter KDE lauten Netzwerkfreigaben etwa /run/user/1000/kio-fuse-sFijsz/smb/... ; der Teil hinter "kio-fuse-"
-    ist zufällig und ändert sich mit jeder Sitzung. Existiert der Pfad nicht, wird mit beliebigem Zufallsteil gesucht
-    (bei mehreren Treffern gilt das zuletzt geänderte Verzeichnis). Nichts gefunden: der Pfad bleibt unverändert.
+        Under KDE network shares look like /run/user/1000/kio-fuse-sFijsz/smb/... ; the part after "kio-fuse-"
+        is random and changes with every session. If the path does not exist, it is searched with any random part
+        (with several hits the most recently changed directory wins). Nothing found: the path stays unchanged.
     """
     if os.path.exists(path):
         return path

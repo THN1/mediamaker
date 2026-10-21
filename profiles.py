@@ -1,7 +1,7 @@
-"""Profil (Zieldatei) und Optionen: Prüfung der Werte, Vorgaben und Berechnungen.
+"""Profile (target file) and options: checking of values, defaults and calculations.
 
-Reine Logik ohne Oberfläche, damit sie sich testen lässt. Das Profil beschreibt die Ausgabedatei (Bildgröße, Bildrate,
-Bitraten, Tonformat), die Optionen steuern das Verhalten des Programms (Beschnitt, Suche, Tonspur, ...).
+Pure logic without a user interface so that it can be tested. The profile describes the output file (picture size, frame rate,
+bit rates, audio format), the options control the behaviour of the program (crop, search, audio track, ...).
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from cutlist import Segment
 PROFILE_KEYS = ("description", "scale", "sws_flags", "pad", "fps", "bv", "acodec_in", "acodec_out", "ar", "ba")
 REQUIRED_PROFILE_KEYS = ("scale", "sws_flags", "fps", "bv", "acodec_in", "acodec_out", "ar", "ba")
 
-# Vorschläge für die Auswahlfelder im Bearbeiten-Dialog (in VB6 gab es nur die Bildraten)
+# suggestions for the selection fields in the edit dialog (VB6 only had the frame rates)
 PRESETS = {
     "fps": ["23.976", "24.000", "24.975", "25.000", "29.970", "30.000"],
     "sws_flags": ["lanczos", "bicubic", "bilinear", "spline", "neighbor", "area"],
@@ -26,7 +26,7 @@ PRESETS = {
 
 
 def ordered_profile(p: dict) -> dict:
-    """Profil mit `pad` (Vorgabe False) in der Reihenfolge von PROFILE_KEYS; unbekannte Schlüssel folgen am Ende."""
+    """Profile with `pad` (default False) in the order of PROFILE_KEYS; unknown keys follow at the end."""
     q = {"pad": "False", **p}
     ordered = {k: q[k] for k in PROFILE_KEYS if k in q}
     ordered.update({k: v for k, v in q.items() if k not in ordered})
@@ -34,7 +34,7 @@ def ordered_profile(p: dict) -> dict:
 
 
 def validate_profile(p: dict) -> list[str]:
-    """Liste verständlicher Fehlermeldungen; leer = in Ordnung."""
+    """List of understandable error messages; empty = OK."""
     errors = []
     if "pad" in p and p["pad"] not in ("True", "False"):
         errors.append('"pad" must be True or False.')
@@ -65,11 +65,11 @@ def _float(value: str) -> Optional[float]:
     return float(value) if re.fullmatch(r"\d+(\.\d+)?", value or "") else None
 
 
-# Optionen, die nicht (mehr) im Dialog erscheinen:
-REMOVED_OPTIONS = {"focus", "pad"}            # focus: ohne Wirkung; pad: gehört jetzt zum Profil
-HIDDEN_OPTIONS = {"logo_edge", "logo_conf"}   # nur für Fortgeschrittene, stehen nur in der INI-Datei
+# options that no longer appear in the dialog:
+REMOVED_OPTIONS = {"focus", "pad"}            # focus: no effect; pad: now belongs to the profile
+HIDDEN_OPTIONS = {"logo_edge", "logo_conf"}   # for advanced users only, they are only in the INI file
 
-# Gliederung des Optionsdialogs: (Überschrift, Schlüssel)
+# grouping of the options dialog: (heading, keys)
 OPTION_GROUPS = (
     ("Border detection", ("crop", "blackness", "allowance", "border_tol")),
     ("Seeking commercials", ("pause", "overlap", "step_end", "step_next", "logo_rewind")),
@@ -101,7 +101,7 @@ def validate_options(o: dict) -> list[str]:
 
 
 def valid_profile_name(name: str) -> Optional[str]:
-    """None = in Ordnung, sonst die Fehlermeldung."""
+    """None = OK, otherwise the error message."""
     if not name.strip():
         return "The name must not be empty."
     if "=" in name or name.strip().startswith(("[", ";")) or "\n" in name:
@@ -114,13 +114,13 @@ def default_name(profile: dict) -> str:
 
 
 def profile_from_segment(seg: Segment) -> dict:
-    """Werte der Zieldatei aus den Eigenschaften eines Mustervideos (VB6: 'Reuse source A/V')."""
+    """Values of the target file from the properties of a sample video (VB6: 'Reuse source A/V')."""
     return {"bv": f"{seg.vbitrate_kbit}k", "scale": f"{seg.width}:{seg.height}", "fps": f"{float(seg.fps):.3f}",
             "ar": str(seg.sample_rate), "ba": f"{seg.abitrate_kbit}k"}
 
 
 def weighted_bitrate(segments: Iterable[Segment], kind: str) -> int:
-    """Mittlere Bitrate in kbit/s, gewichtet mit der Dauer der Segmente (kind = "video" oder "audio")."""
+    """Average bit rate in kbit/s, weighted by the duration of the segments (kind = "video" or "audio")."""
     total = weighted = 0.0
     for s in segments:
         t = s.frames / float(s.fps)
@@ -130,14 +130,14 @@ def weighted_bitrate(segments: Iterable[Segment], kind: str) -> int:
 
 
 def normalize_bitrate(text: str) -> Optional[str]:
-    """'3000' -> '3000k', '3000k' -> '3000k', Unsinn -> None."""
+    """'3000' -> '3000k', '3000k' -> '3000k', nonsense -> None."""
     t = text.strip()
     t = t[:-1] if t.endswith("k") else t
     return f"{int(t)}k" if re.fullmatch(r"[1-9]\d*", t) else None
 
 
 def wrapped_lines(text_width: int, field_width: int, min_lines: int = 1, max_lines: int = 4) -> int:
-    """Anzahl der Zeilen, die ein Text der Breite `text_width` (Pixel) in einem Feld der Breite `field_width` braucht,
-    begrenzt auf min_lines..max_lines (wie die Höhenberechnung von frmProfile in VB6)."""
-    usable = max(field_width - 12, 1)                      # Rand und Rollbalken abziehen
+    """Number of lines a text of width `text_width` (pixels) needs in a field of width `field_width`,
+        limited to min_lines..max_lines (like the height calculation of frmProfile in VB6)."""
+    usable = max(field_width - 12, 1)                      # subtract border and scroll bar
     return max(min_lines, min(max_lines, -(-text_width // usable)))

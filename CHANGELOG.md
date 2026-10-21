@@ -1,8 +1,10 @@
-# Änderungen
+# Changes
 
-## 0.2 (in Arbeit)
+## 0.2 (in progress)
 
 - Version number set to 0.2-dev.
+- All comments, docstrings, messages, tests and documentation are now in English (the generated user interface files were
+  regenerated; their code is unchanged).
 - Fix: after deleting a segment the entry that takes its place is selected and loaded (after deleting the last entry: the new last
   one) instead of the cursor jumping to the top of the list.
 - Fix: "Seek next commercial" could skip a short commercial break. The initial step is now limited to the option `pause` (minimum
@@ -10,28 +12,28 @@
 
 ## 0.1
 
-Erster eingefrorener Stand der Neuimplementierung in Python/PySide6 (noch nicht alle Funktionen des VB6-Programms).
+First frozen state of the reimplementation in Python/PySide6 (not all functions of the VB6 program yet).
 
-Enthalten:
+Included:
 
-- **Hauptfenster** mit Schnittliste (JSON-Datei `MediaMaker.json`, alte CSV-Listen importierbar), Öffnen und Analyse von Videos
-  (ffprobe), Drag & Drop, Tonspurwahl, Beenden mit sauberem Herunterfahren von VLC.
-- **Vorschau** mit VLC: Wiedergabe in den Arbeitsspeicher, von Qt gezeichnet (läuft unter Wayland und X11); Schieber, Bildnummer und
-  Zeit; Sprung zu einer Bildnummer; Anfahren der Startposition wird abgesichert.
-- **Marker A/B** und **Zeitleiste** mit 20 Vorschaubildern, roten Kreuzen für fehlende Bilder, Klick zum Verschieben der Marker.
-- **Bildnummern** zählen ab dem ersten dekodierbaren Videobild (intern ab Containerbeginn).
-- **Segmente** löschen, verschieben, duplizieren; beim Duplizieren Suche nach dem Filmbeginn.
-- **Suche** nach dem Ende bzw. dem nächsten Werbeblock mit Randerkennung oder Senderlogo (Hintergrund, abbrechbar, mit Fortschritt);
-  **Auto crop**.
-- **Profil und Optionen** (Dialoge mit Prüfung, benannte Profile, Schätzung der Bitraten); `pad` gehört zum Profil.
-- **Media info** (Strg+K) und **Information** (Segmentübersicht mit Lage im fertigen Film, Gesamtlänge und geschätzter Größe).
-- **ffmpeg-Aufruf** gegen das VB6-Programm geprüft (Beispiel Elysium: Befehl identisch, Bilder stimmen überein), Kommandozeile
-  `run_job.py`, Fortschritt und Restzeit.
-- **Oberfläche** aus den VB6-Formularen (`ui/frm2qt.py`), Qt-Ersatz für Tests ohne Oberfläche.
+- **Main window** with segment list (JSON file `MediaMaker.json`, old CSV lists importable), opening and analysing videos
+  (ffprobe), drag & drop, audio track selection, clean shutdown of VLC on exit.
+- **Preview** with VLC: playback into memory, drawn by Qt (runs under Wayland and X11); slider, frame number and
+  time; jump to a frame number; approaching the start position is secured.
+- **Markers A/B** and **timeline** with 20 thumbnails, red crosses for missing frames, click to move the markers.
+- **Frame numbers** count from the first decodable video frame (internally from the container start).
+- **Segments**: delete, move, duplicate; when duplicating, the start of the movie is searched.
+- **Search** for the end of a commercial or the next commercial break using border detection or the station logo (background,
+  cancellable, with progress); **Auto crop**.
+- **Profile and options** (dialogs with checking, named profiles, bit rate estimation); `pad` belongs to the profile.
+- **Media info** (Ctrl+K) and **Information** (segment overview with position in the finished film, total length and estimated size).
+- **ffmpeg call** checked against the VB6 program (example Elysium: command identical, pictures match), command line
+  `run_job.py`, progress and remaining time.
+- **User interface** from the VB6 forms (`ui/frm2qt.py`), Qt replacement for tests without a user interface.
 
-Noch nicht enthalten:
+Not included yet:
 
-- Dialoge für Beschnitt und Logo (frmCrop, frmRemoveLogo) und die Knöpfe dafür
-- Speichern als MP4/AVI aus der Oberfläche mit Fortschrittsanzeige (die Bausteine `ffmpeg_cmd.py`, `runner.py`, `run_job.py` gibt es)
-- Batch-Menü, Import/Wiederherstellen einer Sitzung, Untertitel, Mehrsprachigkeit, DVD-Modus, Copy-Modus
-- Überlappung von Segmenten, Kapitel (chapter()), Vorschau am Schnittpunkt
+- Dialogs for crop and logo (frmCrop, frmRemoveLogo) and the buttons for them
+- Saving as MP4/AVI from the user interface with a progress display (the building blocks `ffmpeg_cmd.py`, `runner.py`, `run_job.py` exist)
+- Batch menu, import/restore of a session, subtitles, multilanguage, DVD mode, copy mode
+- Overlap of segments, chapters (chapter()), preview at the cut point

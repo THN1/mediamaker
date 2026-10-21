@@ -1,4 +1,4 @@
-"""Tests für Fortschritt/Restzeit (mit simulierter Uhr) und für den echten ffmpeg-Lauf mit Abbruch."""
+"""Tests for progress/remaining time (with a simulated clock) and for the real ffmpeg run with cancel."""
 import os, subprocess, sys, tempfile, time
 from fractions import Fraction
 
@@ -13,14 +13,14 @@ from runner import expected_frames, run_ffmpeg, total_seconds, verify_output
 def test_tracker():
     t = ProgressTracker(100.0)
     t.start(now=0.0)
-    # Gleichmäßig 2 Ausgabesekunden pro Sekunde Rechenzeit: nach 10 s Rechenzeit sind 20 s fertig
+    # Evenly 2 seconds of output per second of computing time: after 10 s of computing time 20 s are done
     first = t.update(2.0, now=1.0)
-    assert first.eta is None, "Restzeit darf nach 1 s noch nicht angezeigt werden"
+    assert first.eta is None, "remaining time must not be shown yet after 1 s"
     for sec in range(2, 11):
         p = t.update(2.0 * sec, now=float(sec))
     assert abs(p.percent - 20.0) < 1e-9 and abs(p.speed - 2.0) < 1e-9
-    assert abs(p.eta - 40.0) < 1e-6, p.eta                     # 80 s Rest bei Tempo 2 -> 40 s
-    # Tempo halbiert sich (aufwendigere Szene): die Schätzung folgt nach dem Zeitfenster
+    assert abs(p.eta - 40.0) < 1e-6, p.eta                     # 80 s remaining at speed 2 -> 40 s
+    # Speed halves (more demanding scene): the estimate follows after the time window
     done = 20.0
     for sec in range(11, 60):
         done += 1.0
@@ -30,8 +30,8 @@ def test_tracker():
     assert t.update(100.0, now=100.0).eta == 0.0
     assert format_duration(65) == "1:05" and format_duration(3725) == "1:02:05"
     line = format_progress(p)
-    assert "Restzeit" in line and "%" in line
-    print("Fortschritt/Restzeit (simulierte Uhr): OK  |", line)
+    assert "Remaining" in line and "%" in line
+    print("Progress/remaining time (simulated clock): OK  |", line)
 
 
 def make_source(path, seconds=240):
@@ -59,21 +59,21 @@ def test_real_run():
         pcts = [p.percent for p in seen]
         etas = [p for p in seen if p.eta is not None and p.percent < 100]
         assert pcts == sorted(pcts) and pcts[-1] == 100.0
-        print(f"Lauf: {len(seen)} Meldungen, {res.elapsed:.1f} s, erste Restzeit bei {etas[0].percent:.0f} %" if etas
-              else f"Lauf: {len(seen)} Meldungen, {res.elapsed:.1f} s, Lauf zu kurz für eine Restzeit")
+        print(f"Run: {len(seen)} messages, {res.elapsed:.1f} s, first remaining time at {etas[0].percent:.0f} %" if etas
+              else f"Run: {len(seen)} messages, {res.elapsed:.1f} s, run too short for a remaining time")
         ok, actual, msg = verify_output(out, expected_frames(job))
         print(msg)
         assert ok and actual == 3300
-        # Abbruch
+        # cancel
         cancel_at = time.monotonic() + 1.0
         res = run_ffmpeg(cmd, total_seconds(job), cwd=d, cancel=lambda: time.monotonic() > cancel_at)
         assert res.cancelled and not res.ok
-        print(f"Abbruch nach {res.elapsed:.1f} s: OK")
-        # Fehlerfall: Quelle fehlt
-        bad = Job(out, prof, ref.options, [Segment(1, "/nicht/da.ts", "x", 0, 50, 100, Fraction(25), 720, 576, 0, 0, "a", 0, 0, 0, 0, 48000, "")])
-        res = run_ffmpeg([ "ffmpeg", "-y", "-i", "/nicht/da.ts", out], 2.0, cwd=d)
-        assert not res.ok and "nicht/da.ts" in res.errors
-        print("Fehlerfall (Quelle fehlt): Fehlermeldung kommt an: OK")
+        print(f"Cancel after {res.elapsed:.1f} s: OK")
+        # error case: source missing
+        bad = Job(out, prof, ref.options, [Segment(1, "/not/there.ts", "x", 0, 50, 100, Fraction(25), 720, 576, 0, 0, "a", 0, 0, 0, 0, 48000, "")])
+        res = run_ffmpeg([ "ffmpeg", "-y", "-i", "/not/there.ts", out], 2.0, cwd=d)
+        assert not res.ok and "not/there.ts" in res.errors
+        print("Error case (source missing): error message arrives: OK")
 
 
 if __name__ == "__main__":

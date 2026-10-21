@@ -1,12 +1,12 @@
-"""Prüft Schritt für Schritt, was die Zeitleiste für eine Datei tut, und zeigt Zeiten und Fehler.
+"""Checks step by step what the timeline does for a file, and shows times and errors.
 
-Aufruf:  python3 tools/thumb_test.py DATEI [erstes_Bild] [Anzahl]     (Standard: Bild 0, 10 Bilder)
+Usage:  python3 tools/thumb_test.py FILE [first_frame] [count]     (default: frame 0, 10 frames)
 
-Gedacht für Dateien auf einem Netzlaufwerk, bei denen die Zeitleiste keine Vorschaubilder zeigt. Die Ausgabe zeigt,
-welcher Schritt scheitert oder wie lange er dauert:
-  1. schnelle Analyse (ffprobe: Streams, Dauer)
-  2. Startzeiten (ffprobe: Beginn des Containers und des Videos)
-  3. die Vorschaubilder (ffmpeg) mit ihren Bildnummern
+Meant for files on a network drive for which the timeline shows no thumbnails. The output shows
+which step fails or how long it takes:
+  1. quick analysis (ffprobe: streams, duration)
+  2. start times (ffprobe: start of the container and of the video)
+  3. the thumbnails (ffmpeg) with their frame numbers
 """
 import os
 import sys
@@ -32,26 +32,26 @@ def main():
     path = sys.argv[1]
     first = int(sys.argv[2]) if len(sys.argv) > 2 else 0
     count = int(sys.argv[3]) if len(sys.argv) > 3 else 10
-    print("Datei:", path, "| vorhanden:", os.path.exists(path))
+    print("File:", path, "| exists:", os.path.exists(path))
     try:
-        t = step("1. schnelle Analyse")
+        t = step("1. quick analysis")
         info = probe(path, exact_frames=False)
         v = info.video
-        print(f"{v.codec} {v.width}x{v.height}, {float(v.fps):g} fps, {v.frames} Bilder ({v.frames_source}), "
-              f"Dauer {info.duration:.1f} s, Tonspuren: {len(info.audio)}  [{time.monotonic() - t:.1f} s]")
-        t = step("2. Startzeiten")
+        print(f"{v.codec} {v.width}x{v.height}, {float(v.fps):g} fps, {v.frames} frames ({v.frames_source}), "
+              f"duration {info.duration:.1f} s, audio tracks: {len(info.audio)}  [{time.monotonic() - t:.1f} s]")
+        t = step("2. start times")
         container, video = stream_times_of(path)
-        print(f"Containerbeginn {float(container):.3f} s, Videobeginn {float(video):.3f} s, Unterschied "
-              f"{float(video - container) * float(v.fps):.1f} Bilder  [{time.monotonic() - t:.1f} s]")
-        t = step(f"3. Vorschaubilder ab Bild {first} ({count} Stück)")
+        print(f"container start {float(container):.3f} s, video start {float(video):.3f} s, difference "
+              f"{float(video - container) * float(v.fps):.1f} frames  [{time.monotonic() - t:.1f} s]")
+        t = step(f"3. thumbnails starting at frame {first} ({count} frames)")
         frames = grab_numbered(path, first, count, v.fps, (53, 42))
         numbers = sorted(frames)
-        print(f"{len(frames)} Bilder, Nummern: {numbers[:3]}{' ... ' if len(numbers) > 6 else ' '}{numbers[-3:] if len(numbers) > 3 else ''}"
+        print(f"{len(frames)} frames, numbers: {numbers[:3]}{' ... ' if len(numbers) > 6 else ' '}{numbers[-3:] if len(numbers) > 3 else ''}"
               f"  [{time.monotonic() - t:.1f} s]")
         wanted = set(range(first, first + count))
         missing = sorted(wanted - set(frames))
         if missing:
-            print(f"Angeforderte Nummern ohne Bild (erscheinen als rote Kreuze): {missing[:5]}{'...' if len(missing) > 5 else ''}")
+            print(f"Requested numbers without a picture (shown as red crosses): {missing[:5]}{'...' if len(missing) > 5 else ''}")
     except Exception:
         print("\nFEHLER:")
         traceback.print_exc()

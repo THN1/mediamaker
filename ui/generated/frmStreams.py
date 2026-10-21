@@ -1,4 +1,4 @@
-"""Logik von frmStreams: Prozeduren mit den VB6-Namen; Vorlage von frm2qt.py."""
+"""Logic of frmStreams: procedures with the VB6 names; template from frm2qt.py."""
 from ui_frmStreams import frmStreamsBase
 
 

@@ -1,14 +1,14 @@
-"""Baut die ffmpeg-Kommandozeile aus Schnittliste, Profil und Optionen.
+"""Builds the ffmpeg command line from segment list, profile and options.
 
-Nachbau der VB6-Funktionen build(), multi(), crop(), delogo(), floor(), inc().
-Unterschiede zur VB6-Version:
-  * Rückgabe ist eine Argumentliste (kein String): kein Quoting-Problem mit Leerzeichen,
-    Umlauten oder Anführungszeichen in Dateinamen, direkt für subprocess geeignet.
-  * Zeitwerte werden mit exakten Brüchen gerechnet (Fraction) statt mit Gleitkommazahlen.
-    Dadurch entfällt das 1-ms-Rauschen (z. B. 2.479 statt 2.480 bei Frame 199662 @ 25 fps).
+Port of the VB6 functions build(), multi(), crop(), delogo(), floor(), inc().
+Differences from the VB6 version:
+  * The return value is an argument list (not a string): no quoting problems with spaces,
+    umlauts or quotation marks in file names, directly usable for subprocess.
+  * Time values are calculated with exact fractions (Fraction) instead of floating point numbers.
+    This removes the 1 ms noise (e.g. 2.479 instead of 2.480 at frame 199662 @ 25 fps).
 
-Noch NICHT enthalten (löst NotImplementedError aus): DVD-Modus, Untertitel, Mehrsprachigkeit,
-Copy-Modus. Der Rest entspricht den beiden normalen VB6-Zweigen (eine bzw. mehrere Quelldateien).
+NOT included yet (raises NotImplementedError): DVD mode, subtitles, multilanguage,
+copy mode. The rest corresponds to the two normal VB6 branches (one or several source files).
 """
 from __future__ import annotations
 
@@ -24,9 +24,9 @@ from typing import Callable, Optional, Union
 from cutlist import Job, Segment
 
 
-# ----------------------------------------------------------------------------- Startzeiten
+# ----------------------------------------------------------------------------- Start times
 def _start_fraction(value, default: Fraction) -> Fraction:
-    """Startzeit aus der Ausgabe von ffprobe; fehlende oder unbekannte Werte ("N/A", leer) ergeben `default`."""
+    """Start time from the output of ffprobe; missing or unknown values ("N/A", empty) result in `default`."""
     try:
         return Fraction(str(value)).limit_denominator(1_000_000)
     except (ValueError, ZeroDivisionError, TypeError):
@@ -35,9 +35,9 @@ def _start_fraction(value, default: Fraction) -> Fraction:
 
 @lru_cache(maxsize=64)
 def stream_times_of(path: str, ffprobe: str = "ffprobe") -> tuple[Fraction, Fraction]:
-    """(Containerbeginn, Videobeginn) in Sekunden, exakt als Bruch. TV-Aufnahmen beginnen selten bei 0.
+    """(container start, video start) in seconds, exact as a fraction. TV recordings rarely start at 0.
 
-    Fehlt dem Container oder dem Videostream die Startzeit (ffprobe meldet dann "N/A"), gilt 0 bzw. der Containerbeginn.
+        If the container or the video stream has no start time (ffprobe then reports "N/A"), 0 or the container start applies.
     """
     out = subprocess.run([ffprobe, "-v", "error", "-print_format", "json", "-select_streams", "v:0",
                           "-show_entries", "format=start_time:stream=start_time", path],
@@ -48,7 +48,7 @@ def stream_times_of(path: str, ffprobe: str = "ffprobe") -> tuple[Fraction, Frac
     return fmt, vid
 
 
-# ----------------------------------------------------------------------------- Zeitrechnung
+# ----------------------------------------------------------------------------- Time calculation
 def _ms_floor(x: Fraction) -> Fraction:
     return Fraction(floor(x * 1000), 1000)
 
@@ -63,13 +63,13 @@ def fmt_seconds(x: Fraction) -> str:
 
 
 def split_seek(start_frame: int, fps: Fraction, preroll: int) -> tuple[int, Fraction]:
-    """Teilt den Startzeitpunkt in einen groben Sprung (-ss vor -i) und einen Rest für trim.
+    """Splits the start time into a coarse jump (-ss before -i) and a remainder for trim.
 
-    Der Sprung liegt `preroll` Sekunden früher (Sicherheitsabstand zum Keyframe);
-    der Rest wird danach von trim exakt (auf die Millisekunde abgeschnitten) erreicht.
+        The jump lies `preroll` seconds earlier (safety distance to the keyframe);
+        the remainder is then reached exactly by trim (truncated to the millisecond).
     """
     start = Fraction(start_frame) / fps
-    seek = max(0, round(start) - preroll)       # round(): kaufmännisch wie CLng in VB6 (Bankers Rounding)
+    seek = max(0, round(start) - preroll)       # round(): like CLng in VB6 (banker's rounding)
     return seek, _ms_floor(start - seek)
 
 
@@ -79,14 +79,14 @@ def trim_end(rest: Fraction, frames: int, fps: Fraction) -> Fraction:
 
 def origin_base(start_frame: int, fps: Fraction, container_start: Fraction, video_start: Fraction,
                 origin: str = "container", preroll: int = 2) -> Fraction:
-    """Zeitpunkt, ab dem Bildnummern gezählt werden.
+    """Point in time from which frame numbers are counted.
 
-    "video"     Videobeginn (erstes Videopaket).
-    "container" Containerbeginn (frühester Stream, bei TV-Aufnahmen oft der Ton).
-    "vb6"       Nachbildung des VB6-Verhaltens, wie es sich mit der ffmpeg-Version des Anwenders darstellt:
-                ohne -ss (Sprung 0 s) zählt trim ab Videobeginn, mit -ss ab Containerbeginn + Sprung.
-                Dadurch liefert dieselbe Bildnummer bei Aufnahmen, in denen Ton und Video nicht gleichzeitig
-                beginnen, je nach Position unterschiedlich verschobene Bilder (Sprung bei etwa 2,5 s).
+        "video"     start of the video (first video packet).
+        "container" start of the container (earliest stream, often the sound in TV recordings).
+        "vb6"       reproduction of the VB6 behaviour as it presents itself with the user's ffmpeg version:
+                    without -ss (jump 0 s) trim counts from the video start, with -ss from container start + jump.
+                    For recordings in which sound and video do not start at the same time, the same frame number
+                    therefore delivers differently shifted frames depending on the position (step at about 2.5 s).
     """
     if origin == "video":
         return video_start
@@ -94,12 +94,12 @@ def origin_base(start_frame: int, fps: Fraction, container_start: Fraction, vide
         return container_start
     if origin == "vb6":
         return video_start if split_seek(start_frame, fps, preroll)[0] == 0 else container_start
-    raise ValueError(f"origin muss 'video', 'container' oder 'vb6' sein, nicht {origin!r}")
+    raise ValueError(f"origin must be 'video', 'container' or 'vb6', not {origin!r}")
 
 
-# ----------------------------------------------------------------------------- Filterteile
+# ----------------------------------------------------------------------------- Filter parts
 def _vb_idiv2(x: float) -> int:
-    """VB6 '\\ 2': Operand wird zuerst gerundet, dann ganzzahlig geteilt."""
+    """VB6 '\\ 2': the operand is rounded first, then divided as an integer."""
     return int(round(x)) // 2
 
 
@@ -115,7 +115,7 @@ def _crop(seg: Segment, w: int, h: int, global_crop: int) -> tuple[str, int, int
 def _delogo(seg: Segment, w: int, h: int) -> str:
     p = [float(v.replace(",", ".")) for v in seg.mask.split(" ")[:4]]
     x, y, dw, dh = round(p[0] * w), round(p[1] * h), round(p[2] * w), round(p[3] * h)
-    # Grenzen sichern (wie inside() in VB6): a >= 1 und a + b < max
+    # secure the limits (like inside() in VB6): a >= 1 and a + b < max
     x, y = max(x, 1), max(y, 1)
     if x + dw >= w:
         dw = w - x - 1
@@ -141,13 +141,13 @@ def video_filter(seg: Segment, pos: int, profile: dict, opts: dict,
     c, w, h = _crop(seg, w, h, int(opts.get("crop", 0)))
     f += c
     sw_, sh_ = (int(v) for v in profile["scale"].split(":"))
-    if profile.get("pad", opts.get("pad", "False")) == "True":         # pad gehört zum Profil (früher: Optionen)
+    if profile.get("pad", opts.get("pad", "False")) == "True":         # pad belongs to the profile (formerly: options)
         if w * sh_ > h * sw_:
             f += f"pad={w}:{2 * _vb_idiv2(w / sw_ * sh_)}"
         else:
             f += f"pad={2 * _vb_idiv2(h / sh_ * sw_)}:{h}"
         f += ":(ow-iw)/2:(oh-ih)/2,"
-    if w < h:                                    # Hochformat: seitlich auffüllen
+    if w < h:                                    # portrait format: pad at the sides
         t = (h * sw_) // sh_
         f += f"pad={t}:ih:{t - 2 * w}:0,"
     f += f"scale={profile['scale']}" + (",setsar=1" if setsar else "") + ",setpts=PTS-STARTPTS"
@@ -161,9 +161,9 @@ def audio_filter(seg: Segment, pos: int, trim: Optional[tuple[Fraction, Fraction
     return f + f"asetpts=PTS-STARTPTS[a{pos - 1}];"
 
 
-# ----------------------------------------------------------------------------- Hauptfunktion
+# ----------------------------------------------------------------------------- Main function
 def write_masks(segments: list[Segment], directory: str) -> list[str]:
-    """Schreibt die PNG-Masken (removelogoNN.png) in das Arbeitsverzeichnis von ffmpeg."""
+    """Writes the PNG masks (removelogoNN.png) into the working directory of ffmpeg."""
     names = []
     for pos, seg in enumerate(segments, 1):
         if seg.has_png_mask:
@@ -176,45 +176,45 @@ def write_masks(segments: list[Segment], directory: str) -> list[str]:
 def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str] = None,
                   path_map: Callable[[str], str] = lambda p: p, unify: bool = False,
                   stream_times: Union[dict, str, None] = "auto", origin: str = "container") -> list[str]:
-    """Liefert die ffmpeg-Argumentliste.
+    """Returns the ffmpeg argument list.
 
-    setsar=1 wird nur bei MEHREREN Quelldateien gesetzt (nötig für concat). Bei einer einzigen
-    Quelldatei bleiben SAR/DAR der Aufnahme erhalten, damit das Seitenverhältnis nicht verzerrt wird.
+        setsar=1 is only set for SEVERAL source files (needed for concat). With a single
+        source file SAR/DAR of the recording are kept so that the aspect ratio is not distorted.
 
-    unify=False: verhält sich wie VB6 (bei nur EINER Quelldatei werden Codec, Samplerate und
-                 minrate/maxrate nicht gesetzt; ffmpeg-Standardwerte greifen).
-    stream_times: "auto" (Standard): Start- und Videozeiten der Quellen werden mit ffprobe ermittelt und es
-                 werden absolute Zeitstempel benutzt (-copyts, trim mit absoluten Zeiten); das Ergebnis hängt dann
-                 nicht davon ab, wie die ffmpeg-Version -ss behandelt. Ein dict {Quellpfad: (Containerbeginn,
-                 Videobeginn)} gibt die Zeiten vor. None = wie in VB6 (-ss vor -i, trim relativ dazu); das setzt
-                 voraus, dass die ffmpeg-Version den Zeitnullpunkt nach -ss so legt, wie VB6 es erwartet.
-    origin:      Nullpunkt der Bildnummern: "container" (Standard), "video" oder "vb6" (siehe origin_base).
-    unify=True:  setzt Codec, Samplerate und minrate/maxrate auch bei nur einer Quelldatei
-                 (SAR-Verhalten bleibt unverändert).
+        unify=False: behaves like VB6 (with only ONE source file codec, sample rate and
+                     minrate/maxrate are not set; ffmpeg defaults apply).
+        stream_times: "auto" (default): start and video times of the sources are determined with ffprobe and
+                     absolute timestamps are used (-copyts, trim with absolute times); the result then does not
+                     depend on how the ffmpeg version treats -ss. A dict {source path: (container start,
+                     video start)} specifies the times. None = like VB6 (-ss before -i, trim relative to it); this requires
+                     that the ffmpeg version puts the time zero after -ss the way VB6 expects it.
+        origin:      zero point of the frame numbers: "container" (default), "video" or "vb6" (see origin_base).
+        unify=True:  sets codec, sample rate and minrate/maxrate also for only one source file
+                     (SAR behaviour stays unchanged).
     """
     prof, opts, segs = job.profile, job.options, job.segments
     if not segs:
-        raise ValueError("Schnittliste ist leer.")
+        raise ValueError("Segment list is empty.")
     if opts.get("subtitle", "0") != "0" or opts.get("multilanguage", "False") == "True":
-        raise NotImplementedError("Untertitel/Mehrsprachigkeit sind noch nicht umgesetzt.")
+        raise NotImplementedError("Subtitles/multilanguage are not implemented yet.")
 
     if stream_times == "auto":
         stream_times = {p: stream_times_of(path_map(p)) for p in {s.path for s in segs}}
     multiple = len({s.path for s in segs}) > 1
-    explicit = multiple or unify                  # Codec/Bitrate-Parameter ausführlich setzen
+    explicit = multiple or unify                  # set codec/bit rate parameters in full
     preroll = int(opts.get("floor", 2))
 
     args = [ffmpeg, "-y", "-hide_banner"] + (["-copyts"] if stream_times else [])
     filtr = ""
     for pos, seg in enumerate(segs, 1):
-        trimmed = seg.end - seg.start < seg.total_frames - seg.first_frame   # sonst: ganze Datei, kein trim
+        trimmed = seg.end - seg.start < seg.total_frames - seg.first_frame   # otherwise: whole file, no trim
         trim = None
         if trimmed and stream_times:
             fmt0, vid0 = stream_times[seg.path]
             base = origin_base(seg.start, seg.fps, fmt0, vid0, origin, preroll)
-            t0 = _ms_floor(base + Fraction(seg.start) / seg.fps)           # absoluter Startzeitpunkt
+            t0 = _ms_floor(base + Fraction(seg.start) / seg.fps)           # absolute start time
             trim = (t0, trim_end(t0, seg.frames, seg.fps))
-            seek = max(0, floor(t0 - fmt0) - preroll)                      # -ss ist relativ zum Containerbeginn
+            seek = max(0, floor(t0 - fmt0) - preroll)                      # -ss is relative to the container start
             if seek > 0:
                 args += ["-ss", str(seek)]
         elif trimmed:
@@ -231,7 +231,7 @@ def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str]
 
     n = len(segs)
     if n == 1:
-        filtr = filtr[:-1]                                      # kein concat nötig
+        filtr = filtr[:-1]                                      # no concat needed
         maps = ["-map", "[v0]", "-map", "[a0]"]
     else:
         filtr += "".join(f"[v{i}][a{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[v][a]"

@@ -1,12 +1,12 @@
-"""Prüft, ob die VLC-Vorschau bei vielen Sprüngen im angehaltenen Zustand stehen bleibt.
+"""Checks whether the VLC preview gets stuck after many jumps in the paused state.
 
-Aufruf:  python3 tools/vlc_seek_test.py Film.ts [--args "--avcodec-hw=none"] [--count 60]
+Usage:  python3 tools/vlc_seek_test.py film.ts [--args "--avcodec-hw=none"] [--count 60]
 
-Das Programm öffnet ein kleines Fenster, spielt den Film kurz ab, hält ihn an und springt dann `count`-mal im
-angehaltenen Zustand an weit auseinanderliegende Stellen. Nach jedem Sprung wird ein Standbild gespeichert; sieht ein
-Standbild genauso aus wie das vorige, obwohl die Stellen weit auseinander liegen, ist die Vorschau eingefroren.
-Mit --args lassen sich VLC-Argumente ausprobieren, z. B.  --args ""   (VLC-Standard, Hardware-Dekodierung an)
-oder  --args "--avcodec-hw=none"  oder  --args "--avcodec-hw=none --vout=xcb_x11".
+The program opens a small window, plays the film briefly, pauses it and then jumps `count` times to widely separated positions
+while paused. After every jump a still image is saved; if a still looks exactly like the previous one although the positions
+are far apart, the preview is frozen.
+With --args you can try VLC arguments, e.g.  --args ""   (VLC default, hardware decoding on)
+or  --args "--avcodec-hw=none"  or  --args "--avcodec-hw=none --vout=xcb_x11".
 """
 import hashlib
 import os
@@ -37,7 +37,7 @@ def main():
     mp.set_media(instance.media_new_path(path))
     folder = tempfile.mkdtemp()
     state = {"i": 0, "last": None, "frozen": None}
-    print(f"VLC-Argumente: {vlc_args or '(Standard)'}")
+    print(f"VLC arguments: {vlc_args or '(default)'}")
 
     def start():
         mp.set_pause(1)
@@ -60,16 +60,16 @@ def main():
     def compare(i, target, shot):
         digest = hashlib.md5(open(shot, "rb").read()).hexdigest() if os.path.exists(shot) else None
         same = digest is not None and digest == state["last"]
-        verdict = "GLEICH WIE VORHER" if same else ("neu" if digest else "kein Bild")
-        print(f"Sprung {i + 1:3d}: Ziel {target / 1000:8.1f} s, VLC-Zeit {mp.get_time() / 1000:8.1f} s, Bild: {verdict}")
+        verdict = "SAME AS BEFORE" if same else ("new" if digest else "no image")
+        print(f"jump {i + 1:3d}: target {target / 1000:8.1f} s, VLC time {mp.get_time() / 1000:8.1f} s, image: {verdict}")
         if (same or digest is None) and state["frozen"] is None:
             state["frozen"] = i + 1
         state["last"], state["i"] = digest, i + 1
         step()
 
     def finish():
-        print("\nErgebnis:", f"Vorschau blieb bei Sprung {state['frozen']} stehen" if state["frozen"]
-              else f"alle {count} Sprünge zeigten ein neues Bild")
+        print("\nErgebnis:", f"preview stopped at jump {state['frozen']}" if state["frozen"]
+              else f"all {count} jumps showed a new image")
         app.quit()
 
     mp.play()

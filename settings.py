@@ -1,15 +1,15 @@
-"""Einstellungen: liest und schreibt die INI-Datei von MediaMaker (gleiches Format wie unter VB6).
+"""Settings: reads and writes the INI file of MediaMaker (same format as under VB6).
 
-Die Datei bleibt lesbar und von Hand editierbar. Beim Schreiben wird nur die geänderte Zeile ersetzt; Kommentare,
-Reihenfolge und alle übrigen Abschnitte (z. B. die Windows-Werkzeugpfade) bleiben unverändert.
+The file stays readable and editable by hand. When writing, only the changed line is replaced; comments,
+order and all other sections (e.g. the Windows tool paths) remain unchanged.
 
-Wichtige Schlüssel:
-  [settings] options=  Optionen als key="value"-Liste (crop, floor, blackness, allowance, ...)
-  [settings] profile=  aktuelles Zielprofil (scale, fps, bv, ar, ba, ...)
-  [settings] last=     zuletzt geöffnete Datei
-  [profiles]           benannte Profile, ein Eintrag je Zeile
-  [ToolTipText]        Erklärungen zu den Schlüsseln
-  [tools.linux]        optional: Pfade zu ffmpeg/ffprobe (sonst werden sie im PATH gesucht)
+Important keys:
+  [settings] options=  options as a key="value" list (crop, floor, blackness, allowance, ...)
+  [settings] profile=  current target profile (scale, fps, bv, ar, ba, ...)
+  [settings] last=     last opened file
+  [profiles]           named profiles, one entry per line
+  [ToolTipText]        explanations of the keys
+  [tools.linux]        optional: paths to ffmpeg/ffprobe (otherwise they are searched in the PATH)
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ class Settings:
         self._lines: list[str] = []
         self.load()
 
-    # ------------------------------------------------------------------ Datei
+    # ------------------------------------------------------------------ File
     def load(self) -> None:
         if not os.path.exists(self.path):
             self._lines = []
@@ -42,7 +42,7 @@ class Settings:
         try:
             text = raw.decode("utf-8")
         except UnicodeDecodeError:
-            text = raw.decode("cp1252", errors="replace")           # Datei stammt von VB6 (ANSI)
+            text = raw.decode("cp1252", errors="replace")           # file comes from VB6 (ANSI)
         self._newline = "\r\n" if "\r\n" in text else "\n"
         self._lines = text.replace("\r\n", "\n").split("\n")
         if self._lines and self._lines[-1] == "":
@@ -54,7 +54,7 @@ class Settings:
             fh.write(self._newline.join(self._lines) + self._newline)
         os.replace(tmp, self.path)
 
-    # ------------------------------------------------------------------ Zugriff auf Abschnitte
+    # ------------------------------------------------------------------ Access to sections
     def _section_range(self, section: str) -> Optional[tuple[int, int]]:
         start = None
         for i, line in enumerate(self._lines):
@@ -84,7 +84,7 @@ class Settings:
         return default
 
     def set(self, section: str, key: str, value: str) -> None:
-        """Ersetzt den Wert (nur diese Zeile) oder hängt den Schlüssel an den Abschnitt an."""
+        """Replaces the value (only this line) or appends the key to the section."""
         rng = self._section_range(section)
         if rng is None:
             if self._lines and self._lines[-1].strip():
@@ -98,10 +98,10 @@ class Settings:
                 return
         last = rng[1]
         while last > rng[0] and not self._lines[last - 1].strip():
-            last -= 1                                              # hinter der letzten belegten Zeile einfügen
+            last -= 1                                              # insert after the last non-empty line
         self._lines.insert(last, f"{key}={value}")
 
-    # ------------------------------------------------------------------ Einstellungen von MediaMaker
+    # ------------------------------------------------------------------ Settings of MediaMaker
     @property
     def options(self) -> dict:
         return parse_kv(self.get("settings", "options", ""))
@@ -122,13 +122,13 @@ class Settings:
         self.set("settings", "profile", format_kv(profile))
 
     def update_profile(self, updates: dict) -> None:
-        """Einzelne Werte des aktuellen Profils ändern (VB6: uky "profile", Schlüssel, Wert)."""
+        """Changes individual values of the current profile (VB6: uky "profile", key, value)."""
         profile = self.profile
         profile.update(updates)
         self.set_profile(profile)
 
     def save_profile(self, name: str, profile: dict) -> None:
-        """Legt das Profil unter einem Namen im Abschnitt [profiles] ab (überschreibt ein gleichnamiges)."""
+        """Stores the profile under a name in the section [profiles] (overwrites one with the same name)."""
         self.set("profiles", name, format_kv(profile))
 
     @property
@@ -148,7 +148,7 @@ class Settings:
         return self.get("ToolTipText", key, "") or DEFAULT_TOOLTIPS.get(key, "")
 
     def tool(self, name: str) -> Optional[str]:
-        """Pfad eines Hilfsprogramms: [tools.linux], sonst im PATH."""
+        """Path of a helper program: [tools.linux], otherwise in the PATH."""
         value = self.get("tools.linux", name)
         if value:
             return value.split("|")[0]
@@ -156,15 +156,15 @@ class Settings:
 
 
 def default_options() -> dict:
-    """Vorgaben, falls die INI-Datei noch keine Optionen enthält (wie in VB6). Die Schrittweiten der Suche sind in Sekunden
-    angegeben (40 s = 1000 Bilder und 240 s = 6000 Bilder bei 25 FPS, die Werte aus VB6); logo_rewind entspricht 45 Bildern."""
+    """Defaults in case the INI file contains no options yet (as in VB6). The step widths of the search are given in seconds
+        (40 s = 1000 frames and 240 s = 6000 frames at 25 FPS, the values from VB6); logo_rewind corresponds to 45 frames."""
     return {"crop": "0", "floor": "2", "blackness": "12", "allowance": "1000", "overlap": "400", "audio": "1",
             "pause": "160", "detect": "0", "aflags": "", "subtitle": "0", "multilanguage": "False",
             "step_end": "40", "step_next": "240", "border_tol": "3", "logo_rewind": "1.8",
             "logo_edge": "18", "logo_conf": "0.2"}
 
 
-# Erklärungen für Schlüssel, die in der INI-Datei (Abschnitt [ToolTipText]) noch fehlen
+# explanations for keys that are still missing in the INI file (section [ToolTipText])
 DEFAULT_TOOLTIPS = {
     "pad": "If True, source videos will be padded with (minimal) black border(s), else they will be stretched to the target scale",
     "step_end": "Seeking the end of a commercial: initial step width in seconds (refined by factor 10 down to single frames)",

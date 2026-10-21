@@ -21,7 +21,7 @@ class EnumGroup:
 
     def __getattr__(self, name):
         if name not in self._names:
-            raise AttributeError(f"Qt-Aufzählung {self._group} kennt {name!r} nicht")
+            raise AttributeError(f"Qt enumeration {self._group} has no member {name!r}")
         return Enum(f"{self._group}.{name}")
 
 
@@ -37,7 +37,7 @@ class Signal:
             h(*args)
 
 
-# Methoden, deren erstes Argument eine Qt-Aufzählung sein muss (PySide6 lehnt eine einfache Zahl mit TypeError ab)
+# Methods whose first argument must be a Qt enumeration (PySide6 rejects a plain number with a TypeError)
 ENUM_ARG_METHODS = {"setHorizontalScrollBarPolicy", "setVerticalScrollBarPolicy", "setLineWrapMode", "setFrameShape",
                     "setFrameShadow", "setAlignment", "setWindowFlag", "setSizeConstraint", "setEchoMode", "setSizePolicy"}
 
@@ -72,11 +72,11 @@ class Base:
         if name in cls._api("methods"):
             def call(*a, **k):
                 if name in ENUM_ARG_METHODS and a and not isinstance(a[0], Enum):
-                    raise TypeError(f"{cls.__name__}.{name} erwartet eine Qt-Aufzählung, nicht {type(a[0]).__name__} ({a[0]!r})")
+                    raise TypeError(f"{cls.__name__}.{name} expects a Qt enumeration, not {type(a[0]).__name__} ({a[0]!r})")
                 self.calls.append((name, a))
                 return getattr(self, "_ret_" + name, lambda *x: None)(*a)
             return call
-        raise AttributeError(f"{cls.__name__} hat in Qt keine Methode oder kein Signal {name!r}")
+        raise AttributeError(f"{cls.__name__} has no method or signal {name!r} in Qt")
 
     def called(self, name):
         return [a for n, a in self.calls if n == name]
