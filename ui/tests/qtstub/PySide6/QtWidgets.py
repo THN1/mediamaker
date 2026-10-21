@@ -365,8 +365,19 @@ class QMenuBar(QMenu):
     pass
 
 
+class QLayout(Base):
+    SizeConstraint = EnumGroup("QLayout.SizeConstraint", {"SetDefaultConstraint", "SetFixedSize", "SetMinimumSize", "SetMaximumSize",
+                                                          "SetMinAndMaxSize", "SetNoConstraint"})
+    methods = {"setSizeConstraint"}
+
+
 class QMainWindow(QWidget):
     methods = {"menuBar", "setCentralWidget"}
+
+    def layout(self):
+        if not hasattr(self, "_layout"):
+            self._layout = QLayout()
+        return self._layout
 
     def menuBar(self):
         if not hasattr(self, "_menubar"):

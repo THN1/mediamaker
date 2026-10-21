@@ -111,6 +111,14 @@ def main():
                 check(ok, f"{tag}: falsches Elternelement")
             else:
                 check(w.parent_ is widget_of(obj, c.parent, arrays), f"{tag}: parent is not {c.parent.name}")
+        # window size: forms with a fixed border cannot be resized at all
+        fixed = form.root.get("BorderStyle") in ("1", "3")
+        if gen.is_main_window:
+            constraint = obj.layout().called("setSizeConstraint")
+            check((len(constraint) == 1 and repr(constraint[0][0]).endswith("SetFixedSize")) == fixed,
+                  f"{form.name}: main window with BorderStyle {form.root.get('BorderStyle')}: size constraint {constraint}")
+        elif fixed:
+            check(obj.called("setFixedSize") != [], f"{form.name}: fixed dialog is not fixed")
         # stacking order: last in the file = created first
         top = [c for c in form.root.children if c.type != "VB.Menu"]
         if len(top) > 1:

@@ -5,6 +5,9 @@
 - Version number set to 0.2-dev.
 - All comments, docstrings, messages, tests and documentation are now in English (the generated user interface files were
   regenerated; their code is unchanged).
+- The main window has a fixed size again, as defined in VB6 (BorderStyle 1): the generator now fixes the whole window including the
+  menu bar, not only its contents. The window could be enlarged before.
+- A click on a caption or value of the "Target output profile" frame opens the profile editor (as in VB6).
 - Fix: after quitting MediaMaker the console no longer shows typed characters. Several ffmpeg processes running at the same time
   left the terminal without echo; all external programs now get no terminal as standard input. New test `tests/test_terminal.py`.
 - Fix: after deleting a segment the entry that takes its place is selected and loaded (after deleting the last entry: the new last

@@ -354,6 +354,14 @@ class frmMain(frmMainBase):
             self.settings.set_options(merged)
             self.settings.save()
 
+    def lblLabel_Click(self, index: int = 0):
+        """Click on a caption of the "Target output profile" frame: opens the profile editor (as in VB6)."""
+        self.mnuProfile_Click()
+
+    def lblText_Click(self, index: int = 0):
+        """Click on a value of the "Target output profile" frame: opens the profile editor (as in VB6)."""
+        self.mnuProfile_Click()
+
     def refresh_profile_menu(self) -> None:
         """Fills the menu "Load profile" with the named profiles of the INI file (VB6: GetAllProfiles)."""
         names = list(self.settings.profiles)

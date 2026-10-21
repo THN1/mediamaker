@@ -1613,6 +1613,30 @@ def test_tooltip_wrap(tmp, videos):
     print("Tooltips: OK (wrapping at 70 characters, words and addresses stay whole)")
 
 
+def test_main_window_size_and_profile_click(tmp, videos):
+    """The main window has a fixed size (as defined in VB6); a click on the captions or values of the profile frame opens
+    the profile editor."""
+    work = os.path.join(tmp, "profclick")
+    os.makedirs(work, exist_ok=True)
+    win = make_window(work, thumb_fn=quick_thumbs, fresh=True)
+    win.showEvent(None)
+    constraint = win.layout().called("setSizeConstraint")
+    check(len(constraint) == 1 and repr(constraint[0][0]).endswith("SetFixedSize"), f"main window cannot be resized: {constraint}")
+    check(win.called("setWindowFlag") and "WindowMaximizeButtonHint" in repr(win.called("setWindowFlag")[0][0]), "no maximize button")
+    seen = []
+    win.edit_pairs = lambda title, pairs, groups=None: (seen.append(title), None)[1]
+    labels = [("lblLabel", i) for i in range(6)] + [("lblText", i) for i in range(6)]
+    for name, i in labels:
+        getattr(win, name)[i]._vb_filter.handlers["click"]()
+    check(seen == ["Profile"] * 12, f"every caption and value opens the profile editor: {len(seen)} calls")
+    check(win.profile["scale"] and win.lblText[2].text() == win.profile["scale"], "cancelling the editor changes nothing")
+    seen.clear()
+    win.edit_pairs = lambda title, pairs, groups=None: (seen.append(title), dict(pairs, scale="1280:720"))[1]
+    win.lblText[2]._vb_filter.handlers["click"]()
+    check(win.profile["scale"] == "1280:720" and win.lblText[2].text() == "1280:720", "a change in the editor is taken over and shown")
+    print("Main window: OK (fixed size, no maximize button, profile editor opens on a click on the profile frame)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -1670,6 +1694,7 @@ def main():
     test_option_changes(tmp, sys.argv[1])
     test_info(tmp, sys.argv[1])
     test_tooltip_wrap(tmp, sys.argv[1])
+    test_main_window_size_and_profile_click(tmp, sys.argv[1])
     test_first_frame(tmp, sys.argv[1])
     test_shutdown(tmp, sys.argv[1])
     test_throttle()

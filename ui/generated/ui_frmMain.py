@@ -46,6 +46,7 @@ class frmMainBase(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
         central.setFont(vbqt.make_font('MS Sans Serif', 8.25, 400, 0, 0, 0))      # VB6 default font of the form (menu keeps the system font)
         central.setFixedSize(1089, 436)
+        self.layout().setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetFixedSize)      # window cannot be resized
 
         menubar = self.menuBar()
         w_mnuFile = menubar.addMenu('&File')

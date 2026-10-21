@@ -490,6 +490,10 @@ class Generator:
             self.emit("self.setCentralWidget(central)")
             self.emit(f"central.setFont({font_expr})      # VB6 default font of the form (menu keeps the system font)")
             self.emit(f"central.{'setFixedSize' if fixed else 'setMinimumSize'}({cw}, {ch})")
+            if fixed:
+                # A main window also contains the menu bar; fixing only the central widget would still let the user enlarge
+                # the window. The layout constraint fixes the whole window to its size hint (menu bar + central widget).
+                self.emit("self.layout().setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetFixedSize)      # window cannot be resized")
             parent = "central"
         else:
             self.emit(f"self.setFont({font_expr})      # VB6 default font of the form")
