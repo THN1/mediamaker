@@ -22,9 +22,12 @@ python3 run_job.py JOB.sh --output movie.mp4  # run a job without the user inter
 ```
 
 Useful environment variables: `MEDIAMAKER_DEBUG=1` (log in `mediamaker_debug.log`), `MEDIAMAKER_NO_FILTER=1` (unfiltered error
-output). In the INI file, section `[settings]`: `player=memory|embed`, `vlc_args=...`, `hide_messages=Text1|Text2`,
+output). Settings are made in the options dialog (Edit -> Options) and stored in the `options=` string of the INI file: among them
+`player=memory|embed` (preview), `vlc_args=...` (extra VLC arguments), `hide_messages=Text1|Text2` (more console messages to hide),
 `dialog_style=tabs|list` (pages of the options and Media info dialogs as tabs along the top or as a list on the left) and
-`batch=~/MediaMaker.sh` (where the batch script is written; default: next to the INI file).
+`batch=~/MediaMaker.sh` (where the batch script is written; empty: next to the INI file). `player`, `vlc_args` and `hide_messages` act
+at the next start (the explanations in the dialog say so). Old INI files with `batch=`, `player=`, `dialog_style=`, `vlc_args=` or
+`hide_messages=` as keys of their own are converted when the program starts.
 
 ## Saving
 

@@ -22,6 +22,8 @@ PRESETS = {
     "acodec_out": ["aac", "ac3", "mp3"],
     "pad": ["False", "True"],
     "multilanguage": ["False", "True"],
+    "player": ["memory", "embed"],
+    "dialog_style": ["tabs", "list"],
 }
 
 
@@ -74,9 +76,20 @@ OPTION_GROUPS = (
     ("Borders", ("crop", "blackness", "allowance", "border_tol")),
     ("Seeking", ("pause", "overlap", "step_end", "step_next", "cut_window", "logo_rewind")),
     ("Audio/Subtitles", ("audio", "multilanguage", "subtitle", "aflags")),
-    ("Batch", ("path_map",)),
-    ("Technical", ("floor", "detect")),
+    ("Batch", ("path_map", "batch")),
+    ("Technical", ("floor", "detect", "player", "vlc_args", "hide_messages", "dialog_style")),
 )
+
+
+# One line of explanation above the rows of every group (options dialog)
+GROUP_TEXTS = {
+    "Borders": "Black border (letterbox) of the picture, which the search for commercials compares with.",
+    "Seeking": "Finding the end of a commercial and the start of the next one.",
+    "Audio/Subtitles": "Which audio tracks and subtitles are taken from the source files.",
+    "Batch": "Writing the job as a bash script (menu Batch).",
+    "Technical": "Preview, console messages and dialogs; mostly set once.",
+    "Other": "Values that belong to no group.",
+}
 
 
 def validate_options(o: dict) -> list[str]:
@@ -99,6 +112,13 @@ def validate_options(o: dict) -> list[str]:
         if not equals or not source.strip() or not target.strip():
             errors.append('"path_map" must be a list of source=target pairs separated by semicolons.')
             break
+    for key in ("path_map", "batch", "vlc_args", "hide_messages", "aflags"):
+        if '"' in o.get(key, ""):
+            errors.append(f'"{key}" must not contain double quotes.')
+    if "player" in o and o["player"] not in ("memory", "embed"):
+        errors.append('"player" must be memory or embed.')
+    if "dialog_style" in o and o["dialog_style"] not in ("tabs", "list"):
+        errors.append('"dialog_style" must be tabs or list.')
     if "multilanguage" in o and o["multilanguage"] not in ("True", "False"):
         errors.append('"multilanguage" must be True or False.')
     if "subtitle" in o and not re.fullmatch(r"0|\d+(,\d+)*", o["subtitle"]):

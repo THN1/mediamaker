@@ -2105,20 +2105,143 @@ def test_dialog_styles_and_batch_path(tmp, videos):
     default_script = os.path.splitext(win.settings.path)[0] + ".sh"
     check(win.batch_path() == default_script, "default: next to the INI file")
     win.ask_text = lambda title, label, default="": os.path.join(work, "Film")
-    win.settings.set("settings", "batch", os.path.join(work, "elsewhere", "job.sh"))
+    win.settings.set_option("batch", os.path.join(work, "elsewhere", "job.sh"))
     win.mnuBatch_Click()
     check(win.batch_path() == os.path.join(work, "elsewhere", "job.sh") and os.path.exists(win.batch_path()) and not os.path.exists(default_script),
-          "INI key batch: the script is written there (the folder is created)")
+          "option batch: the script is written there (the folder is created)")
     old_home = os.environ.get("HOME")
     os.environ["HOME"] = work
     try:
-        win.settings.set("settings", "batch", "~/MediaMaker.sh")
+        win.settings.set_option("batch", "~/MediaMaker.sh")
         check(win.batch_path() == os.path.join(work, "MediaMaker.sh"), "a leading ~ is the home folder")
     finally:
         os.environ["HOME"] = old_home
     ignored = open(os.path.join(ROOT, ".gitignore"), encoding="utf-8").read().splitlines()
     check({"MediaMaker.ini", "MediaMaker.json", "MediaMaker.sh"} <= set(ignored), ".gitignore lists the personal files including the script")
     print("Dialog styles and batch path: OK (tabs or list, Media info, INI key batch, .gitignore)")
+
+
+def test_example_ini(tmp, videos):
+    """The example INI file is valid, carries the settings batch, player and dialog_style, and keeps its comments when it is changed."""
+    import dialogs
+    from profiles import validate_options, validate_profile
+    from settings import default_options
+    example = os.path.join(ROOT, "MediaMaker.example.ini")
+    work = os.path.join(tmp, "exampleini")
+    os.makedirs(work, exist_ok=True)
+    ini = os.path.join(work, "MediaMaker.ini")
+    shutil.copy(example, ini)
+    st = Settings(ini)
+    check(st.get("settings", "batch") == "~/MediaMaker.sh" and st.get("settings", "player") == "memory" and st.get("settings", "dialog_style") == "tabs",
+          "batch, player and dialog_style are set in the example")
+    check(st.get("settings", "vlc_args") is None and st.get("settings", "hide_messages") is None, "the optional keys are only commented examples")
+    check(validate_options({**default_options(), **st.options}) == [] and validate_profile(st.profile) == [] and len(st.profiles) == 11, "options, profile and the 11 profiles are valid")
+    check(dialogs.set_style(st.get("settings", "dialog_style")) == "tabs", "dialog_style value is understood")
+    before = open(ini, "rb").read().split(b"\r\n")
+    st.set_option("crop", "70")
+    st.save()
+    after = open(ini, "rb").read().split(b"\r\n")
+    changed = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
+    check(len(before) == len(after) and len(changed) == 1 and any(l.startswith(b";vlc_args") for l in after) and any(l.startswith(b"; Where the batch") for l in after),
+          f"changing an option replaces one line, the comments stay: {changed}")
+    print("Example INI: OK (settings, comments, still valid)")
+
+
+def test_options_in_options_string(tmp, videos):
+    """batch, player and dialog_style are options now (options= string, options dialog); old separate keys in [settings] move there."""
+    import dialogs
+    import mediamaker
+    from profiles import OPTION_GROUPS, PRESETS, validate_options
+    from settings import DEFAULT_TOOLTIPS, default_options
+    work = os.path.join(tmp, "legacy_ini")
+    os.makedirs(work, exist_ok=True)
+    ini = os.path.join(work, "MediaMaker.ini")
+    open(ini, "w", encoding="utf-8").write('[settings]\noptions=crop="72" player="memory"\nbatch=~/MediaMaker.sh\nplayer=embed\n'
+                                           'dialog_style=list\nvlc_args=--vout=xcb_x11\nhide_messages=abc|def\nlast=/x/y.ts\n[ToolTipText]\ncrop=c\n')
+    st = Settings(ini)
+    check(st.delete("settings", "last") and st.get("settings", "last") is None and not st.delete("settings", "last")
+          and not st.delete("nosection", "x"), "delete removes one line")
+    st = Settings(ini)
+    check(st.migrate_legacy_keys() is True, "old keys are found")
+    check(st.options == {"crop": "72", "player": "memory", "batch": "~/MediaMaker.sh", "dialog_style": "list", "vlc_args": "--vout=xcb_x11",
+                         "hide_messages": "abc|def"}, f"values moved into options=, an existing option wins over the old key: {st.options}")
+    check(all(st.get("settings", k) is None for k in ("batch", "dialog_style", "vlc_args", "hide_messages")) and st.get("settings", "last") == "/x/y.ts"
+          and st.get("settings", "options") is not None and st.get("settings", "profile") is None, "old lines removed, other keys untouched")
+    check(st.migrate_legacy_keys() is False, "a second run changes nothing")
+    st.save()
+    text = open(ini, encoding="utf-8").read()
+    check("\nbatch=" not in text and "\nplayer=" not in text and "[ToolTipText]\ncrop=c" in text, "the INI file keeps its other parts")
+    # start: the options needed before the window exists
+    open(ini, "w", encoding="utf-8").write('[settings]\nplayer=embed\ndialog_style=list\nvlc_args=--vout=xcb_x11 --no-audio\nhide_messages=one|two||three\n')
+    expected = {"dialog_style": "list", "player": "embed", "vlc_args": "--vout=xcb_x11 --no-audio", "hide_messages": ["one", "two", "three"]}
+    text = lambda: open(ini, encoding="utf-8").read()
+    check(mediamaker.startup_choices(Settings(ini)) == expected and "\nplayer=" not in text() and "\nvlc_args=" not in text()
+          and 'player="embed"' in text() and 'hide_messages="one|two||three"' in text(), "startup: values from the old keys, INI file migrated")
+    check(mediamaker.startup_choices(Settings(ini)) == expected, "startup again: from options=")
+    open(ini, "w", encoding="utf-8").write('[settings]\noptions=player="nonsense" dialog_style="x"\n')
+    check(mediamaker.startup_choices(Settings(ini)) == {"dialog_style": "tabs", "player": "memory", "vlc_args": "", "hide_messages": []}, "invalid values fall back to tabs and memory")
+    open(ini, "w", encoding="utf-8").write('[settings]\n')
+    check(mediamaker.startup_choices(Settings(ini)) == {"dialog_style": "tabs", "player": "memory", "vlc_args": "", "hide_messages": []}, "empty INI file: defaults")
+    # defaults, groups, suggestions, checking, tooltips
+    d = default_options()
+    check(d["batch"] == "" and d["player"] == "memory" and d["dialog_style"] == "tabs" and d["vlc_args"] == "" and d["hide_messages"] == "", "defaults")
+    groups = dict(OPTION_GROUPS)
+    check("batch" in groups["Batch"] and "path_map" in groups["Batch"] and all(k in groups["Technical"] for k in ("player", "vlc_args", "hide_messages", "dialog_style")),
+          "groups: batch under Batch, player, vlc_args, hide_messages and dialog_style under Technical")
+    check(PRESETS["player"] == ["memory", "embed"] and PRESETS["dialog_style"] == ["tabs", "list"], "suggestions for the selection fields")
+    check(validate_options(d) == [] and len(validate_options({"player": "x"})) == 1 and len(validate_options({"dialog_style": "x"})) == 1
+          and validate_options({"player": "embed", "dialog_style": "list", "batch": "~/a.sh"}) == [], "checking")
+    check(all(k in DEFAULT_TOOLTIPS for k in ("batch", "player", "dialog_style", "vlc_args", "hide_messages")), "explanations")
+    restart = [k for k in default_options() if "next start" in DEFAULT_TOOLTIPS.get(k, "")]
+    check(sorted(restart) == ["hide_messages", "player", "vlc_args"], f"the explanations of the options that act only after a restart say so: {restart}")
+    # window: migration at the start of the window, dialog style applied after the options dialog
+    open(ini, "w", encoding="utf-8").write('[settings]\nbatch=~/job.sh\n')
+    win = make_window(work)
+    win.showEvent(None)
+    check(win.options["batch"] == "~/job.sh" and "\nbatch=" not in open(ini, encoding="utf-8").read(), "the window moves old keys into options=, too")
+    win.edit_pairs = lambda title, pairs, groups=None, start=0: dict(pairs, dialog_style="list")
+    try:
+        win.mnuOptions_Click()
+        check(dialogs.NAV_STYLE == "list" and 'dialog_style="list"' in open(ini, encoding="utf-8").read(), "dialog_style from the options dialog applies at once")
+    finally:
+        dialogs.set_style("tabs")
+    print("Options player, dialog_style and batch: OK (options string, groups, checking, migration of old keys, startup)")
+
+
+def test_group_texts(tmp, videos):
+    """Every group of the options dialog has a line of explanation above its rows; values with double quotes are refused;
+    tooltips say when a change only works after a restart."""
+    import dialogs
+    from profiles import GROUP_TEXTS, OPTION_GROUPS, validate_options
+    from settings import DEFAULT_TOOLTIPS, default_options
+    from PySide6.QtWidgets import QDialog, QTabWidget, QVBoxLayout
+    check(set(GROUP_TEXTS) >= {h for h, _ in OPTION_GROUPS} and all(0 < len(t) < 100 and "\n" not in t for t in GROUP_TEXTS.values()),
+          "every group has one short line of text")
+    QDialog.exec_result, QDialog.on_exec = 1, None
+    d = {k: v for k, v in default_options().items() if k in {key for _, keys in OPTION_GROUPS for key in keys}}
+    dialogs.edit_pairs(None, "Options", d, {}, {}, OPTION_GROUPS, 0, GROUP_TEXTS)
+    tabs = QTabWidget.instances[-1]
+    notes = []
+    for page, label in tabs.tabs_:
+        outer = next(v for v in QVBoxLayout.instances if v._args and v._args[0] is page)
+        first = outer.added_[0]
+        notes.append((label, first[0].text() if hasattr(first[0], "text") and first[1] == 0 and not hasattr(first[0], "rows") else None))
+    check([n for n in notes] == [(h, GROUP_TEXTS[h]) for h, _ in dialogs.group_plan(d, OPTION_GROUPS)], f"the text of the group is the first thing on its page: {notes}")
+    word_wrap = [l for l in [outer.added_[0][0] for outer in QVBoxLayout.instances[-6:]] if hasattr(l, "called") and l.called("setWordWrap")]
+    check(word_wrap, "the text wraps if the dialog is narrow")
+    created = []
+    dialogs.edit_pairs(None, "Profile", {"scale": "720:576"}, {}, {})
+    check(not any(hasattr(a[0], "text") and a[0].text() in GROUP_TEXTS.values() for v in QVBoxLayout.instances[-1:] for a in getattr(v, "added_", [])),
+          "without texts (profile) nothing is added")
+    # quotes
+    check(len(validate_options({"vlc_args": 'a"b'})) == 1 and len(validate_options({"hide_messages": 'a"b'})) == 1
+          and len(validate_options({"batch": '~/"x"'})) == 1 and validate_options({"vlc_args": "--vout=xcb_x11", "hide_messages": "a|b"}) == [], "double quotes are refused")
+    # restart notes
+    for key in ("player", "vlc_args", "hide_messages"):
+        check("next start" in DEFAULT_TOOLTIPS[key], f"tooltip of {key} says that it takes effect at the next start")
+    for key in ("dialog_style", "batch"):
+        check("applies at once" in DEFAULT_TOOLTIPS[key], f"tooltip of {key} says that it applies at once")
+    print("Group texts: OK (one line per group, quotes, notes about restart)")
 
 
 def test_shutdown(tmp, videos):
@@ -2183,6 +2306,9 @@ def main():
     test_batch_file(tmp, sys.argv[1])
     test_save_video(tmp, sys.argv[1])
     test_dialog_styles_and_batch_path(tmp, sys.argv[1])
+    test_options_in_options_string(tmp, sys.argv[1])
+    test_group_texts(tmp, sys.argv[1])
+    test_example_ini(tmp, sys.argv[1])
     test_first_frame(tmp, sys.argv[1])
     test_shutdown(tmp, sys.argv[1])
     test_throttle()

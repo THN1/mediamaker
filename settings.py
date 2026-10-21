@@ -101,7 +101,37 @@ class Settings:
             last -= 1                                              # insert after the last non-empty line
         self._lines.insert(last, f"{key}={value}")
 
+    def delete(self, section: str, key: str) -> bool:
+        """Removes the line of a key; False if it does not exist."""
+        rng = self._section_range(section)
+        if rng is None:
+            return False
+        for i in range(*rng):
+            line = self._lines[i].strip()
+            if line and not line.startswith(";") and line.partition("=")[0].strip().lower() == key.lower():
+                del self._lines[i]
+                return True
+        return False
+
     # ------------------------------------------------------------------ Settings of MediaMaker
+    def migrate_legacy_keys(self, keys=("batch", "player", "dialog_style", "vlc_args", "hide_messages")) -> bool:
+        """Settings that used to be keys of their own in [settings] now belong to the string options= (and the options dialog):
+        their values move there, unless options= has the key already, and the old lines are removed. True if something changed
+        (the caller saves)."""
+        options = self.options
+        changed = False
+        for key in keys:
+            value = self.get("settings", key)
+            if value is None:
+                continue
+            if key not in options:
+                options[key] = value.strip()
+            self.delete("settings", key)
+            changed = True
+        if changed:
+            self.set_options(options)
+        return changed
+
     @property
     def options(self) -> dict:
         return parse_kv(self.get("settings", "options", ""))
@@ -161,7 +191,8 @@ def default_options() -> dict:
     return {"crop": "0", "floor": "2", "blackness": "12", "allowance": "1000", "overlap": "400", "audio": "1",
             "pause": "160", "detect": "0", "aflags": "", "subtitle": "0", "multilanguage": "False",
             "step_end": "40", "step_next": "240", "border_tol": "3", "cut_window": "5", "logo_rewind": "1.8",
-            "logo_edge": "18", "logo_conf": "0.2", "cut_diff": "30", "path_map": ""}
+            "logo_edge": "18", "logo_conf": "0.2", "cut_diff": "30", "path_map": "",
+            "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": ""}
 
 
 # explanations for keys that are still missing in the INI file (section [ToolTipText])
@@ -175,6 +206,15 @@ DEFAULT_TOOLTIPS = {
                   "the result onto it (0 = off). The border changes a little later than the picture.",
     "path_map": "Batch file: replaces the beginning of the source paths in the ffmpeg call, \"source=target;source=target\". "
                 "A * in a source stands for any characters except /, e.g. /run/user/*/kio-fuse-*/smb/root@nas/Harddisk=/mnt/nas/Harddisk",
+    "batch": "Batch: file the batch script is written to; a leading ~ is your home folder (empty: next to the INI file, "
+             "with the extension .sh); applies at once",
+    "player": "Preview: memory = VLC decodes into memory and Qt draws the pictures (runs natively under Wayland), "
+              "embed = VLC draws into its own X11 window (XWayland); takes effect at the next start",
+    "vlc_args": "Preview: additional arguments for libvlc, separated by spaces, e.g. --vout=xcb_x11; takes effect at the next start",
+    "hide_messages": "Console: messages containing one of these texts are not shown, separated by | (the harmless messages of VDPAU, Wayland "
+                     "and the KDE file dialog are always hidden); takes effect at the next start",
+    "dialog_style": "Dialogs with several pages (options, Media info): tabs = tabs along the top, list = list of the pages on the left; "
+                    "applies at once",
     "cut_diff": "Seeking with the black border (advanced): min. mean difference (0 to 255) between two frames to count as a hard cut",
     "logo_rewind": "Seeking with the station logo: max. number of seconds to go back from the first frame showing the logo, "
                    "looking for the start of the scene (the logo may appear some seconds late)",

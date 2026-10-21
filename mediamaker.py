@@ -48,7 +48,7 @@ from player import debug_log                                         # noqa: E40
 from border import border_at                                         # noqa: E402
 from logo import bottom_line_average, confidence_at                  # noqa: E402
 from mediaprobe import MediaInfo, ProbeError, count_video_packets, first_frame_number, probe as full_probe  # noqa: E402
-from profiles import (HIDDEN_OPTIONS, OPTION_GROUPS, PRESETS, REMOVED_OPTIONS, default_name, normalize_bitrate,  # noqa: E402
+from profiles import (GROUP_TEXTS, HIDDEN_OPTIONS, OPTION_GROUPS, PRESETS, REMOVED_OPTIONS, default_name, normalize_bitrate,  # noqa: E402
                       ordered_profile, profile_from_segment, valid_profile_name, validate_options, validate_profile,
                       weighted_bitrate)
 from project import format_hms, load_segments, save_segments, segment_row, timeof  # noqa: E402
@@ -166,7 +166,7 @@ class frmMain(frmMainBase):
     def edit_pairs(self, title: str, pairs: dict, groups=None, start: int = 0) -> Optional[dict]:
         import dialogs
         tooltips = {key: self.settings.tooltip(key) for key in pairs}
-        return dialogs.edit_pairs(self, title, pairs, tooltips, PRESETS, groups, start)
+        return dialogs.edit_pairs(self, title, pairs, tooltips, PRESETS, groups, start, GROUP_TEXTS if groups else None)
 
     def inform(self, text: str) -> None:
         QtWidgets.QMessageBox.information(self, "MediaMaker", text)
@@ -226,8 +226,8 @@ class frmMain(frmMainBase):
     def migrate_settings(self) -> None:
         """Old INI files: "pad" moves from the options to the profile (only if not yet set there), "focus" is dropped.
                 The file is only written if something changes."""
+        changed = self.settings.migrate_legacy_keys()                 # batch, player, dialog_style: now part of options=
         raw = self.settings.options
-        changed = False
         if "pad" in raw:
             if "pad" not in self.settings.profile:
                 self.settings.update_profile({"pad": raw["pad"]})
@@ -386,6 +386,8 @@ class frmMain(frmMainBase):
             merged.update(result)
             self.settings.set_options(merged)
             self.settings.save()
+            import dialogs
+            dialogs.set_style(self.options.get("dialog_style"))        # applies at once (the player only at the next start)
 
     def lblLabel_Click(self, index: int = 0):
         """Click on a caption of the "Target output profile" frame: opens the profile editor (as in VB6)."""
@@ -860,9 +862,9 @@ class frmMain(frmMainBase):
         draw_bar(painter, rect, *self._bar)
 
     def batch_path(self) -> str:
-        """Where the batch script is written: INI key `batch` in [settings] (a leading ~ is the home folder), otherwise next to the
-        INI file with the extension .sh."""
-        custom = (self.settings.get("settings", "batch", "") or "").strip()
+        """Where the batch script is written: the option `batch` (a leading ~ is the home folder), otherwise next to the INI file with
+        the extension .sh."""
+        custom = (self.options.get("batch", "") or "").strip()
         return os.path.expanduser(custom) if custom else os.path.splitext(self.settings.path)[0] + ".sh"
 
     def mnuBatch_Click(self):
@@ -1269,24 +1271,38 @@ def find_ini() -> str:
     return os.environ.get("MEDIAMAKER_INI") or os.path.join(HERE, "MediaMaker.ini")
 
 
+def startup_choices(settings: Settings) -> dict:
+    """The options needed before the window exists: dialog_style, player, vlc_args and hide_messages (a list of texts). Settings that
+    used to be keys of their own in [settings] move into options= first."""
+    if settings.migrate_legacy_keys():
+        settings.save()
+    options = {**default_options(), **settings.options}
+    player = (options["player"] or "memory").strip().lower()
+    return {"dialog_style": "list" if options["dialog_style"].strip().lower() == "list" else "tabs",
+            "player": "embed" if player == "embed" else "memory",
+            "vlc_args": options["vlc_args"].strip(),
+            "hide_messages": [t for t in options["hide_messages"].split("|") if t]}
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv if argv is None else argv)
     files = [os.path.abspath(os.path.expanduser(f)) for f in argv[1:] if not f.startswith("-")]
     ini = find_ini()
     settings = Settings(ini)
+    # Settings needed before the window exists (they are options, see startup_choices).
+    choices = startup_choices(settings)
     # Harmless messages from libraries (e.g. "Failed to open VDPAU backend libvdpau_nvidia.so" on computers without an
-    # NVIDIA card) are not shown. More patterns: hide_messages=Text1|Text2 in [settings] of the INI file or
-    # environment variable MEDIAMAKER_HIDE; switch off completely with MEDIAMAKER_NO_FILTER=1.
+    # NVIDIA card) are not shown. More texts: the option hide_messages (Text1|Text2) or the environment variable
+    # MEDIAMAKER_HIDE; switch off completely with MEDIAMAKER_NO_FILTER=1.
     if not os.environ.get("MEDIAMAKER_NO_FILTER"):
         import stderrfilter
-        extra = (settings.get("settings", "hide_messages", "") or "").split("|")
-        extra += os.environ.get("MEDIAMAKER_HIDE", "").split("|")
+        extra = choices["hide_messages"] + os.environ.get("MEDIAMAKER_HIDE", "").split("|")
         stderrfilter.install([p for p in extra if p])
     # Playback: "memory" (default) lets VLC decode into memory and draws with Qt; runs natively under
-    # Wayland. "embed" embeds the VLC window (X11, under Wayland only via XWayland). Setting: player= in [settings].
+    # Wayland. "embed" embeds the VLC window (X11, under Wayland only via XWayland). Setting: the option player.
     import dialogs
-    dialogs.set_style(settings.get("settings", "dialog_style", "tabs"))
-    player_kind = (settings.get("settings", "player", "memory") or "memory").strip().lower()
+    dialogs.set_style(choices["dialog_style"])
+    player_kind = choices["player"]
     if player_kind == "embed" and sys.platform.startswith("linux"):
         os.environ.setdefault("QT_QPA_PLATFORM", "xcb")             # libvlc draws into an X11 window (XWayland)
     app = QtWidgets.QApplication(argv)
@@ -1298,8 +1314,7 @@ def main(argv=None) -> int:
         save_segments(project, load_segments(legacy))               # take over list from the VB6 version
     # With video file(s) as parameter a new job with an empty segment list begins; without parameter the
     # most recently saved list is used again.
-    vlc_args = settings.get("settings", "vlc_args", "") or ""
-    player = (VlcPlayer if player_kind == "embed" else MemoryVlcPlayer)(vlc_args)
+    player = (VlcPlayer if player_kind == "embed" else MemoryVlcPlayer)(choices["vlc_args"])
     app.aboutToQuit.connect(player.shutdown)                        # also when quitting without closing the window
     window = frmMain(settings, player, project, fresh=bool(files))
     window.show()

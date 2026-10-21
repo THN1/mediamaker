@@ -144,7 +144,8 @@ def tab_of_error(errors: list, pairs: dict, groups) -> int:
     return 0
 
 
-def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, groups=None, start: int = 0) -> Optional[dict]:
+def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, groups=None, start: int = 0,
+               texts=None) -> Optional[dict]:
     """Shows one row per key (caption with explanation, input field, a selection list for suggestions).
 
         Returns: the changed values as a dictionary or None on cancel. Replaces frmProfile from VB6, without enlarging the window
@@ -152,8 +153,8 @@ def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, g
         wrap in a multi-line field so that the dialog stays narrow.
 
         groups = ((heading, (key, ...)), ...) puts the rows on tabs along the top, one tab per group; keys that do not occur in any
-        group follow at the end on the tab "Other"; `start` is the tab shown first. Without groups all rows appear in one list in
-        the order of `pairs` (the profile).
+        group follow at the end on the tab "Other"; `start` is the tab shown first; texts = {heading: one line of explanation} is
+        shown above the rows of the page. Without groups all rows appear in one list in the order of `pairs` (the profile).
     """
     dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle(title)
@@ -190,6 +191,10 @@ def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, g
             # The rows sit at the top of the page: a stretch below them takes the free space (otherwise a page with a single
             # multi-line field, e.g. path_map, gets all of it and the row ends up in the middle).
             outer = QtWidgets.QVBoxLayout(page)
+            if texts and texts.get(heading):
+                note = QtWidgets.QLabel(texts[heading])
+                note.setWordWrap(True)
+                outer.addWidget(note)
             form = QtWidgets.QFormLayout()
             form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
             add_rows(form, keys)

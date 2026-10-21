@@ -5,14 +5,20 @@
 - Version number set to 0.2-dev.
 - All comments, docstrings, messages, tests and documentation are now in English (the generated user interface files were
   regenerated; their code is unchanged).
+- The settings `batch`, `player`, `dialog_style`, `vlc_args` and `hide_messages` are options now: they are part of the `options=` string,
+  appear in the options dialog (Batch / Technical tabs, with explanations) and are in `MediaMaker.example.ini`. Old keys of their own
+  in `[settings]` move into `options=` when the program starts. A changed `dialog_style` applies at once; `player`, `vlc_args` and
+  `hide_messages` act at the next start, which their explanations say.
 - Fix: on a page of the options dialog with a single multi-line field (Batch: `path_map`) the row was shown in the middle; the rows of
   every page now sit at the top.
-- New INI key `dialog_style=list` shows the pages of the options and Media info dialogs as a list on the left instead of tabs
+- The option `dialog_style=list` shows the pages of the options and Media info dialogs as a list on the left instead of tabs
   (`tabs` is the default).
-- The batch script `MediaMaker.sh` is in `.gitignore` (it is a personal file next to the INI file), and the INI key `batch` sets another
+- The batch script `MediaMaker.sh` is in `.gitignore` (it is a personal file next to the INI file), and the option `batch` sets another
   place, e.g. `batch=~/MediaMaker.sh`.
 - The Media info dialog also uses tabs (one per section). Both tab dialogs are at least as wide as all their tabs side by side; the tab
   names are not elided and there are no scroll arrows.
+- Every group of the options dialog has one line of explanation above its rows (`GROUP_TEXTS` in `profiles.py`). Options with values that
+  would break the `key="value"` format (double quotes in `batch`, `path_map`, `vlc_args`, `hide_messages`, `aflags`) are refused.
 - The options dialog shows the groups as tabs along the top (Borders, Seeking, Audio/Subtitles, Batch, Technical) instead of one long list;
   after an invalid value it comes back on the tab with that value. The grouping is defined in the program (`OPTION_GROUPS` in `profiles.py`),
   the INI file still holds the plain `key="value"` list.
