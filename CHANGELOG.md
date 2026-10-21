@@ -1,8 +1,9 @@
 # Changes
 
-## 0.2 (in progress)
+## 0.2
 
-- Version number set to 0.2-dev.
+Second frozen state: English throughout, save as MP4/AVI with progress and cancel, batch scripts, dialogs with tabs, options in one place.
+
 - All comments, docstrings, messages, tests and documentation are now in English (the generated user interface files were
   regenerated; their code is unchanged).
 - The settings `batch`, `player`, `dialog_style`, `vlc_args` and `hide_messages` are options now: they are part of the `options=` string,
