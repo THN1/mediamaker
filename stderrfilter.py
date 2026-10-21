@@ -18,6 +18,9 @@ DEFAULT_PATTERNS = (
     "Failed to open VDPAU backend",
     # Qt on Wayland: harmless warning when a menu of the menu bar is clicked a second time
     "This plugin supports grabbing the mouse only for popup windows",
+    # KDE file dialog (KIO): warning of its directory model when a file in a watched folder disappears again, e.g. temporary
+    # files of the TV receiver on the network drive or MediaMaker's own temporary files. Harmless.
+    "kf.kio.widgets.kdirmodel: No node found for item",
 )
 
 

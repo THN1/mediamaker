@@ -36,3 +36,19 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_default_patterns():
+    """The messages of the KDE file dialog and of Qt on Wayland are among the filtered ones."""
+    sys.path.insert(0, ROOT)
+    from stderrfilter import DEFAULT_PATTERNS
+    for line in ('kf.kio.widgets.kdirmodel: No node found for item that was just removed: QUrl("file:///a/b.ts")',
+                 "kf.kio.widgets.kdirmodel: No node found for item that was just added: QUrl()",
+                 "This plugin supports grabbing the mouse only for popup windows",
+                 "Failed to open VDPAU backend libvdpau_nvidia.so: cannot open shared object file"):
+        assert any(p in line for p in DEFAULT_PATTERNS), line
+    assert not any(p in "kf.kio.widgets.kdirmodel: something else entirely" for p in DEFAULT_PATTERNS)
+    print("Default patterns: OK (KDE file dialog, Wayland, VDPAU)")
+
+
+test_default_patterns()
