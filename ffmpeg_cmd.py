@@ -128,13 +128,62 @@ def mask_name(pos: int) -> str:
     return f"removelogo{pos:02d}.png"
 
 
+FILL_FEATHER = 1.2                  # soft edge of the patch in pixels
+FILL_FLOOR = 200                    # smallest weight (of 65535) that is divided by: keeps the division stable far from the known pixels
+MASK_EXTRA_SECONDS = 5              # the looped mask picture is this much longer than the segment (the picture decides the end)
+
+
+def logo_region(mask, width: int, height: int, sigma: float) -> tuple[int, int, int, int]:
+    """(x, y, w, h) of the part of the picture the smooth fill works on: the bounding box of the white pixels of the mask plus a margin
+    of about three times sigma (the known pixels that the fill is made of), limited to the picture, with even position and size (4:2:0)."""
+    import numpy as np
+    ys, xs = np.nonzero(mask)
+    if len(ys) == 0:
+        return 0, 0, width - width % 2, height - height % 2
+    margin = int(3 * sigma) + 2
+    x0, x1 = max(0, int(xs.min()) - margin), min(width, int(xs.max()) + 1 + margin)
+    y0, y1 = max(0, int(ys.min()) - margin), min(height, int(ys.max()) + 1 + margin)
+    x0, y0 = x0 - x0 % 2, y0 - y0 % 2
+    w, h = min(width - x0, x1 - x0), min(height - y0, y1 - y0)
+    return x0, y0, w - w % 2, h - h % 2
+
+
+def smooth_fill(seg: Segment, pos: int, trim_text: str, duration: float, sigma: float) -> str:
+    """The part of the video chain of a segment that replaces the logo by a smooth fill instead of ffmpeg's removelogo filter.
+
+    removelogo copies the pixels of the nearest edge into the masked area, which gives the typical X-shaped streaks. Here the masked
+    area is filled with the average of the known pixels around it, weighted with a Gauss curve (a normalized convolution:
+    blur(picture * known) / blur(known)), and the patch is blended in with a soft edge. The work is done on the small part of the
+    picture around the logo, in RGB with 16 bits. The mask comes from the PNG file (movie filter), repeated for the whole segment.
+    Returns the statements up to and including the overlay, ending with a comma so that the usual filters can follow."""
+    from logo import mask_from_png_b64
+    n = pos - 1
+    x, y, w, h = logo_region(mask_from_png_b64(seg.mask), seg.width, seg.height, sigma)
+    s = f"{sigma:g}"
+    return (f"[{n}:v]{trim_text}setpts=PTS-STARTPTS,split=2[sa{n}][sb{n}];"
+            f"[sb{n}]crop={w}:{h}:{x}:{y},format=gbrp16le,split=2[rc{n}][rd{n}];"
+            f"movie={mask_name(pos)},format=gray,loop=loop=-1:size=1:start=0,setpts=N/FRAME_RATE/TB,trim=end={duration + MASK_EXTRA_SECONDS:.3f},"
+            f"crop={w}:{h}:{x}:{y},format=gbrp16le,split=3[mk{n}][ml{n}][mm{n}];"
+            f"[mk{n}]negate,split=2[w1{n}][w2{n}];"
+            f"[rc{n}][w1{n}]blend=all_expr='A*B/65535':shortest=1[kn{n}];"
+            f"[kn{n}]gblur=sigma={s}:steps=4[gk{n}];[w2{n}]gblur=sigma={s}:steps=4[gw{n}];"
+            f"[gk{n}][gw{n}]blend=all_expr='min(65535,A*65535/max(B,{FILL_FLOOR}))':shortest=1[fl{n}];"
+            f"[ml{n}]gblur=sigma={FILL_FEATHER}[mf{n}];[mm{n}]gblur=sigma={FILL_FEATHER},negate[nm{n}];"
+            f"[fl{n}][mf{n}]blend=all_expr='A*B/65535':shortest=1[fm{n}];"
+            f"[rd{n}][nm{n}]blend=all_expr='A*B/65535':shortest=1[rm{n}];"
+            f"[fm{n}][rm{n}]blend=all_expr='A+B':shortest=1[pt{n}];"
+            f"[sa{n}][pt{n}]overlay={x}:{y}:shortest=1,format=yuv420p,")
+
+
 def video_filter(seg: Segment, pos: int, profile: dict, opts: dict,
                  trim: Optional[tuple[Fraction, Fraction]], setsar: bool) -> str:
-    f = f"[{pos - 1}:v]"
-    if trim:
-        f += f"trim={fmt_seconds(trim[0])}:{fmt_seconds(trim[1])},"
+    trim_text = f"trim={fmt_seconds(trim[0])}:{fmt_seconds(trim[1])}," if trim else ""
     w, h = seg.width, seg.height
-    if seg.has_png_mask:
+    if seg.has_png_mask and opts.get("logo_fill", "removelogo") == "smooth":
+        f = smooth_fill(seg, pos, trim_text, float(seg.frames / seg.fps), float(opts.get("fill_sigma", 6)))
+    else:
+        f = f"[{pos - 1}:v]" + trim_text
+    if seg.has_png_mask and opts.get("logo_fill", "removelogo") != "smooth":
         f += f"removelogo={mask_name(pos)},"
     elif seg.has_delogo:
         f += _delogo(seg, w, h)

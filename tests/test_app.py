@@ -1820,7 +1820,7 @@ def test_batch_file(tmp, videos):
     # --- menu Batch
     script_ui = os.path.splitext(win.settings.path)[0] + ".sh"
     answers = {"text": "/tmp/out/Film", "ask3": "yes"}
-    win.ask_text = lambda title, label, default="": answers["text"]
+    win.ask_output = lambda title, suggestion: answers["text"]
     win.ask3 = lambda text: answers["ask3"]
     win.settings.set_option("path_map", "/tmp=/mnt/mapped")
     win.mnuBatch_Click()
@@ -2105,7 +2105,7 @@ def test_dialog_styles_and_batch_path(tmp, videos):
     win = seek_window(tmp, videos, ("sample2.ts",), workdir="batchpath")
     default_script = os.path.splitext(win.settings.path)[0] + ".sh"
     check(win.batch_path() == default_script, "default: next to the INI file")
-    win.ask_text = lambda title, label, default="": os.path.join(work, "Film")
+    win.ask_output = lambda title, suggestion: os.path.join(work, "Film")
     win.settings.set_option("batch", os.path.join(work, "elsewhere", "job.sh"))
     win.mnuBatch_Click()
     check(win.batch_path() == os.path.join(work, "elsewhere", "job.sh") and os.path.exists(win.batch_path()) and not os.path.exists(default_script),
@@ -2701,8 +2701,8 @@ def test_logo_options_tooltip_and_dialog_layout(tmp, videos):
     sample = os.path.join(videos, "sample2.ts")
     d = removelogo_dialog.frmRemoveLogo(lambda n: grab_frame(sample, n, Fraction(25)), 40, 10, 157)
     fixed = lambda dialog: dialog.called("setFixedSize")[-1]
-    check(fixed(d) == (609, 385 + 24) and d.lblHint.text() == removelogo_dialog.HINT and d.hscBlend.called("setToolTip")[-1] == (removelogo_dialog.HINT,)
-          and d.lblHint.called("setToolTip")[-1] == (removelogo_dialog.HINT,), "before loading: the line of explanation makes the window 24 px taller; tooltip on slider and text")
+    check(fixed(d) == (609, 385 + 24) and d.lblHint.text() == removelogo_dialog.HINT and d.hscBlend.called("setToolTip")[-1] == (dialogs.wrap_tooltip(removelogo_dialog.HINT),)
+          and d.lblHint.called("setToolTip")[-1] == (dialogs.wrap_tooltip(removelogo_dialog.HINT),), "before loading: the line of explanation makes the window 24 px taller; tooltip on slider and text")
     d.load_frame()
     geo = lambda w: (lambda g: (g.x(), g.y(), g.width(), g.height()))(w.geometry())
     check(geo(d.Picture1) == (8, 8, 593, 474), f"720 x 576 picture: width 593, height 474: {geo(d.Picture1)}")
@@ -2727,6 +2727,7 @@ def test_mask_fill_and_grow(tmp, videos):
     """RemoveLogo mask: enclosed dark areas are filled, the white areas can grow; options; real ffmpeg run with a logo whose symbol is
     darker than the brightness limit."""
     import numpy as np
+    import dialogs
     import logo
     import ffmpeg_cmd
     import removelogo_dialog
@@ -2779,7 +2780,7 @@ def test_mask_fill_and_grow(tmp, videos):
     # --- the preview: white = mask, grey = added by fill / grow, so the symbol stays recognizable
     for fill, grow, grey in ((True, 0, 18 * 16), (False, 0, 0), (True, 2, (37 + 4) * (34 + 4) - 37 * 34 + 18 * 16), (False, 1, (37 + 2) * (34 + 2) - 37 * 34 + 0)):
         d = removelogo_dialog.frmRemoveLogo(lambda n: logo_frame(), 40, 10, 157, fill=fill, grow=grow)
-        check(d.Picture1.called("setToolTip")[-1] == (removelogo_dialog.PICTURE_HINT,) and d.preview is None, "tooltip on the picture, nothing shown before loading")
+        check(d.Picture1.called("setToolTip")[-1] == (dialogs.wrap_tooltip(removelogo_dialog.PICTURE_HINT),) and d.preview is None, "tooltip on the picture, nothing shown before loading")
         d.load_frame()
         values = set(np.unique(d.preview).tolist())
         shown_grey = int((d.preview == removelogo_dialog.ADDED_GREY).sum())
@@ -2800,7 +2801,7 @@ def test_mask_fill_and_grow(tmp, videos):
     # --- options
     o = default_options()
     check(o["mask_fill"] == "True" and o["mask_grow"] == "0" and all(k in DEFAULT_TOOLTIPS for k in ("mask_fill", "mask_grow"))
-          and dict(OPTION_GROUPS)["Logo"] == ("overlay_opacity", "mask_fill", "mask_grow"), "defaults, explanations, group Logo")
+          and dict(OPTION_GROUPS)["Logo"] == ("logo_fill", "fill_sigma", "mask_fill", "mask_grow", "overlay_opacity"), "defaults, explanations, group Logo")
     check(validate_options({"mask_grow": "10", "mask_fill": "False"}) == [] and len(validate_options({"mask_grow": "11"})) == 1 and len(validate_options({"mask_grow": "-1"})) == 1
           and len(validate_options({"mask_fill": "yes"})) == 1, "checking of mask_grow (0 to 10) and mask_fill (True/False)")
     win = seek_window(tmp, videos, ("sample2.ts",), workdir="maskwin")
@@ -2885,6 +2886,195 @@ def test_display_aspect(tmp, videos):
     print("Display aspect ratio: OK (DAR, SAR, files, dialog height, cache)")
 
 
+def test_smooth_fill(tmp, videos):
+    """Logo removal with a smooth fill instead of ffmpeg's removelogo (option logo_fill): graph, region, options, real runs."""
+    import numpy as np
+    import logo
+    import ffmpeg_cmd
+    from cutlist import Job
+    from frames import grab_frame
+    from mediaprobe import first_frame_number, probe
+    from PIL import Image, ImageDraw
+    from profiles import validate_options
+    from runner import expected_frames, run_ffmpeg, total_seconds, verify_output
+    from settings import DEFAULT_TOOLTIPS, default_options
+    # --- options
+    d = default_options()
+    check(d["logo_fill"] == "removelogo" and d["fill_sigma"] == "6" and "logo_fill" in DEFAULT_TOOLTIPS and "fill_sigma" in DEFAULT_TOOLTIPS, "defaults: ffmpeg's removelogo, sigma 6")
+    check(validate_options({"logo_fill": "smooth", "fill_sigma": "30"}) == [] and len(validate_options({"logo_fill": "blur"})) == 1
+          and len(validate_options({"fill_sigma": "0"})) == 1 and len(validate_options({"fill_sigma": "31"})) == 1, "checking of logo_fill and fill_sigma")
+    # --- region around the logo
+    m = np.zeros((576, 720), bool)
+    m[81:118, 632:666] = True
+    x, y, w, h = ffmpeg_cmd.logo_region(m, 720, 576, 6)
+    check((x, y, w, h) == (612, 62, 76, 76) or (x % 2 == 0 and y % 2 == 0 and w % 2 == 0 and h % 2 == 0 and x <= 632 - 20 and x + w >= 666 + 20 and y <= 81 - 20 and y + h >= 118 + 20),
+          f"region: bounding box plus a margin of about 3 sigma, even numbers: {(x, y, w, h)}")
+    check(ffmpeg_cmd.logo_region(m, 720, 576, 6) == ffmpeg_cmd.logo_region(m, 720, 576, 6.0), "same result for the same sigma")
+    edge = np.zeros((576, 720), bool)
+    edge[2:20, 700:719] = True
+    x, y, w, h = ffmpeg_cmd.logo_region(edge, 720, 576, 6)
+    check(x + w <= 720 and y >= 0 and x % 2 == 0 and y % 2 == 0 and w % 2 == 0 and h % 2 == 0 and x <= 700 and y == 0, f"region at the edge of the picture stays inside: {(x, y, w, h)}")
+    check(ffmpeg_cmd.logo_region(np.zeros((576, 720), bool), 720, 576, 6) == (0, 0, 720, 576), "empty mask: the whole picture")
+    centre = np.zeros((576, 720), bool)
+    centre[250:287, 300:334] = True
+    small, big = ffmpeg_cmd.logo_region(centre, 720, 576, 6), ffmpeg_cmd.logo_region(centre, 720, 576, 30)
+    check(big[2] > small[2] + 100 and big[3] > small[3] + 100 and big[2] >= 34 + 2 * 90 and big[0] < small[0], f"a larger sigma gives a larger region: {small} against {big}")
+    # --- the filter chain
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="smoothwin", first_fn=first_frame_number)
+    seg = win.segments[0]
+    seg.mask = logo.mask_to_png_b64(m)
+    plain = ffmpeg_cmd.build_command(win.make_job(os.path.join(tmp, "o.mp4")))
+    check("removelogo=removelogo01.png" in " ".join(plain) and "movie=" not in " ".join(plain), "default: removelogo filter")
+    win.settings.set_option("logo_fill", "smooth")
+    job = win.make_job(os.path.join(tmp, "o.mp4"))
+    cmd = ffmpeg_cmd.build_command(job)
+    graph = cmd[cmd.index("-filter_complex") + 1]
+    check("removelogo=" not in graph and "movie=removelogo01.png" in graph and "gblur=sigma=6:steps=4" in graph and "overlay=" in graph and graph.count("shortest=1") >= 6
+          and "[v0]" in graph and graph.index("[v0]") > graph.index("overlay="), "smooth: movie for the mask, normalized convolution, overlay, the rest of the chain follows")
+    check(graph.count("[sa0]") == 2 and graph.index("split=2[sa0][sb0]") < graph.index("crop=iw:ih-2*72") and "scale=720:576" in graph.split("overlay=")[1], "the usual crop and scale come after the patch")
+    win.settings.set_option("fill_sigma", "10")
+    check("gblur=sigma=10:steps=4" in ffmpeg_cmd.build_command(win.make_job(os.path.join(tmp, "o.mp4")))[ffmpeg_cmd.build_command(win.make_job(os.path.join(tmp, "o.mp4"))).index("-filter_complex") + 1], "fill_sigma goes into the graph")
+    win.settings.set_option("fill_sigma", "6")
+    # delogo segments and segments without a mask are not touched
+    seg.mask = "0.1 0.2 0.3 0.4"
+    check("movie=" not in " ".join(ffmpeg_cmd.build_command(win.make_job(os.path.join(tmp, "o.mp4")))) and "delogo=" in " ".join(ffmpeg_cmd.build_command(win.make_job(os.path.join(tmp, "o.mp4")))), "DeLogo is unchanged")
+    seg.mask = ""
+    check("movie=" not in " ".join(ffmpeg_cmd.build_command(win.make_job(os.path.join(tmp, "o.mp4")))), "no mask: nothing changes")
+    # --- real runs: a logo (light box, black symbol) on a grey, grainy picture; 25 and 30 frames per second, one and two segments
+    work = tempfile.mkdtemp()
+    box = Image.new("RGB", (34, 37), (210, 210, 210))
+    ImageDraw.Draw(box).arc((6, 6, 28, 30), 200, 520, fill=(0, 0, 0), width=5)
+    box.save(os.path.join(work, "logo.png"))
+    reference = np.zeros((576, 720, 3), np.uint8)
+    reference[81:118, 632:666] = np.asarray(box)
+    mask = logo.grow_mask(logo.fill_holes(logo.monochrome_mask(reference)), 2)
+    lum = lambda a: (0.2126 * a[..., 0] + 0.7152 * a[..., 1] + 0.0722 * a[..., 2])
+    for rate in (25, 30):
+        source = os.path.join(work, f"logo_{rate}.ts")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c=0x909090:s=720x576:r={rate}:d=3,noise=alls=6:allf=t+u", "-loop", "1", "-i", os.path.join(work, "logo.png"),
+                        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=3", "-filter_complex", "[0][1]overlay=632:81:shortest=1[v]", "-map", "[v]", "-map", "2:a",
+                        "-c:v", "libx264", "-crf", "10", "-g", "12", "-pix_fmt", "yuv420p", "-c:a", "mp2", "-shortest", "-f", "mpegts", source], check=True, stdin=subprocess.DEVNULL)
+        results = {}
+        for name, fill in (("removelogo", "removelogo"), ("smooth", "smooth")):
+            w2 = seek_window(tmp, work, (f"logo_{rate}.ts",), workdir=f"smoothrun_{rate}_{name}", first_fn=first_frame_number)
+            w2.settings.set_option("crop", "0")
+            w2.settings.set_option("logo_fill", fill)
+            w2.settings.set_profile({**w2.settings.profile, "fps": f"{rate}.000"})
+            w2.segments[0].mask = logo.mask_to_png_b64(mask)
+            job = w2.make_job(os.path.join(work, f"{rate}_{name}.mp4"))
+            ffmpeg_cmd.write_masks(job.segments, work)
+            res = run_ffmpeg(ffmpeg_cmd.build_command(job), total_seconds(job), None, cwd=work)
+            check(res.returncode == 0, f"{rate} fps, {name}: ffmpeg run {res.returncode} {res.errors[-300:]}")
+            ok, actual, msg = verify_output(job.output, expected_frames(job))
+            check(ok, f"{rate} fps, {name}: number of frames as expected ({actual} for {expected_frames(job)}): {msg}")
+            out = lum(grab_frame(job.output, 20, Fraction(rate)).astype(float))
+            region = out[81:118, 632:666]
+            around = out[(logo.grow_mask(mask, 8) & ~logo.grow_mask(mask, 3))]
+            results[name] = (float(region.mean()), float(around.mean()), float(region.std()))
+        a, b = results["smooth"], results["removelogo"]
+        print(f"      {rate} fps: smooth region {a[0]:.0f} (surroundings {a[1]:.0f}, spread {a[2]:.1f}); removelogo region {b[0]:.0f} (surroundings {b[1]:.0f}, spread {b[2]:.1f})")
+        check(abs(a[0] - a[1]) < 15 and a[2] < 12, f"{rate} fps: the smooth fill matches the surroundings: {a}")
+    # two segments, the first with a mask: concat works, frame count
+    w3 = seek_window(tmp, work, ("logo_25.ts", "logo_25.ts"), workdir="smoothrun_two", first_fn=first_frame_number)
+    w3.settings.set_option("crop", "0")
+    w3.settings.set_option("logo_fill", "smooth")
+    w3.segments[0].mask = logo.mask_to_png_b64(mask)
+    w3.segments[0].end -= 30
+    w3.segments[1].start += 20
+    job = w3.make_job(os.path.join(work, "two.mp4"))
+    ffmpeg_cmd.write_masks(job.segments, work)
+    res = run_ffmpeg(ffmpeg_cmd.build_command(job), total_seconds(job), None, cwd=work)
+    ok, actual, msg = verify_output(job.output, expected_frames(job))
+    check(res.returncode == 0 and ok, f"two segments (the first with a smooth fill): {res.returncode} {res.errors[-200:]} {actual} / {expected_frames(job)} {msg}")
+    print("Smooth fill: OK (options, region, graph, real runs at 25 and 30 fps, two segments)")
+
+
+def test_recent_dirs(tmp, videos):
+    """Folders used recently: kept in the INI file, offered in a selection list when the target file of a batch is entered."""
+    import dialogs
+    from PySide6 import QtWidgets as W
+    work = os.path.join(tmp, "recent")
+    os.makedirs(work, exist_ok=True)
+    ini = os.path.join(work, "MediaMaker.ini")
+    open(ini, "w", encoding="utf-8").write("[settings]\n")
+    st = Settings(ini)
+    check(st.recent_dirs == [], "no folders at first")
+    st.add_recent_dir("/a/b")
+    st.add_recent_dir("/c/")
+    check(st.recent_dirs == ["/c", "/a/b"], f"newest first, a trailing slash is dropped: {st.recent_dirs}")
+    st.add_recent_dir("/a/b")
+    check(st.recent_dirs == ["/a/b", "/c"], "a folder used again moves to the top without a duplicate")
+    for bad in ("", "   ", None, "."):
+        st.add_recent_dir(bad)
+    check(st.recent_dirs == ["/a/b", "/c"], "empty values are ignored")
+    for i in range(14):
+        st.add_recent_dir(f"/d{i}")
+    check(len(st.recent_dirs) == 10 and st.recent_dirs[0] == "/d13" and st.recent_dirs[-1] == "/d4", f"at most 10, the oldest fall out: {st.recent_dirs[:2]} ... {st.recent_dirs[-1]}")
+    st.save()
+    check(Settings(ini).recent_dirs == st.recent_dirs, "stored in the INI file")
+    check("[settings]\nrecent_dirs=" in open(ini, encoding="utf-8").read() or "recent_dirs=" in open(ini, encoding="utf-8").read(), "key recent_dirs in [settings]")
+    # --- the input dialog (folder in a selection list + file name)
+    made = {}
+    class Combo(W.QComboBox):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            made["combo"] = self
+    class Edit(W.QLineEdit):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            made["edit"] = self
+    original = (W.QComboBox, W.QLineEdit)
+    W.QComboBox, W.QLineEdit = Combo, Edit
+    try:
+        W.QDialog.exec_result, W.QDialog.on_exec = 1, None
+        result = dialogs.ask_output_file(None, "Batch", "prompt", ["/x", "/y", "/z"], "/z", "film.mp4")
+        combo = made["combo"]
+        check(combo.called("setEditable")[-1] == (True,) and combo.called("addItems")[-1] == (["/z", "/x", "/y"],) and combo.called("setCurrentText")[-1] == ("/z",),
+              "the list holds the suggested folder first, then the folders used recently (no duplicate); it can be edited")
+        check(result == "/z/film.mp4", f"folder and name make the path: {result}")
+        W.QDialog.exec_result = 0
+        check(dialogs.ask_output_file(None, "Batch", "prompt", ["/x"], "/z", "film.mp4") is None, "cancel: None")
+        W.QDialog.exec_result = 1
+        made.clear()
+        check(dialogs.ask_output_file(None, "Batch", "prompt", [], "", "film.mp4") == "film.mp4" and made["combo"].called("addItems")[-1] == ([],), "no folder: just the name")
+        check(dialogs.ask_output_file(None, "Batch", "prompt", [], "/z", "   ") is None, "no file name: None")
+        home = os.path.expanduser("~")
+        made.clear()
+        W.QLineEdit.text = lambda self: "x.mp4"
+        check(dialogs.ask_output_file(None, "Batch", "prompt", [], "~/videos", "x.mp4") == os.path.join(home, "videos", "x.mp4"), "~ is the home folder")
+    finally:
+        W.QComboBox, W.QLineEdit = original
+        W.QDialog.exec_result = 1
+    # --- in the window: suggestion split into folder and name, folders used recently handed over, list updated
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="recentwin")
+    win.settings.add_recent_dir("/old1")
+    win.settings.add_recent_dir("/old2")
+    captured = []
+    original_ask = dialogs.ask_output_file
+    dialogs.ask_output_file = lambda parent, title, prompt, folders, folder, name: (captured.append((title, folders, folder, name, prompt)), os.path.join(work, "out", "Film.mp4"))[1]
+    win.ask3 = lambda text: "no"                                      # a script exists after the first call: do not keep old steps
+    try:
+        win.mnuBatch_Click()
+    finally:
+        dialogs.ask_output_file = original_ask
+    title, folders, folder, name, prompt = captured[-1]
+    check(title == "Batch" and folders == ["/old2", "/old1"] and folder == videos and name == "sample2.mp4" and "overwritten w/o warning" in prompt,
+          f"suggested folder and name, the folders used recently: {captured[-1][:4]}")
+    check(win.settings.recent_dirs[:3] == [os.path.join(work, "out"), "/old2", "/old1"] and Settings(win.settings.path).recent_dirs[0] == os.path.join(work, "out"),
+          "after the batch the folder is at the top of the list, also in the INI file")
+    # cancel changes nothing
+    win.ask_output = lambda title, suggestion: None
+    before = list(win.settings.recent_dirs)
+    win.mnuBatch_Click()
+    check(win.settings.recent_dirs == before, "cancelling the input leaves the list alone")
+    # Save as MP4/AVI: the folder of the chosen file is remembered, too
+    win.ask_save_file = lambda title, suggestion, filters: os.path.join(work, "saved", "film.mp4")
+    win._render_fn = lambda cmd, total, on_progress, cwd=None, cancel=None: __import__("runner").RunResult(0, False, 0.1, "")
+    win.save_video("mp4")
+    check(win.settings.recent_dirs[0] == os.path.join(work, "saved"), "a folder chosen in the Save as dialog is offered in the Batch dialog later")
+    print("Recent folders: OK (INI list, input dialog with selection list, Batch, Save as)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -2953,6 +3143,8 @@ def main():
     test_removelogo(tmp, sys.argv[1])
     test_mask_fill_and_grow(tmp, sys.argv[1])
     test_display_aspect(tmp, sys.argv[1])
+    test_smooth_fill(tmp, sys.argv[1])
+    test_recent_dirs(tmp, sys.argv[1])
     test_logo_options_tooltip_and_dialog_layout(tmp, sys.argv[1])
     test_example_ini(tmp, sys.argv[1])
     test_first_frame(tmp, sys.argv[1])

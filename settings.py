@@ -174,6 +174,21 @@ class Settings:
         self.set("settings", "last", path)
         self.save()
 
+    RECENT_LIMIT = 10                    # number of folders that are remembered
+
+    @property
+    def recent_dirs(self) -> list:
+        """Folders of target files used recently, newest first ([settings] recent_dirs=, separated by |)."""
+        return [d for d in (self.get("settings", "recent_dirs", "") or "").split("|") if d.strip()]
+
+    def add_recent_dir(self, directory: str) -> None:
+        """Puts a folder at the top of the list of recently used folders (without duplicates, at most RECENT_LIMIT)."""
+        directory = os.path.normpath(directory.strip()) if directory and directory.strip() else ""
+        if not directory or directory == ".":
+            return
+        folders = [directory] + [d for d in self.recent_dirs if d != directory]
+        self.set("settings", "recent_dirs", "|".join(folders[:self.RECENT_LIMIT]))
+
     def tooltip(self, key: str) -> str:
         return self.get("ToolTipText", key, "") or DEFAULT_TOOLTIPS.get(key, "")
 
@@ -192,7 +207,7 @@ def default_options() -> dict:
             "pause": "160", "detect": "0", "aflags": "", "subtitle": "0", "multilanguage": "False",
             "step_end": "40", "step_next": "240", "border_tol": "3", "cut_window": "5", "logo_rewind": "1.8",
             "logo_edge": "18", "logo_conf": "0.2", "cut_diff": "30", "path_map": "",
-            "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "mask_fill": "True", "mask_grow": "0"}
+            "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "mask_fill": "True", "mask_grow": "0", "logo_fill": "removelogo", "fill_sigma": "6"}
 
 
 # explanations for keys that are still missing in the INI file (section [ToolTipText])
@@ -208,6 +223,10 @@ DEFAULT_TOOLTIPS = {
                 "A * in a source stands for any characters except /, e.g. /run/user/*/kio-fuse-*/smb/root@nas/Harddisk=/mnt/nas/Harddisk",
     "overlay_opacity": "Station logo: how strongly the red areas show, in percent: the rectangle of the DeLogo filter over the preview "
                        "and the band in the RemoveLogo dialog (0 = only the edge, 100 = solid red); applies at once",
+    "logo_fill": "How a logo with a PNG mask is removed: removelogo = ffmpeg's removelogo filter (copies the pixels of the nearest edge, "
+                 "which can show X-shaped streaks); smooth = the area is filled with the Gauss-weighted average of the pixels around it "
+                 "(no streaks, a soft patch)",
+    "fill_sigma": "Smooth fill: width of the Gauss curve in pixels (1 to 30): larger = flatter and softer, smaller = follows the surroundings closer",
     "mask_fill": "RemoveLogo mask: True = black areas that are completely enclosed by white ones are made white too (a dark symbol inside "
                  "a bright logo box would otherwise stay visible as a shadow, because ffmpeg only replaces the white pixels)",
     "mask_grow": "RemoveLogo mask: makes the white areas this many pixels bigger in every direction (0 to 10), so that the blurred edge "

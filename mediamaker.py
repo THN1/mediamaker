@@ -197,6 +197,18 @@ class frmMain(frmMainBase):
         import dialogs
         return dialogs.ask_text_box(self, title, label, default)
 
+    def ask_output(self, title: str, suggestion: str) -> Optional[str]:
+        """Target file for the batch script: folder (selection list of the folders used recently) and file name; None = cancelled."""
+        import dialogs
+        folder, name = os.path.split(suggestion)
+        return dialogs.ask_output_file(self, title, "Enter the target output file: the folder (the list holds the folders used recently) and the file name.\n\n"
+                                       "NOTE: An existing file will be overwritten w/o warning!", self.settings.recent_dirs, folder, name)
+
+    def remember_dir(self, path: str) -> None:
+        """The folder of a target file goes to the top of the list of recently used folders."""
+        self.settings.add_recent_dir(os.path.dirname(path))
+        self.settings.save()
+
     def wait_dialog(self, message: str, on_cancel):
         import dialogs
         dialog = dialogs.WaitDialog(self, message, on_cancel)
@@ -765,6 +777,7 @@ class frmMain(frmMainBase):
                     continue
                 if answer == "cancel":
                     return None
+            self.remember_dir(name)                                   # offered again in the list of the Batch dialog
             return name
 
     def make_job(self, output: str) -> Job:
@@ -894,12 +907,11 @@ class frmMain(frmMainBase):
             if answer == "yes":
                 with open(script, encoding="utf-8", errors="replace") as f:
                     old = f.read()
-        name = self.ask_text("Batch", "Enter target output file name including path: \n\n"
-                             "NOTE: An existing file will be overwritten w/o warning!",
-                             batch.suggest_name(self.last_file(), "mp4", self.multiple()))
+        name = self.ask_output("Batch", batch.suggest_name(self.last_file(), "mp4", self.multiple()))
         if not name:
             return
         name = batch.with_extension(name, batch.OUTPUT_EXTENSIONS, "mp4")
+        self.remember_dir(name)
         job = self.make_job(name)
         if not self.check_job(job):
             return

@@ -14,6 +14,7 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 import logo
+from dialogs import wrap_tooltip
 from ui_frmRemoveLogo import frmRemoveLogoBase
 
 PICTURE_WIDTH = 593                     # width of the picture box; the height follows from the proportions of the picture
@@ -53,7 +54,7 @@ class frmRemoveLogo(frmRemoveLogoBase):
         self.image = None
         self.preview: np.ndarray | None = None          # what is shown: white = mask, grey = added by fill / grow
         self.Picture1.paint_hook = self.paint_picture
-        self.Picture1.setToolTip(PICTURE_HINT)
+        self.Picture1.setToolTip(wrap_tooltip(PICTURE_HINT))
         self.fraBlend.setAutoFillBackground(False)
         self.fraBlend.setStyleSheet(band_style(opacity))   # translucent red band: the picture below stays visible
         self.fraBlend.hide()
@@ -62,8 +63,8 @@ class frmRemoveLogo(frmRemoveLogoBase):
         base_width, base_height = self.width(), self.height()
         self.lblHint = QtWidgets.QLabel(HINT, self)
         self.lblHint.setGeometry(8, base_height, PICTURE_WIDTH, 17)
-        self.hscBlend.setToolTip(HINT)
-        self.lblHint.setToolTip(HINT)
+        self.hscBlend.setToolTip(wrap_tooltip(HINT))
+        self.lblHint.setToolTip(wrap_tooltip(HINT))
         self._base_size = (base_width, base_height + HINT_HEIGHT)
         self.setFixedSize(*self._base_size)
         g = self.Picture1.geometry()

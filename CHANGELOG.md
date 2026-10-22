@@ -3,6 +3,14 @@
 ## 0.3 (in progress)
 
 - Version number set to 0.3-dev.
+- **Smooth fill instead of `removelogo`** (new options `logo_fill` = removelogo|smooth, default removelogo, and `fill_sigma` 1 to 30, default 6;
+  tab "Logo"): ffmpeg's `removelogo` copies the pixels of the nearest edge into the masked area, which shows as an X-shaped pattern (two
+  darker triangles) and streaks. With `smooth` the area is filled with the Gauss-weighted average of the pixels around it (normalized
+  convolution, RGB 16 bit, only on the small part of the picture around the logo, mask via the `movie` filter) and blended in with a soft
+  edge. Also used in batch scripts. Tested with ffmpeg 6.1.1 at 25 and 30 frames per second and with two segments.
+- The tooltips of the RemoveLogo dialog are wrapped at 70 characters.
+- The Batch dialog asks for the target file with a selection list of the (up to 10) folders used recently (INI key `recent_dirs`, also
+  filled by Save as MP4/AVI), the file name and a "Browse..." button.
 - **RemoveLogo mask: dark symbols inside the logo.** ffmpeg's `removelogo` only replaces the white pixels of the mask. A logo whose symbol
   is darker than the brightness limit (8) in the chosen frame left the symbol out of the mask (a black hole inside the white box), and the
   symbol stayed visible as a shadow in its own shape. New option `mask_fill` (default True) fills black areas that are completely enclosed

@@ -1,6 +1,7 @@
 """Own dialogs (Qt): editing of key-value pairs for profile and options."""
 from __future__ import annotations
 
+import os
 import re
 import textwrap
 from typing import Optional
@@ -274,6 +275,48 @@ def ask_text_box(parent, title: str, prompt: str, default: str = "") -> Optional
     box = _input_box(parent, title, prompt, QtWidgets.QInputDialog.InputMode.TextInput)
     box.setTextValue(default)
     return box.textValue() if box.exec() else None
+
+
+def ask_output_file(parent, title: str, prompt: str, folders: list, folder: str, name: str) -> Optional[str]:
+    """Enter the target file: the folder in a selection list of the folders used recently (the list can also be edited, and "Browse..." opens
+    a folder dialog) and the file name. Returns the whole path or None on cancel (or without a file name)."""
+    dialog = QtWidgets.QDialog(parent)
+    dialog.setWindowTitle(title)
+    layout = QtWidgets.QVBoxLayout(dialog)
+    label = QtWidgets.QLabel(prompt)
+    label.setWordWrap(True)
+    layout.addWidget(label)
+    form = QtWidgets.QFormLayout()
+    combo = QtWidgets.QComboBox()
+    combo.setEditable(True)
+    shown = [folder] + [f for f in folders if f != folder] if folder else list(folders)
+    combo.addItems(shown)
+    combo.setCurrentText(folder)
+    combo.setMinimumWidth(FIELD_WIDTH * 2)
+    combo.setToolTip(wrap_tooltip("Folders used recently; a folder can also be typed in"))
+    browse = QtWidgets.QPushButton("Browse...")
+
+    def choose():
+        chosen = QtWidgets.QFileDialog.getExistingDirectory(dialog, "Select folder", combo.currentText())
+        if chosen:
+            combo.setCurrentText(chosen)
+    browse.clicked.connect(choose)
+    row = QtWidgets.QHBoxLayout()
+    row.addWidget(combo, 1)
+    row.addWidget(browse)
+    form.addRow("Folder:", row)
+    edit = QtWidgets.QLineEdit(name)
+    form.addRow("File name:", edit)
+    layout.addLayout(form)
+    button = QtWidgets.QDialogButtonBox.StandardButton
+    buttons = QtWidgets.QDialogButtonBox(button.Ok | button.Cancel)
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    layout.addWidget(buttons)
+    if not dialog.exec() or not edit.text().strip():
+        return None
+    directory = os.path.expanduser(combo.currentText().strip())
+    return os.path.join(directory, edit.text().strip()) if directory else edit.text().strip()
 
 
 def ask_int_box(parent, title: str, prompt: str, value: int, low: int, high: int) -> Optional[int]:
