@@ -11,6 +11,12 @@ class Enum:
     def __bool__(self):
         return True
 
+    def __eq__(self, other):                         # the same member of an enumeration is equal to itself (also if asked for twice)
+        return isinstance(other, Enum) and other.name == self.name
+
+    def __hash__(self):
+        return hash(self.name)
+
     def __repr__(self):
         return self.name
 

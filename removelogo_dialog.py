@@ -14,15 +14,26 @@ from PySide6 import QtCore, QtGui, QtWidgets
 import logo
 from ui_frmRemoveLogo import frmRemoveLogoBase
 
-BAND_COLOR = "#fraBlend { background-color: rgba(255, 0, 0, 90); border-top: 1px solid rgb(255, 0, 0); border-bottom: 1px solid rgb(255, 0, 0); }"
+PICTURE_WIDTH = 593                     # width of the picture box; the height follows from the proportions of the picture
+MIN_HEIGHT, MAX_HEIGHT = 120, 700       # limits of the height of the picture box (extreme proportions)
+HINT_HEIGHT = 24                        # room for the line of explanation below the buttons
+HINT = "Slider: blackens a band in the middle of the picture, e.g. to hide the title or names (red band)"
+
+
+def band_style(opacity: int) -> str:
+    """Stylesheet of the red band; `opacity` in percent."""
+    alpha = round(255 * max(0, min(100, opacity)) / 100)
+    return (f"#fraBlend {{ background-color: rgba(255, 0, 0, {alpha}); border-top: 1px solid rgb(255, 0, 0); "
+            f"border-bottom: 1px solid rgb(255, 0, 0); }}")
 
 
 class frmRemoveLogo(frmRemoveLogoBase):
     NAVIGATE_STEPS = (-1, 1, -10, 10)           # buttons "<", ">", "<<", ">>"
 
     def __init__(self, grab_frame: Callable[[int], np.ndarray], frame: int, first: int, last: int,
-                 shown: Callable[[int], int] = lambda n: n, parent=None):
-        """grab_frame(n) returns frame n as an RGB array; first..last are the valid frame numbers; shown(n) is the number displayed."""
+                 shown: Callable[[int], int] = lambda n: n, parent=None, opacity: int = 35):
+        """grab_frame(n) returns frame n as an RGB array; first..last are the valid frame numbers; shown(n) is the number displayed;
+        opacity (percent) is that of the red band."""
         super().__init__(parent)
         self.grab_frame, self.first, self.last, self.shown = grab_frame, first, last, shown
         self.frame = max(first, min(frame, last))
@@ -31,9 +42,23 @@ class frmRemoveLogo(frmRemoveLogoBase):
         self.image = None
         self.Picture1.paint_hook = self.paint_picture
         self.fraBlend.setAutoFillBackground(False)
-        self.fraBlend.setStyleSheet(BAND_COLOR)         # translucent red band: the picture below stays visible
-        self.hscBlend.setToolTip("Blacken the centre of the picture to hide the title, names ... that are shown there")
+        self.fraBlend.setStyleSheet(band_style(opacity))   # translucent red band: the picture below stays visible
         self.fraBlend.hide()
+        # Line of explanation below the buttons; the window grows by its height. The picture box and everything below it move
+        # when the proportions of the picture are known (fit_to_picture).
+        base_width, base_height = self.width(), self.height()
+        self.lblHint = QtWidgets.QLabel(HINT, self)
+        self.lblHint.setGeometry(8, base_height, PICTURE_WIDTH, 17)
+        self.hscBlend.setToolTip(HINT)
+        self.lblHint.setToolTip(HINT)
+        self._base_size = (base_width, base_height + HINT_HEIGHT)
+        self.setFixedSize(*self._base_size)
+        g = self.Picture1.geometry()
+        self._picture_base = (g.x(), g.y(), g.width(), g.height())
+        self._lower = []                                # controls below the picture: (widget, original geometry)
+        for widget in (self.lblFrame, self.cmdOK, self.cmdCancel, *self.cmdNavigate, self.hscBlend, self.lblHint):
+            g = widget.geometry()
+            self._lower.append((widget, (g.x(), g.y(), g.width(), g.height())))
 
     def exec_dialog(self) -> str:
         """Shows the dialog (the frame is loaded as soon as it is visible) and returns the mask, or "" if cancelled."""
@@ -60,6 +85,7 @@ class frmRemoveLogo(frmRemoveLogoBase):
             self.mask = logo.monochrome_mask(rgb)
             self.lblFrame.setText(f"Frame: {self.shown(self.frame)}")
             height, width = self.mask.shape
+            self.fit_to_picture(width, height)
             data = np.ascontiguousarray((self.mask * 255).astype(np.uint8))
             self.image = QtGui.QImage(data.tobytes(), width, height, width, QtGui.QImage.Format.Format_Grayscale8).copy()
             self.Picture1.update()
@@ -68,13 +94,24 @@ class frmRemoveLogo(frmRemoveLogoBase):
             QtWidgets.QApplication.restoreOverrideCursor()
             self.setEnabled(True)
 
+    def fit_to_picture(self, width: int, height: int) -> None:
+        """Keeps the width of the picture box and makes its height fit the proportions of the picture (the picture is not distorted);
+        the controls below move along and the window gets the height it needs."""
+        x, y, w, h = self._picture_base
+        box = max(MIN_HEIGHT, min(MAX_HEIGHT, round(PICTURE_WIDTH * height / width)))
+        shift = box - h
+        self.Picture1.setGeometry(x, y, w, box)
+        for widget, (wx, wy, ww, wh) in self._lower:
+            widget.setGeometry(wx, wy + shift, ww, wh)
+        self.setFixedSize(self._base_size[0], self._base_size[1] + shift)
+
     def paint_picture(self, painter, rect) -> None:
         if self.image is not None:
             try:
                 painter.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform, True)
             except AttributeError:
                 pass
-            painter.drawImage(rect, self.image)             # stretched to the box, as the picture of VB6
+            painter.drawImage(rect, self.image)             # the box has the proportions of the picture
 
     def cmdNavigate_Click(self, index: int):
         target = max(self.first, min(self.frame + self.NAVIGATE_STEPS[index], self.last))     # VB6 did not check the limits

@@ -264,6 +264,7 @@ class frmMain(frmMainBase):
     def Form_Load(self):
         self.setWindowTitle(f"MediaMaker {VERSION}")
         self.style_delogo_frame()
+        self.logo_tooltip = vbqt.ShiftToolTip(self.cmdCommand[6], "Open/close DeLogo dialog", "Open/close removelogo dialog")
         self.migrate_settings()
         if self.fresh:
             self.segments = []                  # new job: the saved list is discarded
@@ -394,6 +395,7 @@ class frmMain(frmMainBase):
             self.settings.save()
             import dialogs
             dialogs.set_style(self.options.get("dialog_style"))        # applies at once (the player only at the next start)
+            self.style_delogo_frame()
 
     def lblLabel_Click(self, index: int = 0):
         """Click on a caption of the "Target output profile" frame: opens the profile editor (as in VB6)."""
@@ -981,7 +983,8 @@ class frmMain(frmMainBase):
         """Shows the dialog for choosing the frame (VB6: monochrome()) and returns the PNG mask, base64 encoded, or "" if cancelled."""
         from removelogo_dialog import frmRemoveLogo
         seg = self.segment
-        dialog = frmRemoveLogo(lambda n: self._frame_fn(seg.path, n, seg.fps), frame, seg.first_frame, seg.total_frames - 1, self.shown, self)
+        dialog = frmRemoveLogo(lambda n: self._frame_fn(seg.path, n, seg.fps), frame, seg.first_frame, seg.total_frames - 1, self.shown, self,
+                               self.overlay_opacity())
         return dialog.exec_dialog()
 
     def removelogo_select(self) -> None:
@@ -1005,14 +1008,20 @@ class frmMain(frmMainBase):
     DELOGO_MIN = 8                  # pixels: smallest size of the rectangle
     DELOGO_START = 33               # pixels: size of the rectangle when it appears for the first time (VB6: 500 twips)
 
-    DELOGO_STYLE = "#fraCrop_0 { background-color: rgba(255, 0, 0, 90); border: 1px solid rgb(255, 0, 0); }"
+    def overlay_opacity(self) -> int:
+        """Opacity of the red areas that mark the logo, in percent (option overlay_opacity)."""
+        try:
+            return max(0, min(100, int(self.options.get("overlay_opacity", 35))))
+        except ValueError:
+            return 35
 
     def style_delogo_frame(self) -> None:
-        """The rectangle is translucent red with a solid edge, so the logo stays visible below it."""
+        """The rectangle is translucent red (the logo stays visible below it) with a solid edge."""
         frame = self.fraCrop[0]
+        alpha = round(255 * self.overlay_opacity() / 100)
         frame.setAutoFillBackground(False)
         frame.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
-        frame.setStyleSheet(self.DELOGO_STYLE)
+        frame.setStyleSheet(f"#fraCrop_0 {{ background-color: rgba(255, 0, 0, {alpha}); border: 1px solid rgb(255, 0, 0); }}")
 
     def cmdCommand_MouseDown(self, index: int, button: int, shift: int, x: int, y: int):
         self.mouse_shift = bool(shift & 1)                             # VB6: MouseShift = Shift = 1

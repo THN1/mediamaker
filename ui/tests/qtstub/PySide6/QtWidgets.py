@@ -51,7 +51,7 @@ class FontMetrics:
 
 
 class QWidget(QObject):
-    methods = {"setAttribute", "setCursor", "unsetCursor", "raise_", "fontMetrics", "setMinimumSize", "setMaximumSize", "setSizePolicy", "setGeometry", "geometry", "resize", "setFixedSize", "setMinimumSize", "move", "hide", "show", "setVisible",
+    methods = {"underMouse", "setAttribute", "setCursor", "unsetCursor", "raise_", "fontMetrics", "setMinimumSize", "setMaximumSize", "setSizePolicy", "setGeometry", "geometry", "resize", "setFixedSize", "setMinimumSize", "move", "hide", "show", "setVisible",
                "setEnabled", "isEnabled", "setToolTip", "setFont", "setStyleSheet", "setAutoFillBackground",
                "setMouseTracking", "setAcceptDrops", "setWindowTitle", "setWindowFlag", "setWindowIcon", "winId", "rect",
                "frameGeometry", "screen", "isActiveWindow", "update", "contentsRect", "width", "height", "setFocusPolicy",
@@ -76,8 +76,15 @@ class QWidget(QObject):
         pass
 
     def _ret_geometry(self):
-        args = self.called("setGeometry")
-        return Rect(*(args[-1] if args else (0, 0, 0, 0)))
+        for name, args in reversed(self.calls):             # the latest of the calls that set position and/or size
+            if name == "setGeometry":
+                return Rect(*args)
+            if name in ("setFixedSize", "resize") and len(args) == 2:
+                return Rect(0, 0, *args)
+        return Rect(0, 0, 0, 0)
+
+    def _ret_underMouse(self):
+        return self.__dict__.get("under_mouse_", False)
 
     def _ret_isVisible(self):
         for name, args in reversed(self.calls):
@@ -541,8 +548,24 @@ class QDialogButtonBox(Base):
     signals = {"accepted", "rejected"}
 
 
+class QToolTip:
+    shown = []
+
+    @staticmethod
+    def isVisible():
+        return bool(QToolTip.shown)
+
+    @staticmethod
+    def showText(pos, text, widget=None):
+        QToolTip.shown.append((pos, text, widget))
+
+
 class QApplication(Base):
     log = []
+
+    @staticmethod
+    def instance():
+        return None
 
     @staticmethod
     def font():

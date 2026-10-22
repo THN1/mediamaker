@@ -308,6 +308,43 @@ def on_mouse(widget, down=None, move=None, up=None) -> None:
             f.handlers[key] = fn
 
 
+def _shift_down() -> bool:
+    return bool(QtWidgets.QApplication.keyboardModifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
+
+
+class ShiftToolTip(QtCore.QObject):
+    """Tooltip of a control that shows another text while the Shift key is held down (for buttons whose Shift + click does
+    something else). The text changes when the pointer enters the control, when the tooltip is about to appear and while it is shown."""
+
+    def __init__(self, widget, normal: str, with_shift: str, shift_down=None):
+        super().__init__(widget)
+        self.widget, self.normal, self.with_shift = widget, normal, with_shift
+        self._shift_down = shift_down or _shift_down
+        self.shift = False
+        widget.setToolTip(normal)
+        widget.installEventFilter(self)
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)                       # the Shift key is pressed while the pointer rests on the control
+
+    def set_shift(self, shift: bool) -> None:
+        if shift == self.shift:
+            return
+        self.shift = shift
+        text = self.with_shift if shift else self.normal
+        self.widget.setToolTip(text)
+        if QtWidgets.QToolTip.isVisible() and self.widget.underMouse():
+            QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), text, self.widget)
+
+    def eventFilter(self, obj, ev):
+        t, E = ev.type(), QtCore.QEvent.Type
+        if obj is self.widget and t in (E.Enter, E.ToolTip):
+            self.set_shift(self._shift_down())
+        elif t in (E.KeyPress, E.KeyRelease) and ev.key() == QtCore.Qt.Key.Key_Shift:
+            self.set_shift(t == E.KeyPress)
+        return False
+
+
 def on_click(widget, fn) -> None:
     _filter(widget).handlers["click"] = fn
 

@@ -1559,9 +1559,9 @@ def test_option_changes(tmp, videos):
     check([l._args[0] for l, e in QFormLayout.instances[-1].rows] == ["scale", "fps"] and len(QTabWidget.instances) == tab_widgets, "without groups: one list, no tabs")
     # keys of all options: the tabs are Borders, Seeking, Audio/Subtitles, Batch, Technical
     all_keys = {k: d[k] for k in d if k not in HIDDEN_OPTIONS}
-    check([h for h, _ in dialogs.group_plan(all_keys, OPTION_GROUPS)] == ["Borders", "Seeking", "Audio/Subtitles", "Batch", "Technical"], "tabs of the options dialog")
+    check([h for h, _ in dialogs.group_plan(all_keys, OPTION_GROUPS)] == ["Borders", "Seeking", "Logo", "Audio/Subtitles", "Batch", "Technical"], "tabs of the options dialog")
     check(dialogs.tab_of_error(['"step_end" must be a whole number between 1 and 3600.'], all_keys, OPTION_GROUPS) == 1
-          and dialogs.tab_of_error(['"path_map" must be a list of source=target pairs'], all_keys, OPTION_GROUPS) == 3
+          and dialogs.tab_of_error(['"path_map" must be a list of source=target pairs'], all_keys, OPTION_GROUPS) == 4
           and dialogs.tab_of_error(["something without a key"], all_keys, OPTION_GROUPS) == 0, "tab of an invalid value")
     # invalid value: the dialog comes again with the entered values, on the tab with the wrong value
     win.edit_pairs = lambda title, pairs, groups=None, start=0: (tabs_shown.append(start), answers_tabs.pop(0))[1]
@@ -1571,7 +1571,7 @@ def test_option_changes(tmp, videos):
         bad.pop(k, None)
     answers_tabs[:] = [dict(bad, step_end="0"), dict(bad, path_map="abc"), dict(bad)]
     win.mnuOptions_Click()
-    check(tabs_shown == [0, 1, 3], f"after an error the dialog opens on the tab with the wrong value: {tabs_shown}")
+    check(tabs_shown == [0, 1, 4], f"after an error the dialog opens on the tab with the wrong value: {tabs_shown}")
     print("Rearrangement and new parameters: OK (pad in the profile, focus dropped, search values, grouping, migration)")
 
 
@@ -2517,10 +2517,10 @@ def test_removelogo(tmp, videos):
     dialog.load_frame()
     # --- red band
     check(dialog.fraBlend.called("hide") != [] and not dialog.fraBlend.isVisible(), "no band at first")
-    dialog.hscBlend.setValue(900)
+    dialog.hscBlend.setValue(600)
     dialog.hscBlend_Change()
     picture = dialog.Picture1.geometry()
-    check(dialog.fraBlend.isVisible() and dialog.fraBlend.called("setGeometry")[-1] == (picture.x(), picture.y() + picture.height() // 2 - 84, picture.width(), 168),
+    check(picture.height() == 474 and dialog.fraBlend.isVisible() and dialog.fraBlend.called("setGeometry")[-1] == (8, 8 + 237 - 79, 593, 158),
           f"band around the middle of the picture: {dialog.fraBlend.called('setGeometry')[-1]}")
     check("rgba(255, 0, 0," in dialog.fraBlend.called("setStyleSheet")[-1][0], "the band is translucent")
     dialog.hscBlend.setValue(0)
@@ -2562,15 +2562,15 @@ def test_removelogo(tmp, videos):
     seg = win.segments[0]
     seen = []
     class Spy:
-        def __init__(self, grab_fn, frame, first, last, shown, parent):
-            seen.append((frame, first, last, shown(frame)))
+        def __init__(self, grab_fn, frame, first, last, shown, parent, opacity):
+            seen.append((frame, first, last, shown(frame), opacity))
         def exec_dialog(self):
             return b64
     original = removelogo_dialog.frmRemoveLogo
     removelogo_dialog.frmRemoveLogo = Spy
     try:
         slider = win.Slider1.value()
-        check(win.monochrome(slider) == b64 and seen == [(slider, 10, 158 - 1, slider - 10)], f"monochrome() opens the dialog with the current frame and the valid range: {seen}")
+        check(win.monochrome(slider) == b64 and seen == [(slider, 10, 158 - 1, slider - 10, 35)], f"monochrome() opens the dialog with the current frame, the valid range and the opacity: {seen}")
     finally:
         removelogo_dialog.frmRemoveLogo = original
     win.fraCrop[0].show()
@@ -2614,6 +2614,112 @@ def test_removelogo(tmp, videos):
     inside, outside = diff[140:285, 220:356].mean(), (diff.sum() - box.sum()) / (diff.size - box.size)
     check(inside > 2 * outside and inside > 1.0, f"the picture changes inside the mask (mean difference {inside:.2f}), much less outside ({outside:.2f})")
     print("RemoveLogo: OK (mask, dialog with real frames, blackened centre, window, temporary file, real run)")
+
+
+def test_logo_options_tooltip_and_dialog_layout(tmp, videos):
+    """Opacity of the red areas (option), the tooltip of the logo button with Shift, picture and hint in the RemoveLogo dialog."""
+    import numpy as np
+    import dialogs
+    import removelogo_dialog
+    import vbqt
+    from frames import grab_frame
+    from profiles import GROUP_TEXTS, OPTION_GROUPS, validate_options
+    from settings import DEFAULT_TOOLTIPS, default_options
+    from PySide6 import QtCore
+    from PySide6.QtWidgets import QToolTip
+    # --- option overlay_opacity
+    check(default_options()["overlay_opacity"] == "35" and "overlay_opacity" in DEFAULT_TOOLTIPS and "applies at once" in DEFAULT_TOOLTIPS["overlay_opacity"]
+          and dict(OPTION_GROUPS)["Logo"] == ("overlay_opacity",) and "Logo" in GROUP_TEXTS, "option, explanation, group Logo")
+    check(validate_options({"overlay_opacity": "0"}) == [] and validate_options({"overlay_opacity": "100"}) == []
+          and len(validate_options({"overlay_opacity": "101"})) == 1 and len(validate_options({"overlay_opacity": "x"})) == 1, "checking: 0 to 100")
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="opacitywin")
+    frame = win.fraCrop[0]
+    alpha = lambda: int(frame.called("setStyleSheet")[-1][0].split("rgba(255, 0, 0, ")[1].split(")")[0])
+    check(win.overlay_opacity() == 35 and alpha() == 89, f"35 % of 255 = 89: {alpha()}")
+    for value, expected in (("0", 0), ("100", 255), ("60", 153), ("150", 255), ("-5", 0)):
+        win.settings.set_option("overlay_opacity", value)
+        win.style_delogo_frame()
+        check(alpha() == expected, f"opacity {value} % -> alpha {expected}: {alpha()}")
+    win.settings.set_option("overlay_opacity", "abc")
+    check(win.overlay_opacity() == 35, "a value that is not a number: 35")
+    win.settings.set_option("overlay_opacity", "35")
+    win.edit_pairs = lambda title, pairs, groups=None, start=0: dict(pairs, overlay_opacity="80")
+    win.mnuOptions_Click()
+    check(alpha() == 204 and win.overlay_opacity() == 80, "a new value from the options dialog applies at once to the rectangle")
+    # --- the band of the RemoveLogo dialog
+    grab = lambda n: np.full((576, 720, 3), 100, np.uint8)
+    for percent, expected in ((35, 89), (0, 0), (100, 255), (150, 255), (-3, 0)):
+        d = removelogo_dialog.frmRemoveLogo(grab, 40, 10, 157, opacity=percent)
+        check(f"rgba(255, 0, 0, {expected})" in d.fraBlend.called("setStyleSheet")[-1][0], f"band opacity {percent} % -> {expected}")
+    # --- tooltip of the logo button
+    tip = win.logo_tooltip
+    button = win.cmdCommand[6]
+    texts = lambda: [a[0] for a in button.called("setToolTip")]
+    check(texts()[-1] == "Open/close DeLogo dialog", f"normal tooltip: {texts()[-1]}")
+    tip.set_shift(True)
+    check(texts()[-1] == "Open/close removelogo dialog", "Shift down: the text of the removelogo dialog")
+    n = len(texts())
+    tip.set_shift(True)
+    check(len(texts()) == n, "no change, no new text")
+    tip.set_shift(False)
+    check(texts()[-1] == "Open/close DeLogo dialog", "Shift released: back to the DeLogo text")
+    state = {"shift": False}
+    widget = type(button)()
+    tip2 = vbqt.ShiftToolTip(widget, "normal", "with shift", shift_down=lambda: state["shift"])
+    class Ev:
+        def __init__(self, kind, key=None):
+            self.kind, self.k = kind, key
+        def type(self):
+            return self.kind
+        def key(self):
+            return self.k
+    E, K = QtCore.QEvent.Type, QtCore.Qt.Key
+    last = lambda: widget.called("setToolTip")[-1][0]
+    check(last() == "normal", "ShiftToolTip starts with the normal text")
+    state["shift"] = True
+    tip2.eventFilter(widget, Ev(E.Enter))
+    check(last() == "with shift", "pointer enters while Shift is down")
+    state["shift"] = False
+    tip2.eventFilter(widget, Ev(E.ToolTip))
+    check(last() == "normal", "tooltip appears after Shift was released")
+    tip2.eventFilter(widget, Ev(E.KeyPress, K.Key_Shift))
+    check(last() == "with shift", "Shift pressed while the pointer rests on the control")
+    tip2.eventFilter(widget, Ev(E.KeyRelease, K.Key_Shift))
+    check(last() == "normal", "Shift released")
+    before = len(widget.called("setToolTip"))
+    tip2.eventFilter(widget, Ev(E.KeyPress, "other"))
+    tip2.eventFilter(object(), Ev(E.Enter))
+    check(len(widget.called("setToolTip")) == before, "other keys and other controls are ignored")
+    check(tip2.eventFilter(widget, Ev(E.Enter)) is False, "events are never swallowed")
+    widget.under_mouse_ = True
+    QToolTip.shown.append(("pos", "old", widget))
+    tip2.eventFilter(widget, Ev(E.KeyPress, K.Key_Shift))
+    check(QToolTip.shown[-1][1] == "with shift" and QToolTip.shown[-1][2] is widget, "a tooltip that is showing gets the new text at once")
+    QToolTip.shown.clear()
+    # --- RemoveLogo dialog: width stays, the height follows the proportions of the picture, no distortion
+    sample = os.path.join(videos, "sample2.ts")
+    d = removelogo_dialog.frmRemoveLogo(lambda n: grab_frame(sample, n, Fraction(25)), 40, 10, 157)
+    fixed = lambda dialog: dialog.called("setFixedSize")[-1]
+    check(fixed(d) == (609, 385 + 24) and d.lblHint.text() == removelogo_dialog.HINT and d.hscBlend.called("setToolTip")[-1] == (removelogo_dialog.HINT,)
+          and d.lblHint.called("setToolTip")[-1] == (removelogo_dialog.HINT,), "before loading: the line of explanation makes the window 24 px taller; tooltip on slider and text")
+    d.load_frame()
+    geo = lambda w: (lambda g: (g.x(), g.y(), g.width(), g.height()))(w.geometry())
+    check(geo(d.Picture1) == (8, 8, 593, 474), f"720 x 576 picture: width 593, height 474: {geo(d.Picture1)}")
+    check(geo(d.cmdOK) == (520, 352 + 137, 81, 25) and geo(d.cmdNavigate[0]) == (48, 352 + 137, 35, 27) and geo(d.hscBlend) == (264, 360 + 137, 161, 17)
+          and geo(d.lblFrame) == (88, 360 + 137, 89, 17) and geo(d.lblHint) == (8, 385 + 137, 593, 17), "the controls below move down with the picture")
+    check(fixed(d) == (609, 385 + 24 + 137), f"the window is as tall as needed: {fixed(d)}")
+    wide = removelogo_dialog.frmRemoveLogo(lambda n: np.full((1080, 1920, 3), 100, np.uint8), 40, 10, 157)
+    wide.load_frame()
+    check(geo(wide.Picture1) == (8, 8, 593, 334) and geo(wide.cmdOK) == (520, 349, 81, 25) and fixed(wide) == (609, 406), f"1920 x 1080: height 334, window 406: {geo(wide.Picture1)}")
+    wide.grab_frame = lambda n: np.full((1080, 1440, 3), 100, np.uint8)
+    wide.load_frame()
+    check(geo(wide.Picture1)[3] == round(593 * 1080 / 1440) and fixed(wide) == (609, 409 + round(593 * 1080 / 1440) - 337), "another frame with other proportions: the layout is recalculated from the original positions")
+    tall = removelogo_dialog.frmRemoveLogo(lambda n: np.full((2000, 100, 3), 100, np.uint8), 40, 10, 157)
+    tall.load_frame()
+    flat = removelogo_dialog.frmRemoveLogo(lambda n: np.full((10, 1000, 3), 100, np.uint8), 40, 10, 157)
+    flat.load_frame()
+    check(geo(tall.Picture1)[3] == 700 and geo(flat.Picture1)[3] == 120, "extreme proportions: the height is limited")
+    print("Logo options, tooltip with Shift, dialog layout: OK")
 
 
 def test_shutdown(tmp, videos):
@@ -2682,6 +2788,7 @@ def main():
     test_group_texts(tmp, sys.argv[1])
     test_delogo(tmp, sys.argv[1])
     test_removelogo(tmp, sys.argv[1])
+    test_logo_options_tooltip_and_dialog_layout(tmp, sys.argv[1])
     test_example_ini(tmp, sys.argv[1])
     test_first_frame(tmp, sys.argv[1])
     test_shutdown(tmp, sys.argv[1])

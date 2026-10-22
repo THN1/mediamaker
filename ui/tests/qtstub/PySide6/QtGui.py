@@ -56,6 +56,10 @@ class QColor(Base):
 
 
 class QCursor(Base):
+    @staticmethod
+    def pos():
+        return (0, 0)
+
     pass
 
 
