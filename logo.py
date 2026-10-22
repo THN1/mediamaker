@@ -75,6 +75,38 @@ def mask_from_png_b64(text: str) -> np.ndarray:
     return np.asarray(Image.open(io.BytesIO(base64.b64decode(text))).convert("1"))
 
 
+# ----------------------------------------------------------------------------- RemoveLogo mask (frmRemoveLogo)
+MASK_THRESHOLD = 8                  # brightness from which a pixel belongs to the mask (FreeImage_Threshold(p, 8))
+BLEND_MAX = 1800                    # maximum of the slider that blackens the centre of the picture
+
+
+def monochrome_mask(frame_rgb: np.ndarray, threshold: int = MASK_THRESHOLD) -> np.ndarray:
+    """Black/white picture of a frame: True (white) where the brightness is at least `threshold`, False (black) elsewhere."""
+    return to_grey(frame_rgb) >= threshold
+
+
+def blacken_center(mask: np.ndarray, value: int, maximum: int = BLEND_MAX) -> np.ndarray:
+    """Blackens a band around the middle line of the picture (to get rid of the title, the director's name, the list of actors ... in a
+    frame that should only contain the logo): the band is 2 * value * (height // 2) // maximum + 1 lines high; value 0 leaves the mask as it is."""
+    result = mask.copy()
+    if value <= 0:
+        return result
+    height = mask.shape[0]
+    middle = height // 2
+    k = value * middle // maximum
+    # VB6 counts the lines from the bottom edge (FreeImage), the array from the top edge
+    first, last = max(0, height - 1 - (middle + k)), min(height - 1, height - 1 - (middle - k))
+    result[first:last + 1] = False
+    return result
+
+
+def mask_to_png_b64(mask: np.ndarray) -> str:
+    """The mask as a 1-bit PNG, base64 encoded without line breaks (the form stored in the parameters of a segment)."""
+    buffer = io.BytesIO()
+    Image.fromarray((mask * 255).astype(np.uint8)).convert("1").save(buffer, "PNG", optimize=True)
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
 # ----------------------------------------------------------------------------- Isolating the logo
 def isolate_logo(mask: np.ndarray, extra: int = EXTRA, bin_min: int = BIN_MIN) -> Optional[LogoRef]:
     """Looks for the logo in the upper quarter of the mask and forms the reference logo (monochrome()).

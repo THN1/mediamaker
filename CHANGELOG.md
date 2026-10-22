@@ -3,11 +3,17 @@
 ## 0.3 (in progress)
 
 - Version number set to 0.3-dev.
+- **RemoveLogo filter** (Shift + click on the logo button): a dialog shows the current frame as a black/white picture (brightness at
+  least 8 = white); with `<` `>` (1 frame) and `<<` `>>` (10 frames) one looks for a frame that only shows the logo, and a slider blackens
+  a band around the centre (title, names ...), shown as a translucent red band. OK stores the mask as a 1-bit PNG, base64 encoded, in the
+  segment. When saving, the mask is written to a temporary file for ffmpeg's `removelogo` filter; in a batch script every mask is created
+  before the ffmpeg call and removed afterwards. If the logo cannot be isolated in the mask (for the search with the logo), a note says so.
+- The DeLogo rectangle is translucent red with a solid edge, and its corners resize two edges at once (diagonal double arrow).
 - **DeLogo filter** (button in the middle of the main window, without Shift): a red rectangle appears over the preview, which is moved
   with the mouse (inside), resized (at the four edges) and placed on the station logo; it stays inside the preview. A second click asks
   "Do you want to activate the DeLogo filter?": Yes stores the rectangle as fractions of the preview (`x y width height`) in the mask
   column of the segment, No switches the filter off. The last rectangle is offered again for the next segment. When rendering, the
-  fractions become pixels of the source picture and go to ffmpeg's `delogo` filter. Shift + click (RemoveLogo) is not ported yet.
+  fractions become pixels of the source picture and go to ffmpeg's `delogo` filter.
   Selecting another segment hides a rectangle that was being placed.
 
 ## 0.2

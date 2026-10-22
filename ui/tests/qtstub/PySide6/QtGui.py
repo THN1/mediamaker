@@ -20,7 +20,7 @@ class QPainter(Base):
 
 
 class QImage(Base):
-    Format = EnumGroup("QImage.Format", {"Format_RGB32", "Format_RGB888"})
+    Format = EnumGroup("QImage.Format", {"Format_RGB32", "Format_RGB888", "Format_Grayscale8"})
     methods = {"copy"}
 
     def _ret_copy(self):

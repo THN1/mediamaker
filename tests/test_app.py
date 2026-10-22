@@ -2261,11 +2261,13 @@ def test_delogo(tmp, videos):
     geo = lambda: (lambda g: (g.x(), g.y(), g.width(), g.height()))(frame.geometry())
     cursors = lambda: [repr(a[0]).split(".")[-1] for a in frame.called("setCursor")]
     check(win.delogo_area() == (544, 0, 513, 289) and not frame.isVisible(), "preview area 513 x 289, the rectangle is hidden at first")
-    # --- Shift: RemoveLogo is not ported yet; the Shift state is used once
+    # --- Shift: RemoveLogo instead (tested in test_removelogo); the Shift state is used once
+    win.monochrome = lambda frame_number: ""
     win.cmdCommand_MouseDown(6, 1, 1, 5, 5)
     check(win.mouse_shift is True, "Shift is noted when the button is pressed")
     win.cmdCommand_Click(6)
-    check("RemoveLogo" in win.messages[-1] and win.mouse_shift is False and not frame.isVisible(), "Shift + click: RemoveLogo message, Shift forgotten")
+    check(win.messages[-1] == "No frame selected for RemoveLogo filter; please try again later." and win.mouse_shift is False and not frame.isVisible(),
+          "Shift + click: RemoveLogo, Shift forgotten")
     win.cmdCommand_MouseDown(6, 1, 0, 5, 5)
     check(win.mouse_shift is False, "without Shift")
     # --- first click: the rectangle appears at the start position (lower left of the preview)
@@ -2273,7 +2275,7 @@ def test_delogo(tmp, videos):
     check(frame.isVisible() and geo() == (547, 253, 33, 33) and frame.called("raise_") != [] and seg.mask == "", f"rectangle appears at the start position: {geo()}")
     # --- move with the mouse, limited to the preview
     win.fraCrop_MouseDown(0, 1, 0, 15, 15)
-    check(win._crop_edge is None and cursors()[-1] == "SizeAllCursor", "inside: the rectangle is moved")
+    check(win._crop_edge == (None, None) and cursors()[-1] == "SizeAllCursor", "inside: the rectangle is moved")
     win.fraCrop_MouseMove(0, 1, 0, 25, 25)
     check(geo() == (557, 256, 33, 33), f"moved by (10, 10), the bottom limit of the preview stops it at 256: {geo()}")
     win.fraCrop_MouseMove(0, 1, 0, 25 + 4000, 15 - 4000)
@@ -2281,7 +2283,7 @@ def test_delogo(tmp, videos):
     win.fraCrop_MouseMove(0, 1, 0, 15 - 4000, 15 + 4000)
     check(geo() == (544, 289 - 33, 33, 33), f"moving stops at the left and bottom limit: {geo()}")
     win.fraCrop_MouseUp(0, 1, 0, 0, 0)
-    check(frame.called("unsetCursor") != [] and win._crop_edge is None, "mouse released: normal pointer again")
+    check(frame.called("unsetCursor") != [] and win._crop_edge == (None, None), "mouse released: normal pointer again")
     win.fraCrop_MouseDown(1, 1, 0, 1, 1)
     win.fraCrop_MouseMove(1, 1, 0, 50, 50)
     check(geo() == (544, 289 - 33, 33, 33), "the rectangles 1..3 (crop) are not handled here")
@@ -2289,7 +2291,7 @@ def test_delogo(tmp, videos):
     win.delogo_place("0.1 0.2 0.3 0.4")
     check(geo() == (595, 58, 154, 116), f"placed from fractions: {geo()}")
     win.fraCrop_MouseDown(0, 1, 0, 2, 50)
-    check(win._crop_edge == ("w", True) and cursors()[-1] == "SizeHorCursor", "left edge")
+    check(win._crop_edge == ("left", None) and cursors()[-1] == "SizeHorCursor", "left edge")
     win.fraCrop_MouseMove(0, 1, 0, -18, 50)
     check(geo() == (575, 58, 174, 116), f"left edge 20 px to the left, right edge stays: {geo()}")
     win.fraCrop_MouseMove(0, 1, 0, 2 + 4000, 50)
@@ -2299,7 +2301,7 @@ def test_delogo(tmp, videos):
     win.fraCrop_MouseUp(0, 1, 0, 0, 0)
     win.delogo_place("0.1 0.2 0.3 0.4")
     win.fraCrop_MouseDown(0, 1, 0, 150, 50)
-    check(win._crop_edge == ("w", False), "right edge")
+    check(win._crop_edge == ("right", None), "right edge")
     win.fraCrop_MouseMove(0, 1, 0, 170, 50)
     win.fraCrop_MouseMove(0, 1, 0, 190, 50)
     check(geo() == (595, 58, 194, 116), f"right edge: 20 + 20 px wider (the reference point follows): {geo()}")
@@ -2308,7 +2310,7 @@ def test_delogo(tmp, videos):
     win.fraCrop_MouseUp(0, 1, 0, 0, 0)
     win.delogo_place("0.1 0.2 0.3 0.4")
     win.fraCrop_MouseDown(0, 1, 0, 50, 2)
-    check(win._crop_edge == ("h", True) and cursors()[-1] == "SizeVerCursor", "top edge")
+    check(win._crop_edge == (None, "top") and cursors()[-1] == "SizeVerCursor", "top edge")
     win.fraCrop_MouseMove(0, 1, 0, 50, -18)
     check(geo() == (595, 38, 154, 136), f"top edge 20 px up, bottom edge stays: {geo()}")
     win.fraCrop_MouseMove(0, 1, 0, 50, -4000)
@@ -2316,7 +2318,7 @@ def test_delogo(tmp, videos):
     win.fraCrop_MouseUp(0, 1, 0, 0, 0)
     win.delogo_place("0.1 0.2 0.3 0.4")
     win.fraCrop_MouseDown(0, 1, 0, 50, 113)
-    check(win._crop_edge == ("h", False), "bottom edge")
+    check(win._crop_edge == (None, "bottom"), "bottom edge")
     win.fraCrop_MouseMove(0, 1, 0, 50, 133)
     check(geo() == (595, 58, 154, 136), f"bottom edge 20 px down: {geo()}")
     win.fraCrop_MouseMove(0, 1, 0, 50, 133 + 4000)
@@ -2324,9 +2326,44 @@ def test_delogo(tmp, videos):
     win.fraCrop_MouseUp(0, 1, 0, 0, 0)
     # --- pointer without a button: shows which edge is under it
     win.delogo_place("0.1 0.2 0.3 0.4")
-    for (x, y), shape in {(3, 50): "SizeHorCursor", (151, 50): "SizeHorCursor", (50, 3): "SizeVerCursor", (50, 113): "SizeVerCursor", (50, 50): "SizeAllCursor"}.items():
+    for (x, y), shape in {(3, 50): "SizeHorCursor", (151, 50): "SizeHorCursor", (50, 3): "SizeVerCursor", (50, 113): "SizeVerCursor", (50, 50): "SizeAllCursor",
+                          (3, 3): "SizeFDiagCursor", (151, 113): "SizeFDiagCursor", (151, 3): "SizeBDiagCursor", (3, 113): "SizeBDiagCursor"}.items():
         win.fraCrop_MouseMove(0, 0, 0, x, y)
         check(cursors()[-1] == shape, f"hover at ({x}, {y}): {shape}")
+    # --- corners: two edges move at the same time, the pointer is a diagonal double arrow
+    win.delogo_place("0.1 0.2 0.3 0.4")
+    win.fraCrop_MouseDown(0, 1, 0, 151, 3)
+    check(win._crop_edge == ("right", "top") and cursors()[-1] == "SizeBDiagCursor", "top right corner")
+    win.fraCrop_MouseMove(0, 1, 0, 171, -17)
+    check(geo() == (595, 38, 174, 136), f"top right corner: right edge +20, top edge -20, the other two stay: {geo()}")
+    win.fraCrop_MouseUp(0, 1, 0, 0, 0)
+    win.delogo_place("0.1 0.2 0.3 0.4")
+    win.fraCrop_MouseDown(0, 1, 0, 3, 3)
+    check(win._crop_edge == ("left", "top") and cursors()[-1] == "SizeFDiagCursor", "top left corner")
+    win.fraCrop_MouseMove(0, 1, 0, -17, -17)
+    check(geo() == (575, 38, 174, 136), f"top left corner: left edge -20, top edge -20: {geo()}")
+    win.fraCrop_MouseMove(0, 1, 0, -4000, -4000)
+    check(geo() == (544, 0, 749 - 544, 58 + 116), f"top left corner at the limits of the preview: {geo()}")
+    win.fraCrop_MouseUp(0, 1, 0, 0, 0)
+    win.delogo_place("0.1 0.2 0.3 0.4")
+    win.fraCrop_MouseDown(0, 1, 0, 151, 113)
+    check(win._crop_edge == ("right", "bottom") and cursors()[-1] == "SizeFDiagCursor", "bottom right corner")
+    win.fraCrop_MouseMove(0, 1, 0, 171, 133)
+    win.fraCrop_MouseMove(0, 1, 0, 191, 153)
+    check(geo() == (595, 58, 194, 156), f"bottom right corner twice +20 (the reference point follows): {geo()}")
+    win.fraCrop_MouseMove(0, 1, 0, 4000, 4000)
+    check(geo()[0] + geo()[2] == 544 + 513 and geo()[1] + geo()[3] == 289, f"bottom right corner at the limits of the preview: {geo()}")
+    win.fraCrop_MouseUp(0, 1, 0, 0, 0)
+    win.delogo_place("0.1 0.2 0.3 0.4")
+    win.fraCrop_MouseDown(0, 1, 0, 3, 113)
+    check(win._crop_edge == ("left", "bottom") and cursors()[-1] == "SizeBDiagCursor", "bottom left corner")
+    win.fraCrop_MouseMove(0, 1, 0, -17, 133)
+    check(geo() == (575, 58, 174, 136), f"bottom left corner: left edge -20, bottom edge +20: {geo()}")
+    win.fraCrop_MouseUp(0, 1, 0, 0, 0)
+    # --- the rectangle is translucent
+    style = frame.called("setStyleSheet")[-1][0]
+    check("rgba(255, 0, 0," in style and "border: 1px solid" in style and frame.called("setAutoFillBackground")[-1] == (False,)
+          and "WA_StyledBackground" in repr(frame.called("setAttribute")[-1][0]), f"translucent red with a solid edge: {style}")
     # --- second click: activate -> fractions in the mask column, saved, remembered
     win.delogo_place()
     win.answer = True
@@ -2404,6 +2441,181 @@ def test_delogo(tmp, videos):
     print("DeLogo: OK (rectangle, mouse, limits, activate/deactivate, re-use, saving, pixels for ffmpeg, real run)")
 
 
+def test_removelogo(tmp, videos):
+    """RemoveLogo filter: black/white mask of a frame that only shows the logo (dialog), stored as a base64 PNG in the segment,
+    written to a temporary file for ffmpeg."""
+    import numpy as np
+    import logo
+    import ffmpeg_cmd
+    import removelogo_dialog
+    from PIL import Image
+    from frames import grab_frame
+    from mediaprobe import first_frame_number
+    from runner import run_ffmpeg, total_seconds
+    import base64
+    import io
+    # --- building blocks
+    rgb = np.zeros((4, 4, 3), np.uint8)
+    rgb[0, 0] = (8, 8, 8)
+    rgb[0, 1] = (7, 7, 7)
+    rgb[1, 0] = (0, 0, 9)
+    rgb[1, 1] = (255, 255, 255)
+    m = logo.monochrome_mask(rgb)
+    check(m.dtype == bool and m[0, 0] and not m[0, 1] and not m[1, 0] and m[1, 1] and not m[2:].any(), "threshold 8: dark pixels are black, the rest is white")
+    full = np.ones((100, 10), bool)
+    check(np.array_equal(logo.blacken_center(full, 0), full) and logo.blacken_center(full, 0) is not full, "slider at 0: the mask stays as it is")
+    half = logo.blacken_center(full, 900)
+    rows = np.flatnonzero(~half.any(axis=1))
+    check(list(rows) == list(range(24, 75)) and half[:24].all() and half[75:].all(), f"slider in the middle: 51 lines around the centre: {rows[0]}..{rows[-1]}")
+    check(not logo.blacken_center(full, 1800).any() and full.all(), "slider at the end: everything is black, the original is not changed")
+    odd = logo.blacken_center(np.ones((101, 4), bool), 600)
+    rows = np.flatnonzero(~odd.any(axis=1))
+    check(len(rows) == 2 * (600 * 50 // 1800) + 1 and rows[0] + rows[-1] == 100 - 0, f"odd height: {rows[0]}..{rows[-1]}")
+    pattern = np.zeros((576, 720), bool)
+    pattern[20:40, 40:120] = True
+    b64 = logo.mask_to_png_b64(pattern)
+    check("\n" not in b64 and b64.startswith("iVBOR") and len(b64) < 4000 and np.array_equal(logo.mask_from_png_b64(b64), pattern)
+          and Image.open(io.BytesIO(base64.b64decode(b64))).mode == "1", f"1-bit PNG, base64 without line breaks, small ({len(b64)} characters), same mask")
+    check(logo.isolate_logo(pattern) is not None and logo.isolate_logo(np.zeros((576, 720), bool)) is None, "the logo can be isolated in the mask")
+    # --- the dialog with real frames
+    sample = os.path.join(videos, "sample2.ts")
+    fps = Fraction(25)
+    grabs = []
+    grab = lambda n: (grabs.append(n), grab_frame(sample, n, fps))[1]
+    dialog = removelogo_dialog.frmRemoveLogo(grab, 40, 10, 157, lambda n: n - 10)
+    check(dialog.frame == 40 and dialog.mask is None and dialog.result == "" and dialog.Picture1.paint_hook == dialog.paint_picture, "dialog starts without loading")
+    painted = []
+    class Painter:
+        def setRenderHint(self, *a): pass
+        def drawImage(self, rect, image): painted.append((rect, image))
+    dialog.paint_picture(Painter(), "rect")
+    check(painted == [], "nothing is painted before a frame is loaded")
+    check(dialog.load_frame() is True and grabs == [40] and dialog.mask.shape == (576, 720) and dialog.mask.dtype == bool and dialog.mask.any()
+          and not dialog.mask.all(), "the frame is loaded as a black/white picture")
+    check(dialog.lblFrame.called("setText")[-1] == ("Frame: 30",), "the displayed frame number is counted from the first picture")
+    check(dialog.called("setEnabled")[-2:] == [(False,), (True,)], "the dialog is blocked while the frame is loaded")
+    dialog.paint_picture(Painter(), "rect")
+    check(len(painted) == 1 and painted[0][0] == "rect" and painted[0][1] is dialog.image, "the picture is painted into the box")
+    steps = {0: 39, 1: 40, 2: 30, 3: 40}
+    for index, expected in steps.items():
+        dialog.cmdNavigate_Click(index)
+        check(dialog.frame == expected and grabs[-1] == expected, f"button {index}: frame {expected}")
+    check(dialog.lblFrame.called("setText")[-1] == ("Frame: 30",), "label after the buttons")
+    dialog.frame = 12
+    dialog.cmdNavigate_Click(2)
+    check(dialog.frame == 10, "10 frames to the left stops at the first frame")
+    n = len(grabs)
+    dialog.cmdNavigate_Click(0)
+    check(dialog.frame == 10 and len(grabs) == n, "at the first frame '<' does nothing")
+    dialog.frame = 156
+    dialog.cmdNavigate_Click(3)
+    check(dialog.frame == 157, "10 frames to the right stops at the last frame")
+    n = len(grabs)
+    dialog.cmdNavigate_Click(1)
+    check(dialog.frame == 157 and len(grabs) == n, "at the last frame '>' does nothing")
+    dialog.frame = 40
+    dialog.load_frame()
+    # --- red band
+    check(dialog.fraBlend.called("hide") != [] and not dialog.fraBlend.isVisible(), "no band at first")
+    dialog.hscBlend.setValue(900)
+    dialog.hscBlend_Change()
+    picture = dialog.Picture1.geometry()
+    check(dialog.fraBlend.isVisible() and dialog.fraBlend.called("setGeometry")[-1] == (picture.x(), picture.y() + picture.height() // 2 - 84, picture.width(), 168),
+          f"band around the middle of the picture: {dialog.fraBlend.called('setGeometry')[-1]}")
+    check("rgba(255, 0, 0," in dialog.fraBlend.called("setStyleSheet")[-1][0], "the band is translucent")
+    dialog.hscBlend.setValue(0)
+    dialog.hscBlend_Change()
+    check(not dialog.fraBlend.isVisible(), "slider at 0: band is hidden")
+    # --- OK stores the mask with the blackened centre; Cancel nothing
+    accepted = []
+    dialog.accept = lambda: accepted.append("accept")
+    dialog.hscBlend.setValue(900)
+    dialog.cmdOK_Click()
+    expected_mask = logo.blacken_center(dialog.mask, 900)
+    check(accepted == ["accept"] and "\n" not in dialog.result and np.array_equal(logo.mask_from_png_b64(dialog.result), expected_mask) and not dialog.fraBlend.isVisible(),
+          "OK: PNG mask with the centre blackened")
+    dialog.result = ""
+    dialog.hscBlend.setValue(0)
+    dialog.cmdOK_Click()
+    check(np.array_equal(logo.mask_from_png_b64(dialog.result), dialog.mask), "OK without the slider: the black/white picture as it is")
+    rejected = []
+    dialog.reject = lambda: rejected.append("reject")
+    dialog.cmdCancel_Click()
+    check(rejected == ["reject"] and dialog.result == "", "Cancel: no mask")
+    fresh = removelogo_dialog.frmRemoveLogo(grab, 40, 10, 157)
+    count = len(accepted)
+    fresh.accept = lambda: accepted.append("again")
+    fresh.cmdOK_Click()
+    check(len(accepted) == count and fresh.result == "", "OK without a loaded frame does nothing")
+    # --- no frame available
+    broken = removelogo_dialog.frmRemoveLogo(lambda n: (_ for _ in ()).throw(RuntimeError("no")), 40, 10, 157, lambda n: n - 10)
+    told = []
+    broken.inform = told.append
+    check(broken.load_frame() is False and told == ["Could not get frame at frame 30"] and broken.mask is None and broken.called("setEnabled")[-1] == (True,),
+          "a frame that cannot be read: message, dialog usable again")
+    # --- clamping of the start frame
+    check(removelogo_dialog.frmRemoveLogo(grab, 5, 10, 157).frame == 10 and removelogo_dialog.frmRemoveLogo(grab, 999, 10, 157).frame == 157, "start frame inside the valid range")
+    # --- main window
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="removelogowin", first_fn=first_frame_number)
+    win.lvwSegments.select_row(0)
+    win.lvwSegments_Click()
+    seg = win.segments[0]
+    seen = []
+    class Spy:
+        def __init__(self, grab_fn, frame, first, last, shown, parent):
+            seen.append((frame, first, last, shown(frame)))
+        def exec_dialog(self):
+            return b64
+    original = removelogo_dialog.frmRemoveLogo
+    removelogo_dialog.frmRemoveLogo = Spy
+    try:
+        slider = win.Slider1.value()
+        check(win.monochrome(slider) == b64 and seen == [(slider, 10, 158 - 1, slider - 10)], f"monochrome() opens the dialog with the current frame and the valid range: {seen}")
+    finally:
+        removelogo_dialog.frmRemoveLogo = original
+    win.fraCrop[0].show()
+    win.monochrome = lambda frame_number: b64
+    win.cmdCommand_MouseDown(6, 1, 1, 0, 0)
+    win.cmdCommand_Click(6)
+    check(seg.mask == b64 and seg.has_png_mask and not seg.has_delogo and not win.fraCrop[0].isVisible()
+          and win.messages[-1] == f"PNG mask for the removelogo filter was created and saved successfully.\n\n(Size: {len(b64)} bytes)",
+          f"mask stored in the segment: {win.messages[-1]!r}")
+    check(load_segments(os.path.join(tmp, "removelogowin", "MediaMaker.json"))[0].mask == b64, "the list is saved")
+    empty = logo.mask_to_png_b64(np.zeros((576, 720), bool))
+    win.monochrome = lambda frame_number: empty
+    win.cmdCommand_MouseDown(6, 1, 1, 0, 0)
+    win.cmdCommand_Click(6)
+    check(seg.mask == empty and "could not be isolated" in win.messages[-1] and win.messages[-1].startswith("PNG mask for the removelogo filter was created"),
+          "a mask without a logo is stored, with a note about the search for commercials")
+    win.monochrome = lambda frame_number: ""
+    win.cmdCommand_MouseDown(6, 1, 1, 0, 0)
+    win.cmdCommand_Click(6)
+    check(seg.mask == empty and win.messages[-1] == "No frame selected for RemoveLogo filter; please try again later.", "Cancel: the old mask stays")
+    # --- real run: ffmpeg's removelogo filter changes the picture inside the mask, as a temporary file written for the run
+    mask = np.zeros((576, 720), bool)
+    mask[173:288, 216:360] = True
+    work = tempfile.mkdtemp()
+    outputs = {}
+    for name, text in (("plain", ""), ("removelogo", logo.mask_to_png_b64(mask))):
+        w2 = seek_window(tmp, videos, ("sample2.ts",), workdir="removelogorun_" + name, first_fn=first_frame_number)
+        w2.segments[0].mask = text
+        job = w2.make_job(os.path.join(work, name + ".mp4"))
+        files = ffmpeg_cmd.write_masks(job.segments, work)
+        command = ffmpeg_cmd.build_command(job)
+        res = run_ffmpeg(command, total_seconds(job), None, cwd=work)
+        check(res.returncode == 0 and os.path.exists(job.output), f"ffmpeg run with {name}: {res.returncode} {res.errors[-200:]}")
+        check(("removelogo=removelogo01.png" in " ".join(command)) == bool(text) and (files == ["removelogo01.png"]) == bool(text) and os.path.exists(os.path.join(work, "removelogo01.png")) == bool(text),
+              f"{name}: filter and temporary mask file {files}")
+        outputs[name] = job.output
+    a = grab_frame(outputs["plain"], 10, fps).astype(np.int32)
+    b = grab_frame(outputs["removelogo"], 10, fps).astype(np.int32)
+    diff = np.abs(a - b).mean(axis=2)
+    box = diff[135:288, 216:360]
+    inside, outside = diff[140:285, 220:356].mean(), (diff.sum() - box.sum()) / (diff.size - box.size)
+    check(inside > 2 * outside and inside > 1.0, f"the picture changes inside the mask (mean difference {inside:.2f}), much less outside ({outside:.2f})")
+    print("RemoveLogo: OK (mask, dialog with real frames, blackened centre, window, temporary file, real run)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -2469,6 +2681,7 @@ def main():
     test_options_in_options_string(tmp, sys.argv[1])
     test_group_texts(tmp, sys.argv[1])
     test_delogo(tmp, sys.argv[1])
+    test_removelogo(tmp, sys.argv[1])
     test_example_ini(tmp, sys.argv[1])
     test_first_frame(tmp, sys.argv[1])
     test_shutdown(tmp, sys.argv[1])

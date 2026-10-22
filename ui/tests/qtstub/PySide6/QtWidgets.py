@@ -51,7 +51,7 @@ class FontMetrics:
 
 
 class QWidget(QObject):
-    methods = {"setCursor", "unsetCursor", "raise_", "fontMetrics", "setMinimumSize", "setMaximumSize", "setSizePolicy", "setGeometry", "geometry", "resize", "setFixedSize", "setMinimumSize", "move", "hide", "show", "setVisible",
+    methods = {"setAttribute", "setCursor", "unsetCursor", "raise_", "fontMetrics", "setMinimumSize", "setMaximumSize", "setSizePolicy", "setGeometry", "geometry", "resize", "setFixedSize", "setMinimumSize", "move", "hide", "show", "setVisible",
                "setEnabled", "isEnabled", "setToolTip", "setFont", "setStyleSheet", "setAutoFillBackground",
                "setMouseTracking", "setAcceptDrops", "setWindowTitle", "setWindowFlag", "setWindowIcon", "winId", "rect",
                "frameGeometry", "screen", "isActiveWindow", "update", "contentsRect", "width", "height", "setFocusPolicy",
