@@ -5,7 +5,7 @@
 - Version number set to 0.3-dev.
 - The opacity of the red areas that mark the logo (DeLogo rectangle, band in the RemoveLogo dialog) is the new option `overlay_opacity`
   (percent, default 35; new tab "Logo" of the options dialog); a change applies to the rectangle at once.
-- While Shift is held down, the tooltip of the logo button reads "Open/close removelogo dialog" instead of "Open/close DeLogo dialog".
+- While Shift is held down, the tooltip of the logo button reads "Open/close RemoveLogo dialog" instead of "Open/close DeLogo dialog".
 - RemoveLogo dialog: the picture is no longer distorted: the width of the window stays, the height of the picture box (and of the window)
   follows the proportions of the frame. A line of explanation below the buttons (and a tooltip) describes the slider.
 - **RemoveLogo filter** (Shift + click on the logo button): a dialog shows the current frame as a black/white picture (brightness at

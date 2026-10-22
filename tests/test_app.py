@@ -2657,7 +2657,7 @@ def test_logo_options_tooltip_and_dialog_layout(tmp, videos):
     texts = lambda: [a[0] for a in button.called("setToolTip")]
     check(texts()[-1] == "Open/close DeLogo dialog", f"normal tooltip: {texts()[-1]}")
     tip.set_shift(True)
-    check(texts()[-1] == "Open/close removelogo dialog", "Shift down: the text of the removelogo dialog")
+    check(texts()[-1] == "Open/close RemoveLogo dialog", "Shift down: the text of the removelogo dialog")
     n = len(texts())
     tip.set_shift(True)
     check(len(texts()) == n, "no change, no new text")

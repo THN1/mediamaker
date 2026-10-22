@@ -264,7 +264,7 @@ class frmMain(frmMainBase):
     def Form_Load(self):
         self.setWindowTitle(f"MediaMaker {VERSION}")
         self.style_delogo_frame()
-        self.logo_tooltip = vbqt.ShiftToolTip(self.cmdCommand[6], "Open/close DeLogo dialog", "Open/close removelogo dialog")
+        self.logo_tooltip = vbqt.ShiftToolTip(self.cmdCommand[6], "Open/close DeLogo dialog", "Open/close RemoveLogo dialog")
         self.migrate_settings()
         if self.fresh:
             self.segments = []                  # new job: the saved list is discarded
