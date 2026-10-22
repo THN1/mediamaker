@@ -7,6 +7,7 @@ import dataclasses
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from fractions import Fraction
@@ -2562,15 +2563,15 @@ def test_removelogo(tmp, videos):
     seg = win.segments[0]
     seen = []
     class Spy:
-        def __init__(self, grab_fn, frame, first, last, shown, parent, opacity):
-            seen.append((frame, first, last, shown(frame), opacity))
+        def __init__(self, grab_fn, frame, first, last, shown, parent, opacity, fill, grow):
+            seen.append((frame, first, last, shown(frame), opacity, fill, grow))
         def exec_dialog(self):
             return b64
     original = removelogo_dialog.frmRemoveLogo
     removelogo_dialog.frmRemoveLogo = Spy
     try:
         slider = win.Slider1.value()
-        check(win.monochrome(slider) == b64 and seen == [(slider, 10, 158 - 1, slider - 10, 35)], f"monochrome() opens the dialog with the current frame, the valid range and the opacity: {seen}")
+        check(win.monochrome(slider) == b64 and seen == [(slider, 10, 158 - 1, slider - 10, 35, True, 0)], f"monochrome() opens the dialog with the current frame, the valid range, the opacity and the mask options: {seen}")
     finally:
         removelogo_dialog.frmRemoveLogo = original
     win.fraCrop[0].show()
@@ -2629,7 +2630,7 @@ def test_logo_options_tooltip_and_dialog_layout(tmp, videos):
     from PySide6.QtWidgets import QToolTip
     # --- option overlay_opacity
     check(default_options()["overlay_opacity"] == "35" and "overlay_opacity" in DEFAULT_TOOLTIPS and "applies at once" in DEFAULT_TOOLTIPS["overlay_opacity"]
-          and dict(OPTION_GROUPS)["Logo"] == ("overlay_opacity",) and "Logo" in GROUP_TEXTS, "option, explanation, group Logo")
+          and "overlay_opacity" in dict(OPTION_GROUPS)["Logo"] and "Logo" in GROUP_TEXTS, "option, explanation, group Logo")
     check(validate_options({"overlay_opacity": "0"}) == [] and validate_options({"overlay_opacity": "100"}) == []
           and len(validate_options({"overlay_opacity": "101"})) == 1 and len(validate_options({"overlay_opacity": "x"})) == 1, "checking: 0 to 100")
     win = seek_window(tmp, videos, ("sample2.ts",), workdir="opacitywin")
@@ -2722,6 +2723,113 @@ def test_logo_options_tooltip_and_dialog_layout(tmp, videos):
     print("Logo options, tooltip with Shift, dialog layout: OK")
 
 
+def test_mask_fill_and_grow(tmp, videos):
+    """RemoveLogo mask: enclosed dark areas are filled, the white areas can grow; options; real ffmpeg run with a logo whose symbol is
+    darker than the brightness limit."""
+    import numpy as np
+    import logo
+    import ffmpeg_cmd
+    import removelogo_dialog
+    from PIL import Image, ImageDraw
+    from frames import grab_frame
+    from mediaprobe import first_frame_number
+    from profiles import OPTION_GROUPS, validate_options
+    from runner import run_ffmpeg, total_seconds
+    from settings import DEFAULT_TOOLTIPS, default_options
+    # --- fill_holes
+    ring = np.zeros((12, 12), bool)
+    ring[2:10, 2:10] = True
+    ring[4:8, 4:8] = False
+    filled = logo.fill_holes(ring)
+    check(filled[2:10, 2:10].all() and not filled[:2].any() and not filled[10:].any() and filled is not ring and not ring[5, 5], "a hole inside is filled, the input is not changed")
+    open_c = ring.copy()
+    open_c[4:8, 8:10] = False                                           # a gap through the wall (2 pixels thick) to the outside
+    check(np.array_equal(logo.fill_holes(open_c), open_c), "a black area that is open to the outside is not a hole")
+    two = np.zeros((20, 30), bool)
+    two[1:9, 1:9], two[1:9, 15:25] = True, True
+    two[3:6, 3:6], two[4:7, 18:22] = False, False
+    check(logo.fill_holes(two)[1:9, 1:9].all() and logo.fill_holes(two)[1:9, 15:25].all() and logo.fill_holes(two).sum() == 64 + 80, "several holes")
+    edge = np.zeros((8, 8), bool)
+    edge[0:4, 0:4] = True
+    edge[1:3, 1:3] = False
+    check(logo.fill_holes(edge)[0:4, 0:4].all(), "a hole in a shape at the edge of the picture")
+    check(not logo.fill_holes(np.zeros((6, 6), bool)).any() and logo.fill_holes(np.ones((6, 6), bool)).all(), "empty and full masks")
+    # --- grow_mask
+    dot = np.zeros((9, 9), bool)
+    dot[4, 4] = True
+    check(np.array_equal(logo.grow_mask(dot, 0), dot) and logo.grow_mask(dot, 0) is not dot, "0 pixels: the same, a copy")
+    check(logo.grow_mask(dot, 1).sum() == 9 and logo.grow_mask(dot, 2).sum() == 25 and logo.grow_mask(dot, 2)[2:7, 2:7].all() and dot.sum() == 1, "n pixels in every direction (a square)")
+    corner = np.zeros((6, 6), bool)
+    corner[0, 0] = True
+    check(logo.grow_mask(corner, 2).sum() == 9, "growing stops at the edge of the picture")
+    # --- the dialog: filled and grown mask is shown and stored, the centre is blackened last
+    def logo_frame():
+        frame = np.zeros((576, 720, 3), np.uint8)
+        frame[81:118, 632:666] = 210                                    # bright box
+        frame[90:108, 640:656] = 0                                     # dark symbol inside (below the limit of 8)
+        return frame
+    for fill, grow, white in ((True, 0, 37 * 34), (False, 0, 37 * 34 - 18 * 16), (True, 2, 0)):
+        d = removelogo_dialog.frmRemoveLogo(lambda n: logo_frame(), 40, 10, 157, fill=fill, grow=grow)
+        d.load_frame()
+        expected = (37 + 2 * grow) * (34 + 2 * grow) if (fill and grow) else white
+        check(int(d.final.sum()) == expected and int(d.mask.sum()) == 37 * 34 - 18 * 16, f"fill={fill}, grow={grow}: {int(d.final.sum())} white pixels in the mask, {int(d.mask.sum())} in the threshold picture")
+        d.accept = lambda: None
+        d.cmdOK_Click()
+        check(np.array_equal(logo.mask_from_png_b64(d.result), d.final), f"fill={fill}, grow={grow}: what is stored is what is shown")
+    d = removelogo_dialog.frmRemoveLogo(lambda n: logo_frame(), 40, 10, 157, fill=True, grow=3)
+    d.load_frame()
+    d.accept = lambda: None
+    d.hscBlend.setValue(1800)
+    d.cmdOK_Click()
+    check(not logo.mask_from_png_b64(d.result).any(), "the blackened centre is applied after filling and growing")
+    # --- options
+    o = default_options()
+    check(o["mask_fill"] == "True" and o["mask_grow"] == "0" and all(k in DEFAULT_TOOLTIPS for k in ("mask_fill", "mask_grow"))
+          and dict(OPTION_GROUPS)["Logo"] == ("overlay_opacity", "mask_fill", "mask_grow"), "defaults, explanations, group Logo")
+    check(validate_options({"mask_grow": "10", "mask_fill": "False"}) == [] and len(validate_options({"mask_grow": "11"})) == 1 and len(validate_options({"mask_grow": "-1"})) == 1
+          and len(validate_options({"mask_fill": "yes"})) == 1, "checking of mask_grow (0 to 10) and mask_fill (True/False)")
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="maskwin")
+    check(win.mask_grow() == 0, "mask_grow() default")
+    for value, expected in (("3", 3), ("99", 10), ("-4", 0), ("x", 0)):
+        win.settings.set_option("mask_grow", value)
+        check(win.mask_grow() == expected, f"mask_grow {value!r} -> {expected}")
+    # --- real run: a logo with a symbol that is black (< 8) in the reference picture
+    work = tempfile.mkdtemp()
+    box = Image.new("RGB", (34, 37), (210, 210, 210))
+    ImageDraw.Draw(box).arc((6, 6, 28, 30), 200, 520, fill=(0, 0, 0), width=5)          # symbol: a black swoosh
+    box.save(os.path.join(work, "logo.png"))
+    reference = np.zeros((576, 720, 3), np.uint8)
+    reference[81:118, 632:666] = np.asarray(box)
+    threshold = logo.monochrome_mask(reference)
+    holes = logo.fill_holes(threshold) & ~threshold
+    check(holes.sum() > 40, f"the black symbol is a hole in the threshold mask ({int(holes.sum())} pixels)")
+    source = os.path.join(work, "logo_test.ts")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x909090:s=720x576:r=25:d=3,noise=alls=6:allf=t+u", "-loop", "1", "-i", os.path.join(work, "logo.png"),
+                    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=3", "-filter_complex", "[0][1]overlay=632:81:shortest=1[v]", "-map", "[v]", "-map", "2:a",
+                    "-c:v", "libx264", "-crf", "10", "-g", "12", "-pix_fmt", "yuv420p", "-c:a", "mp2", "-shortest", "-f", "mpegts", source], check=True, stdin=subprocess.DEVNULL)
+    lum = lambda a: (0.2126 * a[..., 0] + 0.7152 * a[..., 1] + 0.0722 * a[..., 2])
+    results = {}
+    for name, mask in (("without", None), ("threshold", threshold), ("filled", logo.fill_holes(threshold))):
+        w2 = seek_window(tmp, work, ("logo_test.ts",), workdir="maskrun_" + name, first_fn=first_frame_number)
+        w2.settings.set_option("crop", "0")
+        if mask is not None:
+            w2.segments[0].mask = logo.mask_to_png_b64(mask)
+        job = w2.make_job(os.path.join(work, name + ".mp4"))
+        ffmpeg_cmd.write_masks(job.segments, work)
+        res = run_ffmpeg(ffmpeg_cmd.build_command(job), total_seconds(job), None, cwd=work)
+        check(res.returncode == 0, f"ffmpeg run {name}: {res.returncode} {res.errors[-200:]}")
+        out = lum(grab_frame(job.output, 20, Fraction(25)).astype(float))
+        symbol = out[holes]                                          # where the black symbol is
+        around = out[(logo.grow_mask(threshold, 6) & ~logo.grow_mask(threshold, 2))]
+        results[name] = (symbol.mean(), around.mean())
+    for name, (inside, around) in results.items():
+        print(f"      {name:10s} symbol area {inside:6.1f}   surroundings {around:6.1f}")
+    check(results["without"][0] < results["without"][1] - 100, "without a mask: the black symbol is clearly there")
+    check(results["threshold"][0] < results["threshold"][1] - 60, f"mask from the threshold picture: the black symbol stays as a shadow ({results['threshold'][0]:.0f} against {results['threshold'][1]:.0f})")
+    check(abs(results["filled"][0] - results["filled"][1]) < 15, f"mask with the hole filled: the symbol is gone ({results['filled'][0]:.0f} against {results['filled'][1]:.0f})")
+    print("Mask filling and growing: OK (holes, growing, dialog, options, real run with a dark symbol)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -2788,6 +2896,7 @@ def main():
     test_group_texts(tmp, sys.argv[1])
     test_delogo(tmp, sys.argv[1])
     test_removelogo(tmp, sys.argv[1])
+    test_mask_fill_and_grow(tmp, sys.argv[1])
     test_logo_options_tooltip_and_dialog_layout(tmp, sys.argv[1])
     test_example_ini(tmp, sys.argv[1])
     test_first_frame(tmp, sys.argv[1])

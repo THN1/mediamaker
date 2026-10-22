@@ -3,6 +3,12 @@
 ## 0.3 (in progress)
 
 - Version number set to 0.3-dev.
+- **RemoveLogo mask: dark symbols inside the logo.** ffmpeg's `removelogo` only replaces the white pixels of the mask. A logo whose symbol
+  is darker than the brightness limit (8) in the chosen frame left the symbol out of the mask (a black hole inside the white box), and the
+  symbol stayed visible as a shadow in its own shape. New option `mask_fill` (default True) fills black areas that are completely enclosed
+  by white ones; new option `mask_grow` (0 to 10 pixels, default 0) makes the white areas bigger, so that the blurred edge of the logo
+  is replaced as well. The dialog shows the mask as it will be stored. (Test with a black symbol: 31 without a fix, 153 with the filled
+  mask, 143 for the surroundings.)
 - The opacity of the red areas that mark the logo (DeLogo rectangle, band in the RemoveLogo dialog) is the new option `overlay_opacity`
   (percent, default 35; new tab "Logo" of the options dialog); a change applies to the rectangle at once.
 - While Shift is held down, the tooltip of the logo button reads "Open/close RemoveLogo dialog" instead of "Open/close DeLogo dialog".

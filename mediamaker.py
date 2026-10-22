@@ -984,7 +984,7 @@ class frmMain(frmMainBase):
         from removelogo_dialog import frmRemoveLogo
         seg = self.segment
         dialog = frmRemoveLogo(lambda n: self._frame_fn(seg.path, n, seg.fps), frame, seg.first_frame, seg.total_frames - 1, self.shown, self,
-                               self.overlay_opacity())
+                               self.overlay_opacity(), self.options.get("mask_fill", "True") != "False", self.mask_grow())
         return dialog.exec_dialog()
 
     def removelogo_select(self) -> None:
@@ -1014,6 +1014,13 @@ class frmMain(frmMainBase):
             return max(0, min(100, int(self.options.get("overlay_opacity", 35))))
         except ValueError:
             return 35
+
+    def mask_grow(self) -> int:
+        """Pixels by which the RemoveLogo mask is made bigger (option mask_grow)."""
+        try:
+            return max(0, min(10, int(self.options.get("mask_grow", 0))))
+        except ValueError:
+            return 0
 
     def style_delogo_frame(self) -> None:
         """The rectangle is translucent red (the logo stays visible below it) with a solid edge."""

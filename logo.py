@@ -64,6 +64,50 @@ def make_mask(frame_rgb: np.ndarray, threshold: int = THRESHOLD, blend: float = 
     return mask
 
 
+def fill_holes(mask: np.ndarray) -> np.ndarray:
+    """Fills the black areas that are completely enclosed by white ones. A logo whose symbol is darker than the brightness limit (a
+    dark glyph in a bright box) otherwise leaves the symbol out of the mask: ffmpeg's removelogo only replaces white pixels, so the
+    symbol would stay visible as a shadow in its own shape. Black areas that reach the edge of the picture stay black."""
+    ys, xs = np.nonzero(mask)
+    if len(ys) == 0:
+        return mask.copy()
+    top, bottom = max(0, ys.min() - 1), min(mask.shape[0], ys.max() + 2)         # work on the part of the picture around the white
+    left, right = max(0, xs.min() - 1), min(mask.shape[1], xs.max() + 2)
+    part = mask[top:bottom, left:right]
+    outside = np.zeros_like(part)
+    outside[0, :], outside[-1, :], outside[:, 0], outside[:, -1] = True, True, True, True
+    outside &= ~part                                                              # black pixels at the edge of the part: outside
+    while True:                                                                   # the outside spreads over the black pixels
+        spread = outside.copy()
+        spread[1:] |= outside[:-1]
+        spread[:-1] |= outside[1:]
+        spread[:, 1:] |= outside[:, :-1]
+        spread[:, :-1] |= outside[:, 1:]
+        spread &= ~part
+        if np.array_equal(spread, outside):
+            break
+        outside = spread
+    result = mask.copy()
+    result[top:bottom, left:right] = ~outside                                     # what the outside does not reach is inside
+    return result
+
+
+def grow_mask(mask: np.ndarray, pixels: int) -> np.ndarray:
+    """Makes the white areas `pixels` pixels bigger in every direction (square), so that the blurred edge of a logo (anti-aliasing,
+    compression) is replaced as well."""
+    result = mask.copy()
+    for _ in range(max(0, pixels)):
+        grown = result.copy()
+        grown[1:] |= result[:-1]
+        grown[:-1] |= result[1:]
+        result = grown
+        grown = result.copy()
+        grown[:, 1:] |= result[:, :-1]
+        grown[:, :-1] |= result[:, 1:]
+        result = grown
+    return result
+
+
 def mask_to_png_b64(mask: np.ndarray) -> str:
     """As in VB6 (SubItems(18)): 1-bit PNG as Base64 text without line breaks."""
     buf = io.BytesIO()

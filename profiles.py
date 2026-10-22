@@ -22,6 +22,7 @@ PRESETS = {
     "acodec_out": ["aac", "ac3", "mp3"],
     "pad": ["False", "True"],
     "multilanguage": ["False", "True"],
+    "mask_fill": ["True", "False"],
     "player": ["memory", "embed"],
     "dialog_style": ["tabs", "list"],
 }
@@ -75,7 +76,7 @@ HIDDEN_OPTIONS = {"logo_edge", "logo_conf", "cut_diff"}   # for advanced users o
 OPTION_GROUPS = (
     ("Borders", ("crop", "blackness", "allowance", "border_tol")),
     ("Seeking", ("pause", "overlap", "step_end", "step_next", "cut_window", "logo_rewind")),
-    ("Logo", ("overlay_opacity",)),
+    ("Logo", ("overlay_opacity", "mask_fill", "mask_grow")),
     ("Audio/Subtitles", ("audio", "multilanguage", "subtitle", "aflags")),
     ("Batch", ("path_map", "batch")),
     ("Technical", ("floor", "detect", "player", "vlc_args", "hide_messages", "dialog_style")),
@@ -87,7 +88,7 @@ GROUP_TEXTS = {
     "Borders": "Black border (letterbox) of the picture, which the search for commercials compares with.",
     "Seeking": "Finding the end of a commercial and the start of the next one.",
     "Audio/Subtitles": "Which audio tracks and subtitles are taken from the source files.",
-    "Logo": "Marking the station logo: the DeLogo rectangle and the band in the RemoveLogo dialog.",
+    "Logo": "Station logo: the red areas of DeLogo and RemoveLogo, and how the RemoveLogo mask is made.",
     "Batch": "Writing the job as a bash script (menu Batch).",
     "Technical": "Preview, console messages and dialogs; mostly set once.",
     "Other": "Values that belong to no group.",
@@ -98,7 +99,7 @@ def validate_options(o: dict) -> list[str]:
     errors = []
     ranges = {"crop": (0, 288), "floor": (0, 60), "blackness": (0, 255), "allowance": (0, 10 ** 7), "overlap": (0, 10 ** 6),
               "audio": (1, 99), "pause": (0, 10 ** 5), "detect": (0, 10 ** 8), "step_end": (1, 3600), "step_next": (1, 36000),
-              "border_tol": (0, 50), "logo_edge": (1, 255), "cut_window": (0, 50), "cut_diff": (1, 255), "overlay_opacity": (0, 100)}
+              "border_tol": (0, 50), "logo_edge": (1, 255), "cut_window": (0, 50), "cut_diff": (1, 255), "overlay_opacity": (0, 100), "mask_grow": (0, 10)}
     for key, (lo, hi) in ranges.items():
         if key in o:
             v = _int(o[key])
@@ -117,6 +118,8 @@ def validate_options(o: dict) -> list[str]:
     for key in ("path_map", "batch", "vlc_args", "hide_messages", "aflags"):
         if '"' in o.get(key, ""):
             errors.append(f'"{key}" must not contain double quotes.')
+    if "mask_fill" in o and o["mask_fill"] not in ("True", "False"):
+        errors.append('"mask_fill" must be True or False.')
     if "player" in o and o["player"] not in ("memory", "embed"):
         errors.append('"player" must be memory or embed.')
     if "dialog_style" in o and o["dialog_style"] not in ("tabs", "list"):

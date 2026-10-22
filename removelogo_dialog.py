@@ -2,7 +2,8 @@
 
 Shows a frame as a black/white picture, lets the user move to the left or right by 1 or 10 frames until a frame is found that only
 contains the station logo, and offers a slider that blackens the centre of the picture (title, names ...). OK stores the mask as a
-1-bit PNG, base64 encoded, in `result`; Cancel leaves `result` empty.
+1-bit PNG, base64 encoded, in `result`; Cancel leaves `result` empty. The picture shows the mask as it will be stored: dark areas inside
+the logo filled (option mask_fill) and the white areas grown (option mask_grow).
 """
 from __future__ import annotations
 
@@ -31,14 +32,17 @@ class frmRemoveLogo(frmRemoveLogoBase):
     NAVIGATE_STEPS = (-1, 1, -10, 10)           # buttons "<", ">", "<<", ">>"
 
     def __init__(self, grab_frame: Callable[[int], np.ndarray], frame: int, first: int, last: int,
-                 shown: Callable[[int], int] = lambda n: n, parent=None, opacity: int = 35):
+                 shown: Callable[[int], int] = lambda n: n, parent=None, opacity: int = 35, fill: bool = True, grow: int = 0):
         """grab_frame(n) returns frame n as an RGB array; first..last are the valid frame numbers; shown(n) is the number displayed;
-        opacity (percent) is that of the red band."""
+        opacity (percent) is that of the red band; fill = enclosed black areas become white; grow = pixels by which the white areas are
+        made bigger (see logo.fill_holes and logo.grow_mask)."""
         super().__init__(parent)
         self.grab_frame, self.first, self.last, self.shown = grab_frame, first, last, shown
         self.frame = max(first, min(frame, last))
         self.result = ""
-        self.mask: np.ndarray | None = None
+        self.fill, self.grow = fill, grow
+        self.mask: np.ndarray | None = None             # black/white picture of the frame (threshold)
+        self.final: np.ndarray | None = None            # the mask as it is stored (without the blackened centre): filled, grown
         self.image = None
         self.Picture1.paint_hook = self.paint_picture
         self.fraBlend.setAutoFillBackground(False)
@@ -83,10 +87,12 @@ class frmRemoveLogo(frmRemoveLogoBase):
                 self.inform(f"Could not get frame at frame {self.shown(self.frame)}")
                 return False
             self.mask = logo.monochrome_mask(rgb)
+            self.final = logo.fill_holes(self.mask) if self.fill else self.mask
+            self.final = logo.grow_mask(self.final, self.grow)
             self.lblFrame.setText(f"Frame: {self.shown(self.frame)}")
-            height, width = self.mask.shape
+            height, width = self.final.shape
             self.fit_to_picture(width, height)
-            data = np.ascontiguousarray((self.mask * 255).astype(np.uint8))
+            data = np.ascontiguousarray((self.final * 255).astype(np.uint8))
             self.image = QtGui.QImage(data.tobytes(), width, height, width, QtGui.QImage.Format.Format_Grayscale8).copy()
             self.Picture1.update()
             return True
@@ -136,7 +142,7 @@ class frmRemoveLogo(frmRemoveLogoBase):
         if self.mask is None:
             return
         self.fraBlend.hide()
-        self.result = logo.mask_to_png_b64(logo.blacken_center(self.mask, self.hscBlend.value(), logo.BLEND_MAX))
+        self.result = logo.mask_to_png_b64(logo.blacken_center(self.final, self.hscBlend.value(), logo.BLEND_MAX))
         self.accept()
 
     def cmdCancel_Click(self):
