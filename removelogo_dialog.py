@@ -3,7 +3,8 @@
 Shows a frame as a black/white picture, lets the user move to the left or right by 1 or 10 frames until a frame is found that only
 contains the station logo, and offers a slider that blackens the centre of the picture (title, names ...). OK stores the mask as a
 1-bit PNG, base64 encoded, in `result`; Cancel leaves `result` empty. The picture shows the mask as it will be stored: dark areas inside
-the logo filled (option mask_fill) and the white areas grown (option mask_grow).
+the logo filled (option mask_fill) and the white areas grown (option mask_grow); what the two options add is shown grey, so the symbol of
+the logo stays recognizable.
 """
 from __future__ import annotations
 
@@ -18,6 +19,9 @@ from ui_frmRemoveLogo import frmRemoveLogoBase
 PICTURE_WIDTH = 593                     # width of the picture box; the height follows from the proportions of the picture
 MIN_HEIGHT, MAX_HEIGHT = 120, 700       # limits of the height of the picture box (extreme proportions)
 HINT_HEIGHT = 24                        # room for the line of explanation below the buttons
+ADDED_GREY = 140                        # pixels that fill/grow add to the mask are shown grey: they are replaced too
+PICTURE_HINT = ("White: pixels of the mask. Grey: pixels added by the options mask_fill / mask_grow (the dark symbol inside a logo, "
+                "a margin around it). The filter replaces all of them.")
 HINT = "Slider: blackens a band in the middle of the picture, e.g. to hide the title or names (red band)"
 
 
@@ -47,7 +51,9 @@ class frmRemoveLogo(frmRemoveLogoBase):
         self.mask: np.ndarray | None = None             # black/white picture of the frame (threshold)
         self.final: np.ndarray | None = None            # the mask as it is stored (without the blackened centre): filled, grown
         self.image = None
+        self.preview: np.ndarray | None = None          # what is shown: white = mask, grey = added by fill / grow
         self.Picture1.paint_hook = self.paint_picture
+        self.Picture1.setToolTip(PICTURE_HINT)
         self.fraBlend.setAutoFillBackground(False)
         self.fraBlend.setStyleSheet(band_style(opacity))   # translucent red band: the picture below stays visible
         self.fraBlend.hide()
@@ -95,7 +101,10 @@ class frmRemoveLogo(frmRemoveLogoBase):
             self.lblFrame.setText(f"Frame: {self.shown(self.frame)}")
             height, width = self.final.shape
             self.fit_to_picture(width, height)
-            data = np.ascontiguousarray((self.final * 255).astype(np.uint8))
+            preview = (self.final * 255).astype(np.uint8)
+            preview[self.final & ~self.mask] = ADDED_GREY         # what fill and grow added stays recognizable (the logo is not a white box)
+            self.preview = preview
+            data = np.ascontiguousarray(preview)
             self.image = QtGui.QImage(data.tobytes(), width, height, width, QtGui.QImage.Format.Format_Grayscale8).copy()
             self.Picture1.update()
             return True

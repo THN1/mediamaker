@@ -7,7 +7,8 @@
   is darker than the brightness limit (8) in the chosen frame left the symbol out of the mask (a black hole inside the white box), and the
   symbol stayed visible as a shadow in its own shape. New option `mask_fill` (default True) fills black areas that are completely enclosed
   by white ones; new option `mask_grow` (0 to 10 pixels, default 0) makes the white areas bigger, so that the blurred edge of the logo
-  is replaced as well. The dialog shows the mask as it will be stored. (Test with a black symbol: 31 without a fix, 153 with the filled
+  is replaced as well. The dialog shows the mask as it will be stored, with the pixels added by fill and grow in grey (white = threshold mask), so the symbol of the
+  logo stays recognizable; a tooltip explains the colours. (Test with a black symbol: 31 without a fix, 153 with the filled
   mask, 143 for the surroundings.)
 - The opacity of the red areas that mark the logo (DeLogo rectangle, band in the RemoveLogo dialog) is the new option `overlay_opacity`
   (percent, default 35; new tab "Logo" of the options dialog); a change applies to the rectangle at once.

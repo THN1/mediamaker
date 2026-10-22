@@ -2776,6 +2776,21 @@ def test_mask_fill_and_grow(tmp, videos):
         d.accept = lambda: None
         d.cmdOK_Click()
         check(np.array_equal(logo.mask_from_png_b64(d.result), d.final), f"fill={fill}, grow={grow}: what is stored is what is shown")
+    # --- the preview: white = mask, grey = added by fill / grow, so the symbol stays recognizable
+    for fill, grow, grey in ((True, 0, 18 * 16), (False, 0, 0), (True, 2, (37 + 4) * (34 + 4) - 37 * 34 + 18 * 16), (False, 1, (37 + 2) * (34 + 2) - 37 * 34 + 0)):
+        d = removelogo_dialog.frmRemoveLogo(lambda n: logo_frame(), 40, 10, 157, fill=fill, grow=grow)
+        check(d.Picture1.called("setToolTip")[-1] == (removelogo_dialog.PICTURE_HINT,) and d.preview is None, "tooltip on the picture, nothing shown before loading")
+        d.load_frame()
+        values = set(np.unique(d.preview).tolist())
+        shown_grey = int((d.preview == removelogo_dialog.ADDED_GREY).sum())
+        shown_white = int((d.preview == 255).sum())
+        expected_white = int(d.mask.sum())
+        check(values <= {0, 140, 255} and shown_white == expected_white and shown_grey == int(d.final.sum()) - expected_white,
+              f"fill={fill}, grow={grow}: {shown_white} white (threshold mask) and {shown_grey} grey pixels (added)")
+        check(np.array_equal(d.preview > 0, d.final), f"fill={fill}, grow={grow}: what is shown is the stored mask (grey counts as white)")
+    d = removelogo_dialog.frmRemoveLogo(lambda n: logo_frame(), 40, 10, 157, fill=True, grow=0)
+    d.load_frame()
+    check(d.preview[95, 648] == removelogo_dialog.ADDED_GREY and d.preview[85, 648] == 255 and d.preview[300, 300] == 0, "symbol grey inside the white box, black elsewhere")
     d = removelogo_dialog.frmRemoveLogo(lambda n: logo_frame(), 40, 10, 157, fill=True, grow=3)
     d.load_frame()
     d.accept = lambda: None
