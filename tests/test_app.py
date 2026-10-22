@@ -2563,15 +2563,15 @@ def test_removelogo(tmp, videos):
     seg = win.segments[0]
     seen = []
     class Spy:
-        def __init__(self, grab_fn, frame, first, last, shown, parent, opacity, fill, grow, aspect):
-            seen.append((frame, first, last, shown(frame), opacity, fill, grow, round(aspect, 4)))
+        def __init__(self, grab_fn, frame, first, last, shown, parent, opacity, aspect):
+            seen.append((frame, first, last, shown(frame), opacity, round(aspect, 4)))
         def exec_dialog(self):
             return b64
     original = removelogo_dialog.frmRemoveLogo
     removelogo_dialog.frmRemoveLogo = Spy
     try:
         slider = win.Slider1.value()
-        check(win.monochrome(slider) == b64 and seen == [(slider, 10, 158 - 1, slider - 10, 35, True, 0, 1.7778)], f"monochrome() opens the dialog with the current frame, the valid range, the opacity, the mask options and the display aspect ratio: {seen}")
+        check(win.monochrome(slider) == b64 and seen == [(slider, 10, 158 - 1, slider - 10, 35, 1.7778)], f"monochrome() opens the dialog with the current frame, the valid range, the opacity and the display aspect ratio: {seen}")
     finally:
         removelogo_dialog.frmRemoveLogo = original
     win.fraCrop[0].show()
@@ -2683,19 +2683,24 @@ def test_logo_options_tooltip_and_dialog_layout(tmp, videos):
     state["shift"] = False
     tip2.eventFilter(widget, Ev(E.ToolTip))
     check(last() == "normal", "tooltip appears after Shift was released")
-    tip2.eventFilter(widget, Ev(E.KeyPress, K.Key_Shift))
-    check(last() == "with shift", "Shift pressed while the pointer rests on the control")
-    tip2.eventFilter(widget, Ev(E.KeyRelease, K.Key_Shift))
-    check(last() == "normal", "Shift released")
+    state["shift"] = True
+    tip2.eventFilter(widget, Ev(E.MouseMove))
+    check(last() == "with shift", "the pointer moves over the control while Shift is down")
+    state["shift"] = False
+    tip2.eventFilter(widget, Ev(E.MouseMove))
+    check(last() == "normal", "Shift released, the pointer moves")
     before = len(widget.called("setToolTip"))
-    tip2.eventFilter(widget, Ev(E.KeyPress, "other"))
+    tip2.eventFilter(widget, Ev(E.KeyPress, K.Key_Shift))
+    tip2.eventFilter(widget, Ev(E.KeyRelease, K.Key_Shift))
     tip2.eventFilter(object(), Ev(E.Enter))
-    check(len(widget.called("setToolTip")) == before, "other keys and other controls are ignored")
+    check(len(widget.called("setToolTip")) == before, "key events and events of other controls are ignored (nothing is watched on the whole application)")
     check(tip2.eventFilter(widget, Ev(E.Enter)) is False, "events are never swallowed")
+    check(not hasattr(vbqt.ShiftToolTip, "keyPressEvent"), "no key handling")
     widget.under_mouse_ = True
     QToolTip.shown.append(("pos", "old", widget))
-    tip2.eventFilter(widget, Ev(E.KeyPress, K.Key_Shift))
-    check(QToolTip.shown[-1][1] == "with shift" and QToolTip.shown[-1][2] is widget, "a tooltip that is showing gets the new text at once")
+    state["shift"] = True
+    tip2.eventFilter(widget, Ev(E.MouseMove))
+    check(QToolTip.shown[-1][1] == "with shift" and QToolTip.shown[-1][2] is widget, "a tooltip that is showing gets the new text at the next movement of the pointer")
     QToolTip.shown.clear()
     # --- RemoveLogo dialog: width stays, the height follows the proportions of the picture, no distortion
     sample = os.path.join(videos, "sample2.ts")
@@ -2721,129 +2726,6 @@ def test_logo_options_tooltip_and_dialog_layout(tmp, videos):
     flat.load_frame()
     check(geo(tall.Picture1)[3] == 700 and geo(flat.Picture1)[3] == 120, "extreme proportions: the height is limited")
     print("Logo options, tooltip with Shift, dialog layout: OK")
-
-
-def test_mask_fill_and_grow(tmp, videos):
-    """RemoveLogo mask: enclosed dark areas are filled, the white areas can grow; options; real ffmpeg run with a logo whose symbol is
-    darker than the brightness limit."""
-    import numpy as np
-    import dialogs
-    import logo
-    import ffmpeg_cmd
-    import removelogo_dialog
-    from PIL import Image, ImageDraw
-    from frames import grab_frame
-    from mediaprobe import first_frame_number
-    from profiles import OPTION_GROUPS, validate_options
-    from runner import run_ffmpeg, total_seconds
-    from settings import DEFAULT_TOOLTIPS, default_options
-    # --- fill_holes
-    ring = np.zeros((12, 12), bool)
-    ring[2:10, 2:10] = True
-    ring[4:8, 4:8] = False
-    filled = logo.fill_holes(ring)
-    check(filled[2:10, 2:10].all() and not filled[:2].any() and not filled[10:].any() and filled is not ring and not ring[5, 5], "a hole inside is filled, the input is not changed")
-    open_c = ring.copy()
-    open_c[4:8, 8:10] = False                                           # a gap through the wall (2 pixels thick) to the outside
-    check(np.array_equal(logo.fill_holes(open_c), open_c), "a black area that is open to the outside is not a hole")
-    two = np.zeros((20, 30), bool)
-    two[1:9, 1:9], two[1:9, 15:25] = True, True
-    two[3:6, 3:6], two[4:7, 18:22] = False, False
-    check(logo.fill_holes(two)[1:9, 1:9].all() and logo.fill_holes(two)[1:9, 15:25].all() and logo.fill_holes(two).sum() == 64 + 80, "several holes")
-    edge = np.zeros((8, 8), bool)
-    edge[0:4, 0:4] = True
-    edge[1:3, 1:3] = False
-    check(logo.fill_holes(edge)[0:4, 0:4].all(), "a hole in a shape at the edge of the picture")
-    check(not logo.fill_holes(np.zeros((6, 6), bool)).any() and logo.fill_holes(np.ones((6, 6), bool)).all(), "empty and full masks")
-    # --- grow_mask
-    dot = np.zeros((9, 9), bool)
-    dot[4, 4] = True
-    check(np.array_equal(logo.grow_mask(dot, 0), dot) and logo.grow_mask(dot, 0) is not dot, "0 pixels: the same, a copy")
-    check(logo.grow_mask(dot, 1).sum() == 9 and logo.grow_mask(dot, 2).sum() == 25 and logo.grow_mask(dot, 2)[2:7, 2:7].all() and dot.sum() == 1, "n pixels in every direction (a square)")
-    corner = np.zeros((6, 6), bool)
-    corner[0, 0] = True
-    check(logo.grow_mask(corner, 2).sum() == 9, "growing stops at the edge of the picture")
-    # --- the dialog: filled and grown mask is shown and stored, the centre is blackened last
-    def logo_frame():
-        frame = np.zeros((576, 720, 3), np.uint8)
-        frame[81:118, 632:666] = 210                                    # bright box
-        frame[90:108, 640:656] = 0                                     # dark symbol inside (below the limit of 8)
-        return frame
-    for fill, grow, white in ((True, 0, 37 * 34), (False, 0, 37 * 34 - 18 * 16), (True, 2, 0)):
-        d = removelogo_dialog.frmRemoveLogo(lambda n: logo_frame(), 40, 10, 157, fill=fill, grow=grow)
-        d.load_frame()
-        expected = (37 + 2 * grow) * (34 + 2 * grow) if (fill and grow) else white
-        check(int(d.final.sum()) == expected and int(d.mask.sum()) == 37 * 34 - 18 * 16, f"fill={fill}, grow={grow}: {int(d.final.sum())} white pixels in the mask, {int(d.mask.sum())} in the threshold picture")
-        d.accept = lambda: None
-        d.cmdOK_Click()
-        check(np.array_equal(logo.mask_from_png_b64(d.result), d.final), f"fill={fill}, grow={grow}: what is stored is what is shown")
-    # --- the preview: white = mask, grey = added by fill / grow, so the symbol stays recognizable
-    for fill, grow, grey in ((True, 0, 18 * 16), (False, 0, 0), (True, 2, (37 + 4) * (34 + 4) - 37 * 34 + 18 * 16), (False, 1, (37 + 2) * (34 + 2) - 37 * 34 + 0)):
-        d = removelogo_dialog.frmRemoveLogo(lambda n: logo_frame(), 40, 10, 157, fill=fill, grow=grow)
-        check(d.Picture1.called("setToolTip")[-1] == (dialogs.wrap_tooltip(removelogo_dialog.PICTURE_HINT),) and d.preview is None, "tooltip on the picture, nothing shown before loading")
-        d.load_frame()
-        values = set(np.unique(d.preview).tolist())
-        shown_grey = int((d.preview == removelogo_dialog.ADDED_GREY).sum())
-        shown_white = int((d.preview == 255).sum())
-        expected_white = int(d.mask.sum())
-        check(values <= {0, 140, 255} and shown_white == expected_white and shown_grey == int(d.final.sum()) - expected_white,
-              f"fill={fill}, grow={grow}: {shown_white} white (threshold mask) and {shown_grey} grey pixels (added)")
-        check(np.array_equal(d.preview > 0, d.final), f"fill={fill}, grow={grow}: what is shown is the stored mask (grey counts as white)")
-    d = removelogo_dialog.frmRemoveLogo(lambda n: logo_frame(), 40, 10, 157, fill=True, grow=0)
-    d.load_frame()
-    check(d.preview[95, 648] == removelogo_dialog.ADDED_GREY and d.preview[85, 648] == 255 and d.preview[300, 300] == 0, "symbol grey inside the white box, black elsewhere")
-    d = removelogo_dialog.frmRemoveLogo(lambda n: logo_frame(), 40, 10, 157, fill=True, grow=3)
-    d.load_frame()
-    d.accept = lambda: None
-    d.hscBlend.setValue(1800)
-    d.cmdOK_Click()
-    check(not logo.mask_from_png_b64(d.result).any(), "the blackened centre is applied after filling and growing")
-    # --- options
-    o = default_options()
-    check(o["mask_fill"] == "True" and o["mask_grow"] == "0" and all(k in DEFAULT_TOOLTIPS for k in ("mask_fill", "mask_grow"))
-          and dict(OPTION_GROUPS)["Logo"] == ("logo_fill", "fill_sigma", "mask_fill", "mask_grow", "overlay_opacity"), "defaults, explanations, group Logo")
-    check(validate_options({"mask_grow": "10", "mask_fill": "False"}) == [] and len(validate_options({"mask_grow": "11"})) == 1 and len(validate_options({"mask_grow": "-1"})) == 1
-          and len(validate_options({"mask_fill": "yes"})) == 1, "checking of mask_grow (0 to 10) and mask_fill (True/False)")
-    win = seek_window(tmp, videos, ("sample2.ts",), workdir="maskwin")
-    check(win.mask_grow() == 0, "mask_grow() default")
-    for value, expected in (("3", 3), ("99", 10), ("-4", 0), ("x", 0)):
-        win.settings.set_option("mask_grow", value)
-        check(win.mask_grow() == expected, f"mask_grow {value!r} -> {expected}")
-    # --- real run: a logo with a symbol that is black (< 8) in the reference picture
-    work = tempfile.mkdtemp()
-    box = Image.new("RGB", (34, 37), (210, 210, 210))
-    ImageDraw.Draw(box).arc((6, 6, 28, 30), 200, 520, fill=(0, 0, 0), width=5)          # symbol: a black swoosh
-    box.save(os.path.join(work, "logo.png"))
-    reference = np.zeros((576, 720, 3), np.uint8)
-    reference[81:118, 632:666] = np.asarray(box)
-    threshold = logo.monochrome_mask(reference)
-    holes = logo.fill_holes(threshold) & ~threshold
-    check(holes.sum() > 40, f"the black symbol is a hole in the threshold mask ({int(holes.sum())} pixels)")
-    source = os.path.join(work, "logo_test.ts")
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x909090:s=720x576:r=25:d=3,noise=alls=6:allf=t+u", "-loop", "1", "-i", os.path.join(work, "logo.png"),
-                    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=3", "-filter_complex", "[0][1]overlay=632:81:shortest=1[v]", "-map", "[v]", "-map", "2:a",
-                    "-c:v", "libx264", "-crf", "10", "-g", "12", "-pix_fmt", "yuv420p", "-c:a", "mp2", "-shortest", "-f", "mpegts", source], check=True, stdin=subprocess.DEVNULL)
-    lum = lambda a: (0.2126 * a[..., 0] + 0.7152 * a[..., 1] + 0.0722 * a[..., 2])
-    results = {}
-    for name, mask in (("without", None), ("threshold", threshold), ("filled", logo.fill_holes(threshold))):
-        w2 = seek_window(tmp, work, ("logo_test.ts",), workdir="maskrun_" + name, first_fn=first_frame_number)
-        w2.settings.set_option("crop", "0")
-        if mask is not None:
-            w2.segments[0].mask = logo.mask_to_png_b64(mask)
-        job = w2.make_job(os.path.join(work, name + ".mp4"))
-        ffmpeg_cmd.write_masks(job.segments, work)
-        res = run_ffmpeg(ffmpeg_cmd.build_command(job), total_seconds(job), None, cwd=work)
-        check(res.returncode == 0, f"ffmpeg run {name}: {res.returncode} {res.errors[-200:]}")
-        out = lum(grab_frame(job.output, 20, Fraction(25)).astype(float))
-        symbol = out[holes]                                          # where the black symbol is
-        around = out[(logo.grow_mask(threshold, 6) & ~logo.grow_mask(threshold, 2))]
-        results[name] = (symbol.mean(), around.mean())
-    for name, (inside, around) in results.items():
-        print(f"      {name:10s} symbol area {inside:6.1f}   surroundings {around:6.1f}")
-    check(results["without"][0] < results["without"][1] - 100, "without a mask: the black symbol is clearly there")
-    check(results["threshold"][0] < results["threshold"][1] - 60, f"mask from the threshold picture: the black symbol stays as a shadow ({results['threshold'][0]:.0f} against {results['threshold'][1]:.0f})")
-    check(abs(results["filled"][0] - results["filled"][1]) < 15, f"mask with the hole filled: the symbol is gone ({results['filled'][0]:.0f} against {results['filled'][1]:.0f})")
-    print("Mask filling and growing: OK (holes, growing, dialog, options, real run with a dark symbol)")
 
 
 def test_display_aspect(tmp, videos):
@@ -2884,109 +2766,6 @@ def test_display_aspect(tmp, videos):
     win._aspect_fn = lambda path: None
     check(win.aspect_of("/c.ts") is None, "unknown aspect: None (the dialog then uses the pixel proportions)")
     print("Display aspect ratio: OK (DAR, SAR, files, dialog height, cache)")
-
-
-def test_smooth_fill(tmp, videos):
-    """Logo removal with a smooth fill instead of ffmpeg's removelogo (option logo_fill): graph, region, options, real runs."""
-    import numpy as np
-    import logo
-    import ffmpeg_cmd
-    from cutlist import Job
-    from frames import grab_frame
-    from mediaprobe import first_frame_number, probe
-    from PIL import Image, ImageDraw
-    from profiles import validate_options
-    from runner import expected_frames, run_ffmpeg, total_seconds, verify_output
-    from settings import DEFAULT_TOOLTIPS, default_options
-    # --- options
-    d = default_options()
-    check(d["logo_fill"] == "removelogo" and d["fill_sigma"] == "6" and "logo_fill" in DEFAULT_TOOLTIPS and "fill_sigma" in DEFAULT_TOOLTIPS, "defaults: ffmpeg's removelogo, sigma 6")
-    check(validate_options({"logo_fill": "smooth", "fill_sigma": "30"}) == [] and len(validate_options({"logo_fill": "blur"})) == 1
-          and len(validate_options({"fill_sigma": "0"})) == 1 and len(validate_options({"fill_sigma": "31"})) == 1, "checking of logo_fill and fill_sigma")
-    # --- region around the logo
-    m = np.zeros((576, 720), bool)
-    m[81:118, 632:666] = True
-    x, y, w, h = ffmpeg_cmd.logo_region(m, 720, 576, 6)
-    check((x, y, w, h) == (612, 62, 76, 76) or (x % 2 == 0 and y % 2 == 0 and w % 2 == 0 and h % 2 == 0 and x <= 632 - 20 and x + w >= 666 + 20 and y <= 81 - 20 and y + h >= 118 + 20),
-          f"region: bounding box plus a margin of about 3 sigma, even numbers: {(x, y, w, h)}")
-    check(ffmpeg_cmd.logo_region(m, 720, 576, 6) == ffmpeg_cmd.logo_region(m, 720, 576, 6.0), "same result for the same sigma")
-    edge = np.zeros((576, 720), bool)
-    edge[2:20, 700:719] = True
-    x, y, w, h = ffmpeg_cmd.logo_region(edge, 720, 576, 6)
-    check(x + w <= 720 and y >= 0 and x % 2 == 0 and y % 2 == 0 and w % 2 == 0 and h % 2 == 0 and x <= 700 and y == 0, f"region at the edge of the picture stays inside: {(x, y, w, h)}")
-    check(ffmpeg_cmd.logo_region(np.zeros((576, 720), bool), 720, 576, 6) == (0, 0, 720, 576), "empty mask: the whole picture")
-    centre = np.zeros((576, 720), bool)
-    centre[250:287, 300:334] = True
-    small, big = ffmpeg_cmd.logo_region(centre, 720, 576, 6), ffmpeg_cmd.logo_region(centre, 720, 576, 30)
-    check(big[2] > small[2] + 100 and big[3] > small[3] + 100 and big[2] >= 34 + 2 * 90 and big[0] < small[0], f"a larger sigma gives a larger region: {small} against {big}")
-    # --- the filter chain
-    win = seek_window(tmp, videos, ("sample2.ts",), workdir="smoothwin", first_fn=first_frame_number)
-    seg = win.segments[0]
-    seg.mask = logo.mask_to_png_b64(m)
-    plain = ffmpeg_cmd.build_command(win.make_job(os.path.join(tmp, "o.mp4")))
-    check("removelogo=removelogo01.png" in " ".join(plain) and "movie=" not in " ".join(plain), "default: removelogo filter")
-    win.settings.set_option("logo_fill", "smooth")
-    job = win.make_job(os.path.join(tmp, "o.mp4"))
-    cmd = ffmpeg_cmd.build_command(job)
-    graph = cmd[cmd.index("-filter_complex") + 1]
-    check("removelogo=" not in graph and "movie=removelogo01.png" in graph and "gblur=sigma=6:steps=4" in graph and "overlay=" in graph and graph.count("shortest=1") >= 6
-          and "[v0]" in graph and graph.index("[v0]") > graph.index("overlay="), "smooth: movie for the mask, normalized convolution, overlay, the rest of the chain follows")
-    check(graph.count("[sa0]") == 2 and graph.index("split=2[sa0][sb0]") < graph.index("crop=iw:ih-2*72") and "scale=720:576" in graph.split("overlay=")[1], "the usual crop and scale come after the patch")
-    win.settings.set_option("fill_sigma", "10")
-    check("gblur=sigma=10:steps=4" in ffmpeg_cmd.build_command(win.make_job(os.path.join(tmp, "o.mp4")))[ffmpeg_cmd.build_command(win.make_job(os.path.join(tmp, "o.mp4"))).index("-filter_complex") + 1], "fill_sigma goes into the graph")
-    win.settings.set_option("fill_sigma", "6")
-    # delogo segments and segments without a mask are not touched
-    seg.mask = "0.1 0.2 0.3 0.4"
-    check("movie=" not in " ".join(ffmpeg_cmd.build_command(win.make_job(os.path.join(tmp, "o.mp4")))) and "delogo=" in " ".join(ffmpeg_cmd.build_command(win.make_job(os.path.join(tmp, "o.mp4")))), "DeLogo is unchanged")
-    seg.mask = ""
-    check("movie=" not in " ".join(ffmpeg_cmd.build_command(win.make_job(os.path.join(tmp, "o.mp4")))), "no mask: nothing changes")
-    # --- real runs: a logo (light box, black symbol) on a grey, grainy picture; 25 and 30 frames per second, one and two segments
-    work = tempfile.mkdtemp()
-    box = Image.new("RGB", (34, 37), (210, 210, 210))
-    ImageDraw.Draw(box).arc((6, 6, 28, 30), 200, 520, fill=(0, 0, 0), width=5)
-    box.save(os.path.join(work, "logo.png"))
-    reference = np.zeros((576, 720, 3), np.uint8)
-    reference[81:118, 632:666] = np.asarray(box)
-    mask = logo.grow_mask(logo.fill_holes(logo.monochrome_mask(reference)), 2)
-    lum = lambda a: (0.2126 * a[..., 0] + 0.7152 * a[..., 1] + 0.0722 * a[..., 2])
-    for rate in (25, 30):
-        source = os.path.join(work, f"logo_{rate}.ts")
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c=0x909090:s=720x576:r={rate}:d=3,noise=alls=6:allf=t+u", "-loop", "1", "-i", os.path.join(work, "logo.png"),
-                        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=3", "-filter_complex", "[0][1]overlay=632:81:shortest=1[v]", "-map", "[v]", "-map", "2:a",
-                        "-c:v", "libx264", "-crf", "10", "-g", "12", "-pix_fmt", "yuv420p", "-c:a", "mp2", "-shortest", "-f", "mpegts", source], check=True, stdin=subprocess.DEVNULL)
-        results = {}
-        for name, fill in (("removelogo", "removelogo"), ("smooth", "smooth")):
-            w2 = seek_window(tmp, work, (f"logo_{rate}.ts",), workdir=f"smoothrun_{rate}_{name}", first_fn=first_frame_number)
-            w2.settings.set_option("crop", "0")
-            w2.settings.set_option("logo_fill", fill)
-            w2.settings.set_profile({**w2.settings.profile, "fps": f"{rate}.000"})
-            w2.segments[0].mask = logo.mask_to_png_b64(mask)
-            job = w2.make_job(os.path.join(work, f"{rate}_{name}.mp4"))
-            ffmpeg_cmd.write_masks(job.segments, work)
-            res = run_ffmpeg(ffmpeg_cmd.build_command(job), total_seconds(job), None, cwd=work)
-            check(res.returncode == 0, f"{rate} fps, {name}: ffmpeg run {res.returncode} {res.errors[-300:]}")
-            ok, actual, msg = verify_output(job.output, expected_frames(job))
-            check(ok, f"{rate} fps, {name}: number of frames as expected ({actual} for {expected_frames(job)}): {msg}")
-            out = lum(grab_frame(job.output, 20, Fraction(rate)).astype(float))
-            region = out[81:118, 632:666]
-            around = out[(logo.grow_mask(mask, 8) & ~logo.grow_mask(mask, 3))]
-            results[name] = (float(region.mean()), float(around.mean()), float(region.std()))
-        a, b = results["smooth"], results["removelogo"]
-        print(f"      {rate} fps: smooth region {a[0]:.0f} (surroundings {a[1]:.0f}, spread {a[2]:.1f}); removelogo region {b[0]:.0f} (surroundings {b[1]:.0f}, spread {b[2]:.1f})")
-        check(abs(a[0] - a[1]) < 15 and a[2] < 12, f"{rate} fps: the smooth fill matches the surroundings: {a}")
-    # two segments, the first with a mask: concat works, frame count
-    w3 = seek_window(tmp, work, ("logo_25.ts", "logo_25.ts"), workdir="smoothrun_two", first_fn=first_frame_number)
-    w3.settings.set_option("crop", "0")
-    w3.settings.set_option("logo_fill", "smooth")
-    w3.segments[0].mask = logo.mask_to_png_b64(mask)
-    w3.segments[0].end -= 30
-    w3.segments[1].start += 20
-    job = w3.make_job(os.path.join(work, "two.mp4"))
-    ffmpeg_cmd.write_masks(job.segments, work)
-    res = run_ffmpeg(ffmpeg_cmd.build_command(job), total_seconds(job), None, cwd=work)
-    ok, actual, msg = verify_output(job.output, expected_frames(job))
-    check(res.returncode == 0 and ok, f"two segments (the first with a smooth fill): {res.returncode} {res.errors[-200:]} {actual} / {expected_frames(job)} {msg}")
-    print("Smooth fill: OK (options, region, graph, real runs at 25 and 30 fps, two segments)")
 
 
 def test_recent_dirs(tmp, videos):
@@ -3075,6 +2854,57 @@ def test_recent_dirs(tmp, videos):
     print("Recent folders: OK (INI list, input dialog with selection list, Batch, Save as)")
 
 
+def test_logo_mask_as_in_vb6(tmp, videos):
+    """The RemoveLogo mask is used exactly as the threshold picture gives it (as in VB6); the options that were tried for it are gone."""
+    import numpy as np
+    import ffmpeg_cmd
+    import logo
+    import removelogo_dialog
+    from mediaprobe import first_frame_number
+    from profiles import GROUP_TEXTS, OPTION_GROUPS, REMOVED_OPTIONS, validate_options
+    from settings import DEFAULT_TOOLTIPS, default_options
+    # --- the dialog stores the threshold picture unchanged, also if a dark symbol makes a hole in it
+    def logo_frame():
+        frame = np.zeros((576, 720, 3), np.uint8)
+        frame[81:118, 632:666] = 210
+        frame[90:108, 640:656] = 0
+        return frame
+    d = removelogo_dialog.frmRemoveLogo(lambda n: logo_frame(), 40, 10, 157)
+    d.load_frame()
+    expected = logo.monochrome_mask(logo_frame())
+    d.accept = lambda: None
+    d.cmdOK_Click()
+    stored = logo.mask_from_png_b64(d.result)
+    check(np.array_equal(stored, expected) and not stored[95, 648] and stored[85, 648] and int(stored.sum()) == 37 * 34 - 18 * 16,
+          f"OK stores the threshold picture as it is (the hole of the dark symbol stays): {int(stored.sum())} white pixels")
+    check(np.array_equal(logo.mask_from_png_b64(logo.mask_to_png_b64(expected)), expected) and not hasattr(logo, "fill_holes") and not hasattr(logo, "grow_mask"),
+          "no filling and no growing in the logo module")
+    check(not hasattr(d, "final") and not hasattr(d, "preview") and not hasattr(removelogo_dialog, "ADDED_GREY"), "no second (changed) picture in the dialog")
+    # --- the command always uses ffmpeg's removelogo, also with an old INI file that still has the dropped options
+    work = os.path.join(tmp, "oldlogo")
+    os.makedirs(work, exist_ok=True)
+    ini = os.path.join(work, "MediaMaker.ini")
+    open(ini, "w", encoding="utf-8").write('[settings]\noptions=crop="72" logo_fill="smooth" fill_sigma="9" mask_fill="False" mask_grow="3" player="memory"\n')
+    win = make_window(work)
+    win.showEvent(None)
+    check("logo_fill" not in win.options and "mask_grow" not in win.options and "fill_sigma" not in win.options and "mask_fill" not in win.options, "the dropped options are not offered")
+    text = open(ini, encoding="utf-8").read()
+    check("logo_fill" not in text and "mask_grow" not in text and 'crop="72"' in text and 'player="memory"' in text, f"they are removed from the INI file, the rest stays: {text.strip()!r}")
+    w2 = seek_window(tmp, videos, ("sample2.ts",), workdir="vb6mask", first_fn=first_frame_number)
+    m = np.zeros((576, 720), bool)
+    m[81:118, 632:666] = True
+    w2.segments[0].mask = logo.mask_to_png_b64(m)
+    w2.settings.set("settings", "options", w2.settings.get("settings", "options") + ' logo_fill="smooth"')
+    cmd = " ".join(ffmpeg_cmd.build_command(w2.make_job(os.path.join(tmp, "o.mp4"))))
+    check("removelogo=removelogo01.png" in cmd and "movie=" not in cmd and "gblur" not in cmd, "the command is ffmpeg's removelogo, whatever an old INI says")
+    # --- options, explanations, groups
+    d0 = default_options()
+    check(not (REMOVED_OPTIONS - {"focus", "pad"}) & set(d0) and all(k not in DEFAULT_TOOLTIPS for k in ("logo_fill", "fill_sigma", "mask_fill", "mask_grow")), "no defaults and no explanations for them")
+    check(dict(OPTION_GROUPS)["Logo"] == ("overlay_opacity",) and "overlay_opacity" in d0 and GROUP_TEXTS["Logo"], "the group Logo has the opacity of the red areas")
+    check(validate_options({"overlay_opacity": "35"}) == [], "checking")
+    print("Logo mask as in VB6: OK (unchanged mask, removelogo only, dropped options removed)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -3141,9 +2971,8 @@ def main():
     test_group_texts(tmp, sys.argv[1])
     test_delogo(tmp, sys.argv[1])
     test_removelogo(tmp, sys.argv[1])
-    test_mask_fill_and_grow(tmp, sys.argv[1])
+    test_logo_mask_as_in_vb6(tmp, sys.argv[1])
     test_display_aspect(tmp, sys.argv[1])
-    test_smooth_fill(tmp, sys.argv[1])
     test_recent_dirs(tmp, sys.argv[1])
     test_logo_options_tooltip_and_dialog_layout(tmp, sys.argv[1])
     test_example_ini(tmp, sys.argv[1])

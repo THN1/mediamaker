@@ -243,7 +243,8 @@ class frmMain(frmMainBase):
         return opts
 
     def migrate_settings(self) -> None:
-        """Old INI files: "pad" moves from the options to the profile (only if not yet set there), "focus" is dropped.
+        """Old INI files: "pad" moves from the options to the profile (only if not yet set there), "focus" and the options that were tried
+        for the logo mask (logo_fill, fill_sigma, mask_fill, mask_grow) are dropped.
                 The file is only written if something changes."""
         changed = self.settings.migrate_legacy_keys()                 # batch, player, dialog_style: now part of options=
         raw = self.settings.options
@@ -252,9 +253,10 @@ class frmMain(frmMainBase):
                 self.settings.update_profile({"pad": raw["pad"]})
             del raw["pad"]
             changed = True
-        if "focus" in raw:
-            del raw["focus"]
-            changed = True
+        for key in ("focus", "logo_fill", "fill_sigma", "mask_fill", "mask_grow"):      # dropped options (see REMOVED_OPTIONS)
+            if key in raw:
+                del raw[key]
+                changed = True
         if changed:
             self.settings.set_options(raw)
             self.settings.save()
@@ -998,7 +1000,7 @@ class frmMain(frmMainBase):
         from removelogo_dialog import frmRemoveLogo
         seg = self.segment
         dialog = frmRemoveLogo(lambda n: self._frame_fn(seg.path, n, seg.fps), frame, seg.first_frame, seg.total_frames - 1, self.shown, self,
-                               self.overlay_opacity(), self.options.get("mask_fill", "True") != "False", self.mask_grow(), self.aspect_of(seg.path))
+                               self.overlay_opacity(), self.aspect_of(seg.path))
         return dialog.exec_dialog()
 
     def aspect_of(self, path: str):
@@ -1034,13 +1036,6 @@ class frmMain(frmMainBase):
             return max(0, min(100, int(self.options.get("overlay_opacity", 35))))
         except ValueError:
             return 35
-
-    def mask_grow(self) -> int:
-        """Pixels by which the RemoveLogo mask is made bigger (option mask_grow)."""
-        try:
-            return max(0, min(10, int(self.options.get("mask_grow", 0))))
-        except ValueError:
-            return 0
 
     def style_delogo_frame(self) -> None:
         """The rectangle is translucent red (the logo stays visible below it) with a solid edge."""

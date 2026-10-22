@@ -277,46 +277,59 @@ def ask_text_box(parent, title: str, prompt: str, default: str = "") -> Optional
     return box.textValue() if box.exec() else None
 
 
-def ask_output_file(parent, title: str, prompt: str, folders: list, folder: str, name: str) -> Optional[str]:
-    """Enter the target file: the folder in a selection list of the folders used recently (the list can also be edited, and "Browse..." opens
-    a folder dialog) and the file name. Returns the whole path or None on cancel (or without a file name)."""
-    dialog = QtWidgets.QDialog(parent)
-    dialog.setWindowTitle(title)
-    layout = QtWidgets.QVBoxLayout(dialog)
-    label = QtWidgets.QLabel(prompt)
-    label.setWordWrap(True)
-    layout.addWidget(label)
-    form = QtWidgets.QFormLayout()
-    combo = QtWidgets.QComboBox()
-    combo.setEditable(True)
-    shown = [folder] + [f for f in folders if f != folder] if folder else list(folders)
-    combo.addItems(shown)
-    combo.setCurrentText(folder)
-    combo.setMinimumWidth(FIELD_WIDTH * 2)
-    combo.setToolTip(wrap_tooltip("Folders used recently; a folder can also be typed in"))
-    browse = QtWidgets.QPushButton("Browse...")
+class OutputFileDialog(QtWidgets.QDialog):
+    """Dialog for the target file: the folder in an editable selection list (the folders used recently) with a "Browse..." button, and the file name."""
 
-    def choose():
-        chosen = QtWidgets.QFileDialog.getExistingDirectory(dialog, "Select folder", combo.currentText())
+    def __init__(self, parent, title: str, prompt: str, folders: list, folder: str, name: str):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        layout = QtWidgets.QVBoxLayout(self)
+        label = QtWidgets.QLabel(prompt)
+        label.setWordWrap(True)
+        layout.addWidget(label)
+        form = QtWidgets.QFormLayout()
+        self.combo = QtWidgets.QComboBox()
+        self.combo.setEditable(True)
+        self.combo.addItems([folder] + [f for f in folders if f != folder] if folder else list(folders))
+        self.combo.setCurrentText(folder)
+        self.combo.setMinimumWidth(FIELD_WIDTH * 2)
+        self.combo.setToolTip(wrap_tooltip("Folders used recently; a folder can also be typed in"))
+        browse = QtWidgets.QPushButton("Browse...")
+        browse.clicked.connect(self.choose_folder)
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(self.combo, 1)
+        row.addWidget(browse)
+        form.addRow("Folder:", row)
+        self.edit = QtWidgets.QLineEdit(name)
+        form.addRow("File name:", self.edit)
+        layout.addLayout(form)
+        button = QtWidgets.QDialogButtonBox.StandardButton
+        buttons = QtWidgets.QDialogButtonBox(button.Ok | button.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def choose_folder(self) -> None:
+        chosen = QtWidgets.QFileDialog.getExistingDirectory(self, "Select folder", self.combo.currentText())
         if chosen:
-            combo.setCurrentText(chosen)
-    browse.clicked.connect(choose)
-    row = QtWidgets.QHBoxLayout()
-    row.addWidget(combo, 1)
-    row.addWidget(browse)
-    form.addRow("Folder:", row)
-    edit = QtWidgets.QLineEdit(name)
-    form.addRow("File name:", edit)
-    layout.addLayout(form)
-    button = QtWidgets.QDialogButtonBox.StandardButton
-    buttons = QtWidgets.QDialogButtonBox(button.Ok | button.Cancel)
-    buttons.accepted.connect(dialog.accept)
-    buttons.rejected.connect(dialog.reject)
-    layout.addWidget(buttons)
-    if not dialog.exec() or not edit.text().strip():
-        return None
-    directory = os.path.expanduser(combo.currentText().strip())
-    return os.path.join(directory, edit.text().strip()) if directory else edit.text().strip()
+            self.combo.setCurrentText(chosen)
+
+    def path(self) -> Optional[str]:
+        name = self.edit.text().strip()
+        if not name:
+            return None
+        directory = os.path.expanduser(self.combo.currentText().strip())
+        return os.path.join(directory, name) if directory else name
+
+
+def ask_output_file(parent, title: str, prompt: str, folders: list, folder: str, name: str) -> Optional[str]:
+    """Enter the target file: the folder in a selection list of the folders used recently and the file name. Returns the whole path or
+    None on cancel (or without a file name). The dialog is deleted after use."""
+    dialog = OutputFileDialog(parent, title, prompt, folders, folder, name)
+    try:
+        return dialog.path() if dialog.exec() else None
+    finally:
+        dialog.deleteLater()
 
 
 def ask_int_box(parent, title: str, prompt: str, value: int, low: int, high: int) -> Optional[int]:

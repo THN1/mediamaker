@@ -314,7 +314,9 @@ def _shift_down() -> bool:
 
 class ShiftToolTip(QtCore.QObject):
     """Tooltip of a control that shows another text while the Shift key is held down (for buttons whose Shift + click does
-    something else). The text changes when the pointer enters the control, when the tooltip is about to appear and while it is shown."""
+    something else). The text is chosen when the pointer enters the control, when it moves over it and when the tooltip is about to
+    appear; a tooltip that is already showing gets the new text at the next movement of the pointer. (Only events of this control are
+    watched, not those of the whole application.)"""
 
     def __init__(self, widget, normal: str, with_shift: str, shift_down=None):
         super().__init__(widget)
@@ -323,9 +325,6 @@ class ShiftToolTip(QtCore.QObject):
         self.shift = False
         widget.setToolTip(normal)
         widget.installEventFilter(self)
-        app = QtWidgets.QApplication.instance()
-        if app is not None:
-            app.installEventFilter(self)                       # the Shift key is pressed while the pointer rests on the control
 
     def set_shift(self, shift: bool) -> None:
         if shift == self.shift:
@@ -337,11 +336,8 @@ class ShiftToolTip(QtCore.QObject):
             QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), text, self.widget)
 
     def eventFilter(self, obj, ev):
-        t, E = ev.type(), QtCore.QEvent.Type
-        if obj is self.widget and t in (E.Enter, E.ToolTip):
+        if obj is self.widget and ev.type() in (QtCore.QEvent.Type.Enter, QtCore.QEvent.Type.ToolTip, QtCore.QEvent.Type.MouseMove):
             self.set_shift(self._shift_down())
-        elif t in (E.KeyPress, E.KeyRelease) and ev.key() == QtCore.Qt.Key.Key_Shift:
-            self.set_shift(t == E.KeyPress)
         return False
 
 
