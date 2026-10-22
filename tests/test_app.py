@@ -2244,6 +2244,166 @@ def test_group_texts(tmp, videos):
     print("Group texts: OK (one line per group, quotes, notes about restart)")
 
 
+def test_delogo(tmp, videos):
+    """DeLogo filter: red rectangle over the preview (button of the logo filter), placed with the mouse, stored as fractions in the mask
+    column; the command for ffmpeg converts it to pixels (real run)."""
+    import numpy as np
+    import ffmpeg_cmd
+    from cutlist import Job
+    from frames import grab_frame
+    from mediaprobe import first_frame_number
+    from runner import run_ffmpeg, total_seconds
+    win = seek_window(tmp, videos, ("sample2.ts", "sample3.ts"), workdir="delogowin", first_fn=first_frame_number)
+    frame = win.fraCrop[0]
+    win.lvwSegments.select_row(0)
+    win.lvwSegments_Click()
+    seg, seg2 = win.segments
+    geo = lambda: (lambda g: (g.x(), g.y(), g.width(), g.height()))(frame.geometry())
+    cursors = lambda: [repr(a[0]).split(".")[-1] for a in frame.called("setCursor")]
+    check(win.delogo_area() == (544, 0, 513, 289) and not frame.isVisible(), "preview area 513 x 289, the rectangle is hidden at first")
+    # --- Shift: RemoveLogo is not ported yet; the Shift state is used once
+    win.cmdCommand_MouseDown(6, 1, 1, 5, 5)
+    check(win.mouse_shift is True, "Shift is noted when the button is pressed")
+    win.cmdCommand_Click(6)
+    check("RemoveLogo" in win.messages[-1] and win.mouse_shift is False and not frame.isVisible(), "Shift + click: RemoveLogo message, Shift forgotten")
+    win.cmdCommand_MouseDown(6, 1, 0, 5, 5)
+    check(win.mouse_shift is False, "without Shift")
+    # --- first click: the rectangle appears at the start position (lower left of the preview)
+    win.cmdCommand_Click(6)
+    check(frame.isVisible() and geo() == (547, 253, 33, 33) and frame.called("raise_") != [] and seg.mask == "", f"rectangle appears at the start position: {geo()}")
+    # --- move with the mouse, limited to the preview
+    win.fraCrop_MouseDown(0, 1, 0, 15, 15)
+    check(win._crop_edge is None and cursors()[-1] == "SizeAllCursor", "inside: the rectangle is moved")
+    win.fraCrop_MouseMove(0, 1, 0, 25, 25)
+    check(geo() == (557, 256, 33, 33), f"moved by (10, 10), the bottom limit of the preview stops it at 256: {geo()}")
+    win.fraCrop_MouseMove(0, 1, 0, 25 + 4000, 15 - 4000)
+    check(geo() == (544 + 513 - 33, 0, 33, 33), f"moving stops at the right and top limit: {geo()}")
+    win.fraCrop_MouseMove(0, 1, 0, 15 - 4000, 15 + 4000)
+    check(geo() == (544, 289 - 33, 33, 33), f"moving stops at the left and bottom limit: {geo()}")
+    win.fraCrop_MouseUp(0, 1, 0, 0, 0)
+    check(frame.called("unsetCursor") != [] and win._crop_edge is None, "mouse released: normal pointer again")
+    win.fraCrop_MouseDown(1, 1, 0, 1, 1)
+    win.fraCrop_MouseMove(1, 1, 0, 50, 50)
+    check(geo() == (544, 289 - 33, 33, 33), "the rectangles 1..3 (crop) are not handled here")
+    # --- resize at the four edges (pointer shapes, the opposite edge stays)
+    win.delogo_place("0.1 0.2 0.3 0.4")
+    check(geo() == (595, 58, 154, 116), f"placed from fractions: {geo()}")
+    win.fraCrop_MouseDown(0, 1, 0, 2, 50)
+    check(win._crop_edge == ("w", True) and cursors()[-1] == "SizeHorCursor", "left edge")
+    win.fraCrop_MouseMove(0, 1, 0, -18, 50)
+    check(geo() == (575, 58, 174, 116), f"left edge 20 px to the left, right edge stays: {geo()}")
+    win.fraCrop_MouseMove(0, 1, 0, 2 + 4000, 50)
+    check(geo() == (749 - 8, 58, 8, 116), f"left edge dragged over the right one: minimum width, right edge stays: {geo()}")
+    win.fraCrop_MouseMove(0, 1, 0, 2 - 4000, 50)
+    check(geo() == (544, 58, 749 - 544, 116), f"left edge at the limit of the preview: {geo()}")
+    win.fraCrop_MouseUp(0, 1, 0, 0, 0)
+    win.delogo_place("0.1 0.2 0.3 0.4")
+    win.fraCrop_MouseDown(0, 1, 0, 150, 50)
+    check(win._crop_edge == ("w", False), "right edge")
+    win.fraCrop_MouseMove(0, 1, 0, 170, 50)
+    win.fraCrop_MouseMove(0, 1, 0, 190, 50)
+    check(geo() == (595, 58, 194, 116), f"right edge: 20 + 20 px wider (the reference point follows): {geo()}")
+    win.fraCrop_MouseMove(0, 1, 0, 190 + 4000, 50)
+    check(geo()[0] == 595 and geo()[0] + geo()[2] == 544 + 513, f"right edge stops at the limit of the preview: {geo()}")
+    win.fraCrop_MouseUp(0, 1, 0, 0, 0)
+    win.delogo_place("0.1 0.2 0.3 0.4")
+    win.fraCrop_MouseDown(0, 1, 0, 50, 2)
+    check(win._crop_edge == ("h", True) and cursors()[-1] == "SizeVerCursor", "top edge")
+    win.fraCrop_MouseMove(0, 1, 0, 50, -18)
+    check(geo() == (595, 38, 154, 136), f"top edge 20 px up, bottom edge stays: {geo()}")
+    win.fraCrop_MouseMove(0, 1, 0, 50, -4000)
+    check(geo() == (595, 0, 154, 174), f"top edge at the limit of the preview: {geo()}")
+    win.fraCrop_MouseUp(0, 1, 0, 0, 0)
+    win.delogo_place("0.1 0.2 0.3 0.4")
+    win.fraCrop_MouseDown(0, 1, 0, 50, 113)
+    check(win._crop_edge == ("h", False), "bottom edge")
+    win.fraCrop_MouseMove(0, 1, 0, 50, 133)
+    check(geo() == (595, 58, 154, 136), f"bottom edge 20 px down: {geo()}")
+    win.fraCrop_MouseMove(0, 1, 0, 50, 133 + 4000)
+    check(geo()[1] + geo()[3] == 289, f"bottom edge stops at the limit of the preview: {geo()}")
+    win.fraCrop_MouseUp(0, 1, 0, 0, 0)
+    # --- pointer without a button: shows which edge is under it
+    win.delogo_place("0.1 0.2 0.3 0.4")
+    for (x, y), shape in {(3, 50): "SizeHorCursor", (151, 50): "SizeHorCursor", (50, 3): "SizeVerCursor", (50, 113): "SizeVerCursor", (50, 50): "SizeAllCursor"}.items():
+        win.fraCrop_MouseMove(0, 0, 0, x, y)
+        check(cursors()[-1] == shape, f"hover at ({x}, {y}): {shape}")
+    # --- second click: activate -> fractions in the mask column, saved, remembered
+    win.delogo_place()
+    win.answer = True
+    asked = []
+    win.ask = lambda text: (asked.append(text), win.answer)[1]
+    win.cmdCommand_Click(6)
+    check(asked == ["Do you want to activate the DeLogo filter?"] and seg.mask == "0.005848 0.875433 0.064327 0.114187" and not frame.isVisible()
+          and win.delogo_last == seg.mask, f"activated: fractions of the preview area in the mask column: {seg.mask!r}")
+    check(load_segments(os.path.join(tmp, "delogowin", "MediaMaker.json"))[0].mask == seg.mask, "the list is saved")
+    check(win.lvwSegments.topLevelItem(0).text(18) == seg.mask, "shown in the mask column of the list")
+    win.cmdCommand_Click(6)
+    check(frame.isVisible() and geo() == (547, 253, 33, 33), f"clicking again shows the stored rectangle: {geo()}")
+    win.answer = False
+    win.cmdCommand_Click(6)
+    check(seg.mask == "" and not frame.isVisible() and win.delogo_last == "0.005848 0.875433 0.064327 0.114187" and
+          load_segments(os.path.join(tmp, "delogowin", "MediaMaker.json"))[0].mask == "", "answer No: filter off, the last rectangle is remembered")
+    # --- next segment: offer the previous area again (Yes / No / Cancel); a change of the selection removes the rectangle
+    answers = ["yes", "yes", "no", "cancel"]
+    questions = []
+    win.ask3 = lambda text: (questions.append(text), answers.pop(0))[1]
+    win.cmdCommand_Click(6)
+    check(questions == ["Do you want to re-use the previous logo area again?"] and frame.isVisible() and geo() == (547, 253, 33, 33),
+          f"the segment has no rectangle but one was used before: it is offered, Yes: {geo()}")
+    win.lvwSegments.select_row(1)
+    win.lvwSegments_Click()
+    check(not frame.isVisible(), "selecting another segment hides a rectangle that was being placed")
+    win.delogo_last = "0.25 0.6 0.1 0.2"
+    win.cmdCommand_Click(6)
+    check(frame.isVisible() and geo() == (672, 173, 51, 58), f"Yes: the previous area is used: {geo()}")
+    frame.hide()
+    win.cmdCommand_Click(6)
+    check(frame.isVisible() and geo() == (547, 253, 33, 33) and len(questions) == 3, f"No: the start position: {geo()}")
+    frame.hide()
+    win.cmdCommand_Click(6)
+    check(not frame.isVisible() and len(questions) == 4 and seg2.mask == "" and answers == [], "Cancel: nothing happens")
+    # --- a RemoveLogo mask (PNG) is replaced; commas as decimal separator (lists of VB6 in a German locale) are understood
+    seg2.mask = "iVBORw0KGgo="
+    win.delogo_last = ""
+    win.cmdCommand_Click(6)
+    check(frame.isVisible() and geo() == (547, 253, 33, 33), "a PNG mask is not a rectangle: start position")
+    win.answer = True
+    win.cmdCommand_Click(6)
+    check(seg2.has_delogo and len(seg2.mask.split()) == 4, "the rectangle replaces the PNG mask")
+    win.delogo_place("0,1 0,2 0,3 0,4")
+    check(geo() == (595, 58, 154, 116), "decimal commas are understood")
+    # --- no segment: nothing happens
+    win.segments.clear()
+    win.current = -1
+    n = len(win.messages)
+    win.cmdCommand_Click(6)
+    check(len(win.messages) == n, "without a segment nothing happens")
+    # --- pixels for ffmpeg: fractions of the source picture, limited to the picture
+    s = dataclasses.replace(seg, width=720, height=576, mask="0.100000 0.800000 0.150000 0.100000")
+    check(ffmpeg_cmd._delogo(s, 720, 576) == "delogo=x=72:y=461:w=108:h=58,", "fractions -> pixels of the source picture")
+    s.mask = "0.99 0.99 0.2 0.2"
+    check(ffmpeg_cmd._delogo(s, 720, 576) == "delogo=x=713:y=570:w=6:h=5,", "limited to the picture")
+    s.mask = "0,1 0,2 0,3 0,4"
+    check(ffmpeg_cmd._delogo(s, 720, 576) == "delogo=x=72:y=115:w=216:h=230,", "VB6 lists with decimal commas")
+    # --- real run: ffmpeg changes the picture inside the rectangle and (almost) nothing outside of it
+    work = tempfile.mkdtemp()
+    outputs = {}
+    for name, mask in (("plain", ""), ("delogo", "0.300000 0.300000 0.200000 0.200000")):
+        w2 = seek_window(tmp, videos, ("sample2.ts",), workdir="delogorun_" + name, first_fn=first_frame_number)
+        w2.segments[0].mask = mask
+        job = w2.make_job(os.path.join(work, name + ".mp4"))
+        res = run_ffmpeg(ffmpeg_cmd.build_command(job), total_seconds(job), None, cwd=work)
+        check(res.returncode == 0 and os.path.exists(job.output), f"ffmpeg run with {name}: {res.returncode} {res.errors[-200:]}")
+        outputs[name] = job.output
+    a = grab_frame(outputs["plain"], 10, Fraction(25)).astype(np.int32)
+    b = grab_frame(outputs["delogo"], 10, Fraction(25)).astype(np.int32)
+    diff = np.abs(a - b).mean(axis=2)
+    # rectangle in the output: x 216..360; y (173..288 - 72 crop at the top) * 576/432 = 135..288
+    inside, outside = diff[140:285, 220:356].mean(), (diff.sum() - diff[135:288, 216:360].sum()) / (diff.size - diff[135:288, 216:360].size)
+    check(inside > 2 * outside and inside > 1.0, f"the picture changes inside the rectangle (mean difference {inside:.2f}), much less outside ({outside:.2f})")
+    print("DeLogo: OK (rectangle, mouse, limits, activate/deactivate, re-use, saving, pixels for ffmpeg, real run)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -2308,6 +2468,7 @@ def main():
     test_dialog_styles_and_batch_path(tmp, sys.argv[1])
     test_options_in_options_string(tmp, sys.argv[1])
     test_group_texts(tmp, sys.argv[1])
+    test_delogo(tmp, sys.argv[1])
     test_example_ini(tmp, sys.argv[1])
     test_first_frame(tmp, sys.argv[1])
     test_shutdown(tmp, sys.argv[1])

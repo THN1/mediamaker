@@ -51,7 +51,7 @@ class FontMetrics:
 
 
 class QWidget(QObject):
-    methods = {"fontMetrics", "setMinimumSize", "setMaximumSize", "setSizePolicy", "setGeometry", "geometry", "resize", "setFixedSize", "setMinimumSize", "move", "hide", "show", "setVisible",
+    methods = {"setCursor", "unsetCursor", "raise_", "fontMetrics", "setMinimumSize", "setMaximumSize", "setSizePolicy", "setGeometry", "geometry", "resize", "setFixedSize", "setMinimumSize", "move", "hide", "show", "setVisible",
                "setEnabled", "isEnabled", "setToolTip", "setFont", "setStyleSheet", "setAutoFillBackground",
                "setMouseTracking", "setAcceptDrops", "setWindowTitle", "setWindowFlag", "setWindowIcon", "winId", "rect",
                "frameGeometry", "screen", "isActiveWindow", "update", "contentsRect", "width", "height", "setFocusPolicy",
@@ -78,6 +78,16 @@ class QWidget(QObject):
     def _ret_geometry(self):
         args = self.called("setGeometry")
         return Rect(*(args[-1] if args else (0, 0, 0, 0)))
+
+    def _ret_isVisible(self):
+        for name, args in reversed(self.calls):
+            if name == "show":
+                return True
+            if name == "hide":
+                return False
+            if name == "setVisible":
+                return bool(args[0])
+        return False
 
     def _ret_contentsRect(self):
         g = self._ret_geometry()

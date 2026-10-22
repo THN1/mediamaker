@@ -44,7 +44,7 @@ class Qt:
     WindowType = EnumGroup("Qt.WindowType", {"WindowMaximizeButtonHint", "WindowMinimizeButtonHint", "FramelessWindowHint"})
     KeyboardModifier = EnumGroup("Qt.KeyboardModifier", {"ShiftModifier", "ControlModifier", "AltModifier"})
     MouseButton = EnumGroup("Qt.MouseButton", {"LeftButton", "RightButton", "MiddleButton"})
-    CursorShape = EnumGroup("Qt.CursorShape", {"WaitCursor"})
+    CursorShape = EnumGroup("Qt.CursorShape", {"WaitCursor", "ArrowCursor", "SizeHorCursor", "SizeVerCursor", "SizeAllCursor"})
     ScrollBarPolicy = EnumGroup("Qt.ScrollBarPolicy", {"ScrollBarAlwaysOff", "ScrollBarAsNeeded", "ScrollBarAlwaysOn"})
 
 

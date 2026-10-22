@@ -135,6 +135,10 @@ class frmMain(frmMainBase):
         self.thumb_missing: set = set()         # (path, frame number) without picture (before the start, behind the end)
         self.timeline_center: Optional[int] = None
         self._mouse_x = 0
+        self.mouse_shift = False                # the Shift key was down when a button was pressed (VB6: MouseShift)
+        self._crop_mouse = (0, 0)               # reference point of the mouse while the red rectangle is dragged (VB6: MouseX/MouseY)
+        self._crop_edge = None                  # edge being dragged: ("w", left?) / ("h", top?); None = the whole rectangle moves
+        self.delogo_last = ""                   # last rectangle of the DeLogo filter, offered again for the next segment (VB6: cmdCommand(6).Tag)
         self._clock = time.monotonic
         self._ignore_time_until = 0.0           # after show_at: ignore time messages from VLC for a short while
         self._thumbs_busy = False               # thumbnails are being loaded
@@ -596,6 +600,7 @@ class frmMain(frmMainBase):
             return
         self.current = row
         seg = self.segment
+        self.fraCrop[0].hide()                                        # a rectangle that was being placed belongs to the previous segment
         self.player.stop()
         self.highlight()
         self.timeline_mode = self.timeline_center = None
@@ -956,10 +961,154 @@ class frmMain(frmMainBase):
                 self.mnuClose_Click()
         elif index == 4:
             self.duplicate_segment()
+        elif index == 6:
+            shift, self.mouse_shift = self.mouse_shift, False
+            if shift:
+                self.msg("The RemoveLogo filter (Shift + click) has not been ported yet.")
+                return
+            if not self.delogo_toggle():
+                self.lvwSegments.setFocus()
+                return
+            self.lblSegment_Upd()                                      # saves the list
         else:
-            self.msg("This function (cropping, logo) has not been ported yet.")
+            self.msg("This function (cropping) has not been ported yet.")
             return
         self.lvwSegments.setFocus()
+
+    # ------------------------------------------------------------------ DeLogo filter: red rectangle over the preview
+    DELOGO_NEAR = 7                 # pixels: width of the inner border of the rectangle where its size can be changed (VB6: 100 twips)
+    DELOGO_MIN = 8                  # pixels: smallest size of the rectangle
+    DELOGO_START = 33               # pixels: size of the rectangle when it appears for the first time (VB6: 500 twips)
+
+    def cmdCommand_MouseDown(self, index: int, button: int, shift: int, x: int, y: int):
+        self.mouse_shift = bool(shift & 1)                             # VB6: MouseShift = Shift = 1
+
+    def delogo_area(self) -> tuple:
+        """(left, top, width, height) of the preview area: the rectangle is placed inside it, its coordinates are fractions of it."""
+        v = self.VLC.geometry()
+        return v.x(), v.y(), v.width(), v.height()
+
+    def delogo_fractions(self) -> str:
+        """Position and size of the rectangle as fractions of the preview area: "x y width height" (stored in the mask column)."""
+        vx, vy, vw, vh = self.delogo_area()
+        f = self.fraCrop[0].geometry()
+        values = ((f.x() - vx) / vw, (f.y() - vy) / vh, f.width() / vw, f.height() / vh)
+        return " ".join(f"{v:.6f}" for v in values)
+
+    def delogo_place(self, fractions: str = "") -> None:
+        """Puts the rectangle at the given fractions "x y width height", or at the start position (lower left)."""
+        vx, vy, vw, vh = self.delogo_area()
+        if fractions:
+            x, y, w, h = (float(t.replace(",", ".")) for t in fractions.split()[:4])
+            left, top, width, height = round(vx + x * vw), round(vy + y * vh), round(w * vw), round(h * vh)
+        else:
+            width = height = self.DELOGO_START
+            left, top = vx + width // 10, vy + vh - height - height // 10
+        self.fraCrop[0].setGeometry(*self.delogo_clamp(left, top, width, height))
+
+    def delogo_clamp(self, left: int, top: int, width: int, height: int) -> tuple:
+        """The rectangle stays inside the preview area and keeps a minimum size."""
+        vx, vy, vw, vh = self.delogo_area()
+        width, height = max(self.DELOGO_MIN, min(width, vw)), max(self.DELOGO_MIN, min(height, vh))
+        return max(vx, min(left, vx + vw - width)), max(vy, min(top, vy + vh - height)), width, height
+
+    def delogo_toggle(self) -> bool:
+        """Click on the button of the logo filter (VB6: cmdCommand(6), without Shift): shows the red rectangle, which the user places on
+        the station logo; the next click asks whether to activate the DeLogo filter and stores the rectangle in the mask column.
+        False: cancelled, nothing to save."""
+        seg, frame = self.segment, self.fraCrop[0]
+        if frame.isVisible():
+            if self.ask("Do you want to activate the DeLogo filter?"):
+                seg.mask = self.delogo_fractions()
+                self.delogo_last = seg.mask                            # offered again for the next segment
+            else:
+                seg.mask = ""
+            frame.hide()
+            return True
+        if seg.has_delogo and len(seg.mask.split()) == 4:              # the segment has a rectangle: show it again
+            self.delogo_place(seg.mask)
+        elif self.delogo_last:
+            answer = self.ask3("Do you want to re-use the previous logo area again?")
+            if answer == "cancel":
+                return False
+            self.delogo_place(self.delogo_last if answer == "yes" else "")
+        else:
+            self.delogo_place()
+        frame.show()
+        frame.raise_()
+        return True
+
+    def delogo_edge(self, x: int, y: int):
+        """Which edge of the rectangle is near the point (x, y) relative to the rectangle: ("w", left?) for the left/right edge,
+        ("h", top?) for the top/bottom edge, None for the inside (the rectangle is moved)."""
+        f, near = self.fraCrop[0].geometry(), self.DELOGO_NEAR
+        if x < near:
+            return ("w", True)
+        if f.width() - x < near:
+            return ("w", False)
+        if y < near:
+            return ("h", True)
+        if f.height() - y < near:
+            return ("h", False)
+        return None
+
+    def _delogo_cursor(self, edge) -> None:
+        shapes = QtCore.Qt.CursorShape
+        self.fraCrop[0].setCursor(shapes.SizeAllCursor if edge is None else shapes.SizeHorCursor if edge[0] == "w" else shapes.SizeVerCursor)
+
+    def fraCrop_MouseDown(self, index: int, button: int, shift: int, x: int, y: int):
+        if index != 0:
+            return
+        self._crop_mouse = (x, y)
+        self._crop_edge = self.delogo_edge(x, y)
+        self._delogo_cursor(self._crop_edge)
+
+    def fraCrop_MouseMove(self, index: int, button: int, shift: int, x: int, y: int):
+        if index != 0:
+            return
+        frame = self.fraCrop[0]
+        if not button & 1:                                             # no button: only show which edge is under the pointer
+            self._delogo_cursor(self.delogo_edge(x, y))
+            return
+        g = frame.geometry()
+        left, top, width, height = g.x(), g.y(), g.width(), g.height()
+        mx, my = self._crop_mouse
+        edge = self._crop_edge
+        if edge is None:                                               # move
+            left, top = left + x - mx, top + y - my
+        elif edge[0] == "w":
+            if edge[1]:                                                # left edge: the right edge stays
+                right = left + width
+                width = max(self.DELOGO_MIN, width - (x - mx))
+                left = right - width
+            else:                                                      # right edge: the left edge stays, the reference point follows
+                width = max(self.DELOGO_MIN, width + x - mx)
+                self._crop_mouse = (x, my)
+        else:
+            if edge[1]:                                                # top edge
+                bottom = top + height
+                height = max(self.DELOGO_MIN, height - (y - my))
+                top = bottom - height
+            else:                                                      # bottom edge
+                height = max(self.DELOGO_MIN, height + y - my)
+                self._crop_mouse = (mx, y)
+        if edge is not None:                                           # at the limit of the preview the opposite edge stays where it is
+            vx, vy, vw, vh = self.delogo_area()
+            if edge == ("w", True) and left < vx:
+                width, left = width - (vx - left), vx
+            elif edge == ("h", True) and top < vy:
+                height, top = height - (vy - top), vy
+            elif edge == ("w", False):
+                width = min(width, vx + vw - left)
+            elif edge == ("h", False):
+                height = min(height, vy + vh - top)
+        frame.setGeometry(*self.delogo_clamp(left, top, width, height))
+
+    def fraCrop_MouseUp(self, index: int, button: int, shift: int, x: int, y: int):
+        if index != 0:
+            return
+        self.fraCrop[0].unsetCursor()
+        self._crop_edge = None
 
     def delete_segment(self) -> None:
         self.player.stop()
