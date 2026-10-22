@@ -32,15 +32,18 @@ class frmRemoveLogo(frmRemoveLogoBase):
     NAVIGATE_STEPS = (-1, 1, -10, 10)           # buttons "<", ">", "<<", ">>"
 
     def __init__(self, grab_frame: Callable[[int], np.ndarray], frame: int, first: int, last: int,
-                 shown: Callable[[int], int] = lambda n: n, parent=None, opacity: int = 35, fill: bool = True, grow: int = 0):
+                 shown: Callable[[int], int] = lambda n: n, parent=None, opacity: int = 35, fill: bool = True, grow: int = 0,
+                 aspect: float | None = None):
         """grab_frame(n) returns frame n as an RGB array; first..last are the valid frame numbers; shown(n) is the number displayed;
         opacity (percent) is that of the red band; fill = enclosed black areas become white; grow = pixels by which the white areas are
-        made bigger (see logo.fill_holes and logo.grow_mask)."""
+        made bigger (see logo.fill_holes and logo.grow_mask); aspect = proportions (width / height) of the picture as a video player shows it
+        (display aspect ratio of the stream); None: the proportions of the pixels."""
         super().__init__(parent)
         self.grab_frame, self.first, self.last, self.shown = grab_frame, first, last, shown
         self.frame = max(first, min(frame, last))
         self.result = ""
         self.fill, self.grow = fill, grow
+        self.aspect = aspect
         self.mask: np.ndarray | None = None             # black/white picture of the frame (threshold)
         self.final: np.ndarray | None = None            # the mask as it is stored (without the blackened centre): filled, grown
         self.image = None
@@ -101,10 +104,12 @@ class frmRemoveLogo(frmRemoveLogoBase):
             self.setEnabled(True)
 
     def fit_to_picture(self, width: int, height: int) -> None:
-        """Keeps the width of the picture box and makes its height fit the proportions of the picture (the picture is not distorted);
-        the controls below move along and the window gets the height it needs."""
+        """Keeps the width of the picture box and makes its height fit the proportions of the picture as a video player shows it (the
+        display aspect ratio of the stream, e.g. 16:9 for 720 x 576 pixels; without it the proportions of the pixels), so the picture
+        looks as it does in a player; the controls below move along and the window gets the height it needs."""
         x, y, w, h = self._picture_base
-        box = max(MIN_HEIGHT, min(MAX_HEIGHT, round(PICTURE_WIDTH * height / width)))
+        proportions = self.aspect if self.aspect else width / height
+        box = max(MIN_HEIGHT, min(MAX_HEIGHT, round(PICTURE_WIDTH / proportions)))
         shift = box - h
         self.Picture1.setGeometry(x, y, w, box)
         for widget, (wx, wy, ww, wh) in self._lower:
@@ -117,7 +122,7 @@ class frmRemoveLogo(frmRemoveLogoBase):
                 painter.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform, True)
             except AttributeError:
                 pass
-            painter.drawImage(rect, self.image)             # the box has the proportions of the picture
+            painter.drawImage(rect, self.image)             # stretched to the box: it has the proportions of the picture as a player shows it
 
     def cmdNavigate_Click(self, index: int):
         target = max(self.first, min(self.frame + self.NAVIGATE_STEPS[index], self.last))     # VB6 did not check the limits

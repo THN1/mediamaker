@@ -119,6 +119,38 @@ def _pick_fps(stream: dict, interlaced: bool) -> tuple[Fraction, str]:
     return Fraction(25), "fallback"
 
 
+def _ratio(text) -> Optional[float]:
+    """"16:9" -> 1.777...; None for "0:1", "N/A" and anything else that is not a usable ratio."""
+    try:
+        a, b = str(text).split(":")
+        a, b = float(a), float(b)
+    except ValueError:
+        return None
+    return a / b if a > 0 and b > 0 else None
+
+
+def aspect_from_stream(width: int, height: int, sar=None, dar=None) -> float:
+    """Proportions (width / height) of the picture as a video player shows it: the display aspect ratio of the stream if it has one,
+    otherwise the pixel proportions times the sample aspect ratio, otherwise the pixel proportions."""
+    shape = width / height if width > 0 and height > 0 else 1.0
+    display = _ratio(dar)
+    if display:
+        return display
+    pixel = _ratio(sar)
+    return shape * pixel if pixel else shape
+
+
+def display_aspect(path: str, ffprobe: str = "ffprobe") -> Optional[float]:
+    """Proportions (width / height) of the first video stream as a player shows it (see aspect_from_stream); None if unknown."""
+    try:
+        data = _run_ffprobe(["-select_streams", "v:0", "-show_entries", "stream=width,height,sample_aspect_ratio,display_aspect_ratio",
+                             "-of", "json", path], ffprobe)
+        stream = data["streams"][0]
+        return aspect_from_stream(int(stream["width"]), int(stream["height"]), stream.get("sample_aspect_ratio"), stream.get("display_aspect_ratio"))
+    except (ProbeError, KeyError, IndexError, ValueError, TypeError, OSError):
+        return None
+
+
 def count_video_packets(path: str, ffprobe: str = "ffprobe", on_start=None) -> tuple[int, int, float]:
     """Counts the decodable video frames via the packets (reads the whole file, but does not decode).
 

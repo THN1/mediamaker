@@ -47,7 +47,7 @@ import seek                                                          # noqa: E40
 from player import debug_log                                         # noqa: E402
 from border import border_at                                         # noqa: E402
 from logo import bottom_line_average, confidence_at                  # noqa: E402
-from mediaprobe import MediaInfo, ProbeError, count_video_packets, first_frame_number, probe as full_probe  # noqa: E402
+from mediaprobe import display_aspect, MediaInfo, ProbeError, count_video_packets, first_frame_number, probe as full_probe  # noqa: E402
 from profiles import (GROUP_TEXTS, HIDDEN_OPTIONS, OPTION_GROUPS, PRESETS, REMOVED_OPTIONS, default_name, normalize_bitrate,  # noqa: E402
                       ordered_profile, profile_from_segment, valid_profile_name, validate_options, validate_profile,
                       weighted_bitrate)
@@ -119,6 +119,8 @@ class frmMain(frmMainBase):
         self._counters: list[FrameCounter] = []
         self._thumb_fn = thumb_fn
         self._frame_fn = frame_fn
+        self._aspect_fn = display_aspect               # proportions of the picture as a player shows it
+        self._aspects: dict = {}
         self._border_fn = border_fn
         self._conf_fn = conf_fn
         self._avg_fn = avg_fn
@@ -984,8 +986,14 @@ class frmMain(frmMainBase):
         from removelogo_dialog import frmRemoveLogo
         seg = self.segment
         dialog = frmRemoveLogo(lambda n: self._frame_fn(seg.path, n, seg.fps), frame, seg.first_frame, seg.total_frames - 1, self.shown, self,
-                               self.overlay_opacity(), self.options.get("mask_fill", "True") != "False", self.mask_grow())
+                               self.overlay_opacity(), self.options.get("mask_fill", "True") != "False", self.mask_grow(), self.aspect_of(seg.path))
         return dialog.exec_dialog()
+
+    def aspect_of(self, path: str):
+        """Proportions (width / height) of the picture of a file as a video player shows it (display aspect ratio); cached."""
+        if path not in self._aspects:
+            self._aspects[path] = self._aspect_fn(path)
+        return self._aspects[path]
 
     def removelogo_select(self) -> None:
         """Shift + click on the logo button: the user selects a frame, its black/white picture becomes the mask of the removelogo filter

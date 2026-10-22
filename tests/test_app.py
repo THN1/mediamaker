@@ -2563,15 +2563,15 @@ def test_removelogo(tmp, videos):
     seg = win.segments[0]
     seen = []
     class Spy:
-        def __init__(self, grab_fn, frame, first, last, shown, parent, opacity, fill, grow):
-            seen.append((frame, first, last, shown(frame), opacity, fill, grow))
+        def __init__(self, grab_fn, frame, first, last, shown, parent, opacity, fill, grow, aspect):
+            seen.append((frame, first, last, shown(frame), opacity, fill, grow, round(aspect, 4)))
         def exec_dialog(self):
             return b64
     original = removelogo_dialog.frmRemoveLogo
     removelogo_dialog.frmRemoveLogo = Spy
     try:
         slider = win.Slider1.value()
-        check(win.monochrome(slider) == b64 and seen == [(slider, 10, 158 - 1, slider - 10, 35, True, 0)], f"monochrome() opens the dialog with the current frame, the valid range, the opacity and the mask options: {seen}")
+        check(win.monochrome(slider) == b64 and seen == [(slider, 10, 158 - 1, slider - 10, 35, True, 0, 1.7778)], f"monochrome() opens the dialog with the current frame, the valid range, the opacity, the mask options and the display aspect ratio: {seen}")
     finally:
         removelogo_dialog.frmRemoveLogo = original
     win.fraCrop[0].show()
@@ -2830,6 +2830,46 @@ def test_mask_fill_and_grow(tmp, videos):
     print("Mask filling and growing: OK (holes, growing, dialog, options, real run with a dark symbol)")
 
 
+def test_display_aspect(tmp, videos):
+    """The RemoveLogo preview has the proportions of the picture as a video player shows it (display aspect ratio / sample aspect ratio)."""
+    import numpy as np
+    import mediaprobe
+    import removelogo_dialog
+    from frames import grab_frame
+    from mediaprobe import aspect_from_stream, display_aspect
+    near = lambda a, b: a is not None and abs(a - b) < 1e-6
+    check(near(aspect_from_stream(720, 576, "64:45", "16:9"), 16 / 9) and near(aspect_from_stream(720, 576, "1:1", "5:4"), 1.25), "display aspect ratio of the stream")
+    check(near(aspect_from_stream(720, 576, "64:45", "0:1"), 720 * 64 / (576 * 45)) and near(aspect_from_stream(720, 576, "64:45", None), 16 / 9)
+          and near(aspect_from_stream(720, 576, "64:45", "N/A"), 16 / 9), "no usable DAR: pixel proportions times SAR")
+    check(near(aspect_from_stream(1920, 1080, "1:1", None), 16 / 9) and near(aspect_from_stream(720, 576, "0:1", "0:1"), 1.25)
+          and near(aspect_from_stream(720, 576, "N/A", "N/A"), 1.25) and near(aspect_from_stream(720, 576, "x", "y:z"), 1.25), "no SAR and no DAR: the pixel proportions")
+    check(near(aspect_from_stream(0, 0, None, None), 1.0) and near(aspect_from_stream(720, 576, "-1:1", "5:-4"), 1.25), "nonsense values")
+    check(near(display_aspect(os.path.join(videos, "sample2.ts")), 16 / 9) and display_aspect(os.path.join(tmp, "does_not_exist.ts")) is None, "from a file (ffprobe); None for a missing file")
+    work = tempfile.mkdtemp()
+    for name, sar, expected in (("square", "1", 1.25), ("anamorphic", "64/45", 16 / 9), ("ntsc43", "8/9", 720 / 576 * 8 / 9)):
+        path = os.path.join(work, name + ".ts")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=720x576:rate=25:duration=1", "-vf", f"setsar={sar}", "-c:v", "libx264", "-f", "mpegts", path],
+                       check=True, stdin=subprocess.DEVNULL)
+        check(near(display_aspect(path), expected), f"{name}: SAR {sar} -> {display_aspect(path)}")
+    # --- the dialog
+    grab = lambda n: np.full((576, 720, 3), 100, np.uint8)
+    geo = lambda w: (lambda g: (g.x(), g.y(), g.width(), g.height()))(w.geometry())
+    fixed = lambda dialog: dialog.called("setFixedSize")[-1]
+    for aspect, height in ((16 / 9, 334), (4 / 3, 445), (None, 474), (1.25, 474), (2.39, 248), (0.5, 700), (50, 120)):
+        d = removelogo_dialog.frmRemoveLogo(grab, 40, 10, 157, aspect=aspect)
+        d.load_frame()
+        check(geo(d.Picture1) == (8, 8, 593, height) and fixed(d) == (609, 409 + height - 337) and geo(d.cmdOK)[1] == 352 + height - 337,
+              f"aspect {aspect}: box {geo(d.Picture1)[2]} x {geo(d.Picture1)[3]} (expected {height}), window {fixed(d)}")
+    # --- the main window: asked once per file, passed to the dialog
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="aspectwin")
+    asked = []
+    win._aspect_fn = lambda path: (asked.append(path), 1.5)[1]
+    check(win.aspect_of("/a.ts") == 1.5 and win.aspect_of("/a.ts") == 1.5 and win.aspect_of("/b.ts") == 1.5 and asked == ["/a.ts", "/b.ts"], "the aspect of a file is asked once")
+    win._aspect_fn = lambda path: None
+    check(win.aspect_of("/c.ts") is None, "unknown aspect: None (the dialog then uses the pixel proportions)")
+    print("Display aspect ratio: OK (DAR, SAR, files, dialog height, cache)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -2897,6 +2937,7 @@ def main():
     test_delogo(tmp, sys.argv[1])
     test_removelogo(tmp, sys.argv[1])
     test_mask_fill_and_grow(tmp, sys.argv[1])
+    test_display_aspect(tmp, sys.argv[1])
     test_logo_options_tooltip_and_dialog_layout(tmp, sys.argv[1])
     test_example_ini(tmp, sys.argv[1])
     test_first_frame(tmp, sys.argv[1])
