@@ -50,6 +50,12 @@ class Qt:
     ScrollBarPolicy = EnumGroup("Qt.ScrollBarPolicy", {"ScrollBarAlwaysOff", "ScrollBarAsNeeded", "ScrollBarAlwaysOn"})
 
 
+class QUrl(Base):
+    @staticmethod
+    def fromLocalFile(path):
+        return ("file", path)
+
+
 class QTimer(QObject):
     signals = {"timeout"}
     methods = {"setSingleShot", "setInterval"}

@@ -129,7 +129,7 @@ def mask_name(pos: int) -> str:
 
 
 def video_filter(seg: Segment, pos: int, profile: dict, opts: dict,
-                 trim: Optional[tuple[Fraction, Fraction]], setsar: bool) -> str:
+                 trim: Optional[tuple[Fraction, Fraction]], setsar: bool, extra: str = "") -> str:
     f = f"[{pos - 1}:v]"
     if trim:
         f += f"trim={fmt_seconds(trim[0])}:{fmt_seconds(trim[1])},"
@@ -138,6 +138,7 @@ def video_filter(seg: Segment, pos: int, profile: dict, opts: dict,
         f += f"removelogo={mask_name(pos)},"
     elif seg.has_delogo:
         f += _delogo(seg, w, h)
+    f += extra                                   # e.g. drawtext of the cut point preview (ends with a comma)
     c, w, h = _crop(seg, w, h, int(opts.get("crop", 0)))
     f += c
     sw_, sh_ = (int(v) for v in profile["scale"].split(":"))
@@ -161,6 +162,20 @@ def audio_filter(seg: Segment, pos: int, trim: Optional[tuple[Fraction, Fraction
     return f + f"asetpts=PTS-STARTPTS[a{pos - 1}];"
 
 
+_FILTERS: dict = {}
+
+
+def has_filter(name: str, ffmpeg: str = "ffmpeg") -> bool:
+    """Does this ffmpeg have the filter (e.g. drawtext needs libfreetype)? The list is read once per program."""
+    if ffmpeg not in _FILTERS:
+        try:
+            out = subprocess.run([ffmpeg, "-hide_banner", "-filters"], capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout
+        except OSError:
+            out = ""
+        _FILTERS[ffmpeg] = {parts[1] for parts in (line.split() for line in out.splitlines()) if len(parts) > 2 and len(parts[0]) <= 3}
+    return name in _FILTERS[ffmpeg]
+
+
 # ----------------------------------------------------------------------------- Main function
 def write_masks(segments: list[Segment], directory: str) -> list[str]:
     """Writes the PNG masks (removelogoNN.png) into the working directory of ffmpeg."""
@@ -175,7 +190,8 @@ def write_masks(segments: list[Segment], directory: str) -> list[str]:
 
 def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str] = None,
                   path_map: Callable[[str], str] = lambda p: p, unify: bool = False,
-                  stream_times: Union[dict, str, None] = "auto", origin: str = "container") -> list[str]:
+                  stream_times: Union[dict, str, None] = "auto", origin: str = "container", video_extra: str = "",
+                  setsar_always: bool = False) -> list[str]:
     """Returns the ffmpeg argument list.
 
         setsar=1 is only set for SEVERAL source files (needed for concat). With a single
@@ -191,6 +207,8 @@ def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str]
         origin:      zero point of the frame numbers: "container" (default), "video" or "vb6" (see origin_base).
         unify=True:  sets codec, sample rate and minrate/maxrate also for only one source file
                      (SAR behaviour stays unchanged).
+        video_extra: filter text (with a trailing comma) inserted into the video chain of every segment, after trim and logo filters.
+        setsar_always: setsar=1 also for one source file (the cut point preview sets it as VB6 did).
     """
     prof, opts, segs = job.profile, job.options, job.segments
     if not segs:
@@ -226,7 +244,7 @@ def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str]
             if seek > 0:
                 args += ["-ss", str(seek)]
         args += ["-i", path_map(seg.path)]
-        filtr += video_filter(seg, pos, prof, opts, trim, setsar=multiple)
+        filtr += video_filter(seg, pos, prof, opts, trim, setsar=multiple or setsar_always, extra=video_extra)
         filtr += audio_filter(seg, pos, trim)
 
     if chapters_file:

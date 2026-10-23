@@ -3070,6 +3070,206 @@ def test_first_frame_check(tmp, videos):
     print("First frame check: OK (correction by the thumbnails, timeline, saving, once per open, saved lists untouched)")
 
 
+def test_cutpoint(tmp, videos):
+    """Analyze cut point: clip of the last 3 seconds of the selected segment and the first 3 seconds of the next one, played in VLC, then
+    Avidemux can be opened."""
+    import ffmpeg_cmd
+    import logo
+    import numpy as np
+    from mediaprobe import first_frame_number, probe
+    from runner import RunResult
+    names = ("sample2.ts", "sample3.ts", "sample2.ts")
+    win = seek_window(tmp, videos, names, workdir="cutpoint", first_fn=first_frame_number)
+    a, b, c = win.segments
+    # --- not available without a selection or for the last segment
+    win.current = -1
+    win.mnuCutPoints_Click()
+    check(win.messages[-1] == "Please select a segment, but not the last one.", "no segment selected: message")
+    win.lvwSegments.select_row(2)
+    win.lvwSegments_Click()
+    win.mnuCutPoints_Click()
+    check(win.messages[-1] == "Please select a segment, but not the last one." and len(win.dialogs) == 0, "last segment: message, nothing is made")
+    # --- the job: last 75 frames of the first, first 75 frames of the next segment, no masks
+    a.mask = "0.1 0.2 0.3 0.4"
+    b.mask = logo.mask_to_png_b64(np.ones((576, 720), bool))
+    win.settings.set_option("crop", "72")
+    job = win.cutpoint_job(0)
+    x, y = job.segments
+    check((x.start, x.end, x.mask) == (a.end - 75, a.end, "") and (y.start, y.end, y.mask) == (b.start, b.start + 75, ""), f"job: {(x.start, x.end)} and {(y.start, y.end)}, masks removed")
+    check(a.mask == "0.1 0.2 0.3 0.4" and b.has_png_mask and job.options["crop"] == "0" and job.output == win.cutpoint_path() and os.path.dirname(job.output) == tempfile.gettempdir(),
+          "the list is not changed; no cropping; the clip is written to the temporary folder")
+    short = win.segments[0]
+    short.start, short.end = short.first_frame, short.first_frame + 40
+    check(win.cutpoint_job(0).segments[0].start == short.first_frame, "a segment shorter than 3 seconds: from its start")
+    short.start, short.end = a.first_frame, 158
+    # --- run: commands, fallback without drawtext, errors, cancel
+    commands, results = [], []
+    def fake_render(cmd, total, on_progress, cwd=None, cancel=None):
+        commands.append(cmd)
+        return results.pop(0) if results else RunResult(0, False, 0.1, "")
+    win._render_fn = fake_render
+    external, answers = [], []
+    win._external_fn = lambda cmd: (external.append(cmd), (0, ""))[1]
+    win.ask3 = lambda text: (asked.append(text), answers.pop(0))[1]
+    asked = []
+    win.settings.set("tools.linux", "vlc", "/opt/vlc/vlc")
+    win.settings.set("tools.linux", "avidemux", "/opt/avidemux/avidemux_2.8.1.appImage")
+    win.lvwSegments.select_row(0)
+    win.lvwSegments_Click()
+    answers[:] = ["yes"]
+    win.mnuCutPoints_Click()
+    cmd = commands[0]
+    graph = cmd[cmd.index("-filter_complex") + 1]
+    check(cmd.count("-i") == 2 and "concat=n=2" in graph and graph.count("setsar=1") == 2 and "scale=720:576" in graph and graph.count("drawtext=text='Note\\: cropping, delogo and resizing functions disabled!'") == 2
+          and "crop=" not in graph and "delogo=" not in graph and "removelogo" not in graph and cmd[-1] == win.cutpoint_path() and "-b:v" in cmd and cmd[cmd.index("-b:v") + 1] == "3072k",
+          f"command: two sources, concat, setsar=1, the profile's scale, the note, no crop or logo filter: {graph[:150]}")
+    check(external == [["/opt/vlc/vlc", win.cutpoint_path()], ["/opt/avidemux/avidemux_2.8.1.appImage", win.cutpoint_path()]] and asked == ["Open cut point video clip with AVIDEMUX now?"],
+          f"VLC first (from [tools.linux]), then, after Yes, Avidemux: {external}")
+    # without drawtext when the first run fails
+    commands.clear(), external.clear(), asked.clear()
+    results[:] = [RunResult(1, False, 0.1, "No such filter: drawtext")]
+    answers[:] = ["no"]
+    win.mnuCutPoints_Click()
+    check(len(commands) == 2 and "drawtext" in " ".join(commands[0]) and "drawtext" not in " ".join(commands[1]), "the first run fails: again without the text")
+    check(external == [["/opt/vlc/vlc", win.cutpoint_path()]] and asked == ["Open cut point video clip with AVIDEMUX now?"], "answer No: no Avidemux")
+    answers[:] = ["cancel"]
+    external.clear()
+    win.mnuCutPoints_Click()
+    check(len(external) == 1, "answer Cancel: no Avidemux")
+    # both runs fail
+    commands.clear(), external.clear()
+    results[:] = [RunResult(1, False, 0.1, "bad"), RunResult(1, False, 0.1, "worse")]
+    win.mnuCutPoints_Click()
+    check("Creating preview failed" in win.messages[-1] and "worse" in win.messages[-1] and external == [], f"error: message with the reason, nothing played: {win.messages[-1][:70]!r}")
+    # cancelled
+    commands.clear(), external.clear()
+    n = len(win.messages)
+    results[:] = [RunResult(-15, True, 0.1, "")]
+    win.mnuCutPoints_Click()
+    check(external == [] and len(win.messages) == n, "cancelled: nothing is played, no message")
+    # --- VLC cannot be started: xdg-open instead; both fail: message
+    commands.clear(), external.clear()
+    win._external_fn = lambda cmd: (external.append(cmd), (-1, "No such file") if cmd[0] == "/opt/vlc/vlc" else (0, ""))[1]
+    answers[:] = ["no"]
+    win.mnuCutPoints_Click()
+    check(external == [["/opt/vlc/vlc", win.cutpoint_path()], ["xdg-open", win.cutpoint_path()]], f"VLC missing: xdg-open: {external}")
+    external.clear()
+    win._external_fn = lambda cmd: (external.append(cmd), (-1, "No such file"))[1]
+    answers[:] = ["no"]
+    win.mnuCutPoints_Click()
+    check("could not be played" in win.messages[-1] and win.cutpoint_path() in win.messages[-1], "neither works: message with the place of the clip")
+    # --- Avidemux: not configured / cannot be started
+    win.settings.delete("tools.linux", "avidemux")
+    win.settings.delete("tools.linux", "vlc")
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = os.path.join(tmp, "nothing_here")
+    try:
+        external.clear()
+        win._external_fn = lambda cmd: (external.append(cmd), (0, ""))[1]
+        answers[:] = ["yes"]
+        win.mnuCutPoints_Click()
+        check(external == [["vlc", win.cutpoint_path()]] and "[tools.linux]" in win.messages[-1] and "avidemux=" in win.messages[-1], f"no VLC in the INI: 'vlc'; Avidemux not configured: message: {win.messages[-1][:60]!r}")
+    finally:
+        os.environ["PATH"] = old_path
+    win.settings.set("tools.linux", "avidemux", "/x/avidemux.appImage")
+    external.clear()
+    win._external_fn = lambda cmd: (external.append(cmd), (-1, "Permission denied") if "avidemux" in cmd[0] else (0, ""))[1]
+    answers[:] = ["yes"]
+    win.mnuCutPoints_Click()
+    check("Avidemux could not be started" in win.messages[-1] and "Permission denied" in win.messages[-1] and "chmod +x" in win.messages[-1], "Avidemux cannot be started: message with the reason and chmod hint")
+    # --- real run with ffmpeg: the clip has the two pieces
+    win._render_fn = run_render = __import__("runner").run_ffmpeg
+    external.clear()
+    win._external_fn = lambda cmd: (external.append(cmd), (0, ""))[1]
+    answers[:] = ["no"]
+    win.mnuCutPoints_Click()
+    out = win.cutpoint_path()
+    info = probe(out)
+    check(os.path.exists(out) and 148 <= info.video.frames <= 152 and (info.video.width, info.video.height) == (720, 576), f"the clip: {info.video.frames} frames (2 x 75), {info.video.width}x{info.video.height}")
+    check(external and external[-1][-1] == out, "VLC was started with the clip")
+    os.remove(out)
+    print("Analyze cut point: OK (job, command, fallback, errors, VLC, Avidemux, real clip)")
+
+
+def test_save_dialog(tmp, videos):
+    """The file dialog of Save as MP4/AVI: Qt's own dialog by default (a double click on an existing file saves it), the dialog of the desktop
+    with file_dialog = native."""
+    from PySide6 import QtWidgets as W
+    from profiles import OPTION_GROUPS, validate_options
+    from settings import DEFAULT_TOOLTIPS, default_options
+    log = []
+    class Enum:
+        def __init__(self, name):
+            self.name = name
+        def __repr__(self):
+            return self.name
+    class Group:
+        def __init__(self, prefix):
+            self.prefix = prefix
+        def __getattr__(self, name):
+            return Enum(f"{self.prefix}.{name}")
+    class FakeDialog:
+        AcceptMode, FileMode, Option = Group("AcceptMode"), Group("FileMode"), Group("Option")
+        result, chosen = 1, ["/out/film.mp4"]
+        def __init__(self, *args):
+            log.append(("new", args))
+        def setAcceptMode(self, m): log.append(("acceptMode", repr(m)))
+        def setFileMode(self, m): log.append(("fileMode", repr(m)))
+        def setOption(self, o, on=True): log.append(("option", repr(o), on))
+        def selectFile(self, name): log.append(("selectFile", name))
+        def setHistory(self, folders): log.append(("history", folders))
+        def setSidebarUrls(self, urls): log.append(("sidebar", urls))
+        def exec(self): return FakeDialog.result
+        def selectedFiles(self): return FakeDialog.chosen
+        def deleteLater(self): log.append(("deleteLater",))
+        @staticmethod
+        def getSaveFileName(*args):
+            log.append(("native", args))
+            return "/native/film.mp4", "filter"
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="savedialog")
+    real = W.QFileDialog
+    W.QFileDialog = FakeDialog
+    try:
+        good = os.path.join(tmp, "recentA")
+        os.makedirs(good, exist_ok=True)
+        win.settings.add_recent_dir(good)
+        win.settings.add_recent_dir("/does/not/exist")
+        filters = "MP4 Video File (*.mp4);;MKV Video File (*.mkv);;All files (*)"
+        folder = os.path.join(tmp, "target")
+        name = win.ask_save_file("Save as MP4", os.path.join(folder, "film"), filters)
+        check(name == "/out/film.mp4", f"the chosen file is returned: {name}")
+        check(log[0] == ("new", (win, "Save as MP4", folder, filters)), f"Qt dialog with title, folder and filters: {log[0]}")
+        check(("acceptMode", "AcceptMode.AcceptSave") in log and ("fileMode", "FileMode.AnyFile") in log and ("selectFile", "film") in log, "save mode, one file, the suggested name")
+        options = [e for e in log if e[0] == "option"]
+        check(options == [("option", "Option.DontUseNativeDialog", True)], f"only the native dialog is switched off; the overwrite question stays on (no DontConfirmOverwrite): {options}")
+        check(("history", [good]) in log and ("sidebar", [("file", good)]) in log, "folders used recently (only existing ones) in the history and the places")
+        check(log[-1] == ("deleteLater",), "the dialog is deleted after use")
+        FakeDialog.result = 0
+        log.clear()
+        check(win.ask_save_file("Save as MP4", os.path.join(folder, "film"), filters) == "", "cancel: empty name")
+        FakeDialog.result = 1
+        FakeDialog.chosen = []
+        check(win.ask_save_file("Save as MP4", os.path.join(folder, "film"), filters) == "", "accepted without a file: empty name")
+        FakeDialog.chosen = ["/out/film.mp4"]
+        # without recent folders no history is set
+        win.settings.set("settings", "recent_dirs", "")
+        log.clear()
+        win.ask_save_file("Save as AVI", os.path.join(folder, "film.avi"), "AVI (*.avi)")
+        check(not any(e[0] in ("history", "sidebar") for e in log) and ("selectFile", "film.avi") in log, "no recent folders: no history, the name with its extension")
+        # --- native
+        win.settings.set_option("file_dialog", "native")
+        log.clear()
+        name = win.ask_save_file("Save as MP4", os.path.join(folder, "film"), filters)
+        check(name == "/native/film.mp4" and log == [("native", (win, "Save as MP4", os.path.join(folder, "film"), filters))], f"file_dialog = native: the static function of the desktop: {log}")
+    finally:
+        W.QFileDialog = real
+    # --- the option
+    check(default_options()["file_dialog"] == "qt" and "file_dialog" in DEFAULT_TOOLTIPS and "double click" in DEFAULT_TOOLTIPS["file_dialog"] and "applies at once" in DEFAULT_TOOLTIPS["file_dialog"], "default qt, explanation")
+    check("file_dialog" in dict(OPTION_GROUPS)["Technical"] and validate_options({"file_dialog": "native"}) == [] and validate_options({"file_dialog": "qt"}) == []
+          and len(validate_options({"file_dialog": "kde"})) == 1, "group Technical, checking")
+    print("Save dialog: OK (Qt dialog with the overwrite question, history, native option)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -3139,6 +3339,8 @@ def main():
     test_logo_mask_as_in_vb6(tmp, sys.argv[1])
     test_reference_logo(tmp, sys.argv[1])
     test_first_frame_check(tmp, sys.argv[1])
+    test_cutpoint(tmp, sys.argv[1])
+    test_save_dialog(tmp, sys.argv[1])
     test_display_aspect(tmp, sys.argv[1])
     test_recent_dirs(tmp, sys.argv[1])
     test_logo_options_tooltip_and_dialog_layout(tmp, sys.argv[1])

@@ -207,7 +207,7 @@ def default_options() -> dict:
             "pause": "160", "detect": "0", "aflags": "", "subtitle": "0", "multilanguage": "False",
             "step_end": "40", "step_next": "240", "border_tol": "3", "cut_window": "5", "logo_rewind": "1.8",
             "logo_edge": "18", "logo_conf": "0.2", "cut_diff": "30", "path_map": "",
-            "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35"}
+            "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "file_dialog": "qt"}
 
 
 # explanations for keys that are still missing in the INI file (section [ToolTipText])
@@ -223,6 +223,9 @@ DEFAULT_TOOLTIPS = {
                 "A * in a source stands for any characters except /, e.g. /run/user/*/kio-fuse-*/smb/root@nas/Harddisk=/mnt/nas/Harddisk",
     "overlay_opacity": "Station logo: how strongly the red areas show, in percent: the rectangle of the DeLogo filter over the preview "
                        "and the band in the RemoveLogo dialog (0 = only the edge, 100 = solid red); applies at once",
+    "file_dialog": "File dialog of Save as MP4/AVI: qt = Qt's own dialog (a double click on an existing file saves it; the folders used "
+                   "recently are among its places), native = the dialog of your desktop (in some KDE setups a double click on an existing "
+                   "file did nothing there); applies at once",
     "batch": "Batch: file the batch script is written to; a leading ~ is your home folder (empty: next to the INI file, "
              "with the extension .sh); applies at once",
     "player": "Preview: memory = VLC decodes into memory and Qt draws the pictures (runs natively under Wayland), "

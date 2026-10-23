@@ -31,6 +31,8 @@ _add_ui_paths()
 from PySide6 import QtCore, QtGui, QtWidgets                         # noqa: E402
 
 from cutlist import Job, Segment, resolve_source                          # noqa: E402
+from external import ExternalWorker, run_external                         # noqa: E402
+import ffmpeg_cmd                                                     # noqa: E402
 from frames import grab_frame, grab_numbered                         # noqa: E402
 import timeline as tl                                                # noqa: E402
 import dialogs                                                       # noqa: E402
@@ -118,6 +120,8 @@ class frmMain(frmMainBase):
         self._count_fn = count_fn
         self._counters: list[FrameCounter] = []
         self._thumb_fn = thumb_fn
+        self._external_fn = run_external               # starts VLC / Avidemux (replaced in the tests)
+        self._external: list = []                      # running helper programs (keeps the workers alive)
         self._verify_first: set = set()                # files opened just now: the first picture of the thumbnails confirms the first frame
         self.verify_first_frame = True                 # False: take the first frame from the stream data as it is (tests)
         self._frame_fn = frame_fn
@@ -187,9 +191,25 @@ class frmMain(frmMainBase):
         return {button.Yes: "yes", button.No: "no"}.get(answer, "cancel")
 
     def ask_save_file(self, title: str, suggestion: str, filters: str) -> str:
-        """File dialog for saving. The dialog itself asks before an existing file is overwritten (this also makes a double click\n        on an existing file work like the Save button)."""
-        name, _ = QtWidgets.QFileDialog.getSaveFileName(self, title, suggestion, filters)
-        return name
+        """File dialog for saving. By default Qt's own dialog (option file_dialog = qt): a double click on an existing file saves it (after the
+        question whether to replace it), and the folders used recently are in its list of places. With file_dialog = native the dialog of the
+        desktop is used; in some KDE setups a double click on an existing file did nothing there."""
+        if self.options.get("file_dialog", "qt") == "native":
+            name, _ = QtWidgets.QFileDialog.getSaveFileName(self, title, suggestion, filters)
+            return name
+        dialog = QtWidgets.QFileDialog(self, title, os.path.dirname(suggestion), filters)
+        dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptMode.AcceptSave)
+        dialog.setFileMode(QtWidgets.QFileDialog.FileMode.AnyFile)
+        dialog.setOption(QtWidgets.QFileDialog.Option.DontUseNativeDialog, True)
+        dialog.selectFile(os.path.basename(suggestion))
+        recent = [d for d in self.settings.recent_dirs if os.path.isdir(d)]
+        if recent:
+            dialog.setHistory(recent)
+            dialog.setSidebarUrls([QtCore.QUrl.fromLocalFile(d) for d in recent])
+        try:
+            return dialog.selectedFiles()[0] if dialog.exec() and dialog.selectedFiles() else ""
+        finally:
+            dialog.deleteLater()
 
     def ask_int(self, title: str, label: str, value: int, low: int, high: int) -> Optional[int]:
         import dialogs
@@ -1287,6 +1307,86 @@ class frmMain(frmMainBase):
         else:
             self.msg(f"The logo at this frame position is probably not usable since it contains only little relevant visual information "
                      f"({share:.0%} edge pixels in the logo area); it is advised to create the logo at a different frame.")
+
+    # ------------------------------------------------------------------ Analyze cut point (Ctrl+Y)
+    CUTPOINT_SECONDS = 3                       # length of the pieces before and behind the cut (VB6: 3 * 25 frames)
+    CUTPOINT_NOTE = ("drawtext=text='Note\\: cropping, delogo and resizing functions disabled!':fontcolor=yellow:fontsize=24:box=1:"
+                     "boxcolor=black@0.5:boxborderw=5:x=(w-text_w)/2:y=h-th-10,")
+
+    @staticmethod
+    def cutpoint_path() -> str:
+        return os.path.join(tempfile.gettempdir(), "mediamaker_cutpoint.mp4")
+
+    def cutpoint_job(self, index: int) -> Job:
+        """Job for the clip around the cut between the segments `index` and `index + 1` (0-based): the last 3 seconds of the first and the first
+        3 seconds of the next segment, without cropping and logo filters (the profile's scale applies), written to cutpoint_path()."""
+        a, b = self.segments[index], self.segments[index + 1]
+        frames = round(self.CUTPOINT_SECONDS * float(a.fps))
+        first = dataclasses.replace(a, start=max(a.first_frame, a.end - frames), mask="")
+        second = dataclasses.replace(b, end=min(b.start + frames, b.total_frames), mask="")
+        return Job(output=self.cutpoint_path(), profile=dict(self.profile), options={**self.options, "crop": "0"}, segments=[first, second])
+
+    def mnuCutPoints_Click(self):
+        """Makes a short clip around the cut between the selected segment and the next one and plays it in VLC (outside of the program); after
+        that Avidemux can be opened with it to look at the cut picture by picture. Not available for the last segment."""
+        if self.segment is None or self.current >= len(self.segments) - 1:
+            self.msg("Please select a segment, but not the last one.")
+            self.lvwSegments.setFocus()
+            return
+        job = self.cutpoint_job(self.current)
+        out = job.output
+        if os.path.exists(out):
+            os.remove(out)
+        missing = [s.path for s in job.segments if not os.path.exists(resolve_source(s.path))]
+        if missing:
+            self.msg(f"Source file not found: {missing[0]}")
+            return
+
+        def work(cancel):
+            res = None
+            for note in ([self.CUTPOINT_NOTE] if ffmpeg_cmd.has_filter("drawtext") else []) + [""]:       # without the text if drawtext fails
+                cmd = build_command(job, video_extra=note, setsar_always=True)
+                res = self._render_fn(cmd, total_seconds(job), lambda p: None, cwd=None, cancel=cancel)
+                if res.cancelled:
+                    raise seek.SeekCancelled()
+                if res.returncode == 0:
+                    return 0
+            raise RuntimeError(f"ffmpeg reported an error (code {res.returncode}):\n{res.errors}")
+        self._run_job(work, "Creating preview", lambda rc: self.cutpoint_ready(out))
+        self.lvwSegments.setFocus()
+
+    def cutpoint_ready(self, path: str) -> None:
+        """The clip exists: play it in VLC; when VLC is closed, offer Avidemux."""
+        vlc = self.settings.tool("vlc") or "vlc"
+        self.start_external([vlc, path], lambda rc, err: self.cutpoint_played(path, rc, err), fallback=["xdg-open", path])
+
+    def cutpoint_played(self, path: str, rc: int, err: str) -> None:
+        if rc != 0:
+            self.msg(f"The clip could not be played (VLC / xdg-open): {err or rc}\n\nIt is saved as {path}.")
+        answer = self.ask3("Open cut point video clip with AVIDEMUX now?")
+        if answer != "yes":
+            return
+        avidemux = self.settings.tool("avidemux")
+        if not avidemux:
+            self.msg("Avidemux is not configured: add a line avidemux=<path of the program> to the section [tools.linux] of the INI file.")
+            return
+        self.start_external([avidemux, path], lambda rc2, err2: self.msg(f"Avidemux could not be started: {err2 or rc2}\n\n"
+                                                                         "(An AppImage must be executable: chmod +x <file>)") if rc2 != 0 else None)
+
+    def start_external(self, cmd: list, on_done, fallback: Optional[list] = None) -> None:
+        """Starts a helper program in the background; on_done(return code, error text) is called in the Qt thread when it has ended. A program
+        that cannot be started (return code -1) is replaced by `fallback` if there is one."""
+        worker = ExternalWorker(cmd, self._external_fn)
+
+        def finished(rc, err, w=worker):
+            self._external = [x for x in self._external if x is not w]
+            if rc == -1 and fallback:
+                self.start_external(fallback, on_done)
+            else:
+                on_done(rc, err)
+        worker.completed.connect(finished)
+        self._external.append(worker)
+        worker.start()
 
     def mnuEnd_Click(self):
         self.seek_commercial(end=True)

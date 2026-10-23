@@ -24,6 +24,7 @@ PRESETS = {
     "multilanguage": ["False", "True"],
     "player": ["memory", "embed"],
     "dialog_style": ["tabs", "list"],
+    "file_dialog": ["qt", "native"],
 }
 
 
@@ -79,7 +80,7 @@ OPTION_GROUPS = (
     ("Logo", ("overlay_opacity",)),
     ("Audio/Subtitles", ("audio", "multilanguage", "subtitle", "aflags")),
     ("Batch", ("path_map", "batch")),
-    ("Technical", ("floor", "detect", "player", "vlc_args", "hide_messages", "dialog_style")),
+    ("Technical", ("floor", "detect", "player", "vlc_args", "hide_messages", "dialog_style", "file_dialog")),
 )
 
 
@@ -120,6 +121,8 @@ def validate_options(o: dict) -> list[str]:
             errors.append(f'"{key}" must not contain double quotes.')
     if "player" in o and o["player"] not in ("memory", "embed"):
         errors.append('"player" must be memory or embed.')
+    if "file_dialog" in o and o["file_dialog"] not in ("qt", "native"):
+        errors.append('"file_dialog" must be qt or native.')
     if "dialog_style" in o and o["dialog_style"] not in ("tabs", "list"):
         errors.append('"dialog_style" must be tabs or list.')
     if "multilanguage" in o and o["multilanguage"] not in ("True", "False"):

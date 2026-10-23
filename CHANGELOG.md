@@ -3,6 +3,14 @@
 ## 0.3 (in progress)
 
 - Version number set to 0.3-dev.
+- **Analyze cut point** (Ctrl+Y, as in VB6; not for the last segment): makes a clip of the last 3 seconds of the selected segment and the first 3
+  seconds of the next one (without cropping and logo filters, scaled to the profile, with a note in the picture), plays it in VLC outside of the
+  program and, after VLC is closed, offers to open it in Avidemux to look at the cut picture by picture. The programs are taken from the INI file
+  (section `[tools.linux]`, keys `vlc` and `avidemux`, otherwise from the PATH; without VLC `xdg-open` is tried). If the text in the picture
+  (drawtext) fails, the clip is made without it. The clip is saved as `mediamaker_cutpoint.mp4` in the temporary folder.
+- **Save as MP4/AVI**: new option `file_dialog` (qt|native, default qt): Qt's own dialog, in which a double click on an existing file saves it (after
+  the question whether to replace it) and the folders used recently are among its places. With `native` the dialog of the desktop is used (in some
+  KDE setups a double click on an existing file did nothing there).
 - **First frame**: it is now taken from the first picture that the decoder delivers (`decoded_first_pts`), not from the first keyframe packet; the
   decoder drops frames it cannot decode, and the thumbnails and the cut result contain exactly what it delivers. In addition, the first thumbnails of a
   file that was just opened confirm it: if the pictures begin later than assumed (up to 12 frames), the first frame, the length and the start of the
