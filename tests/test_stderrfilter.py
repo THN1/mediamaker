@@ -44,6 +44,8 @@ def test_default_patterns():
     from stderrfilter import DEFAULT_PATTERNS
     for line in ('kf.kio.widgets.kdirmodel: No node found for item that was just removed: QUrl("file:///a/b.ts")',
                  "kf.kio.widgets.kdirmodel: No node found for item that was just added: QUrl()",
+                 "kf.jobwidgets: Cannot register a job with KUiServerV2JobTracker without QGuiApplication::desktopFileName",
+                 "A KUiServerV2JobTracker instance contains 1 stalled jobs",
                  "This plugin supports grabbing the mouse only for popup windows",
                  "Failed to open VDPAU backend libvdpau_nvidia.so: cannot open shared object file"):
         assert any(p in line for p in DEFAULT_PATTERNS), line

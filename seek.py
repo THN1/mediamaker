@@ -5,7 +5,7 @@ refines it by a factor of 10 each time until it reaches 1. It runs in the backgr
 """
 from __future__ import annotations
 
-from typing import Callable
+from typing import Optional, Callable
 
 from PySide6 import QtCore
 
@@ -106,9 +106,10 @@ def seek_border(path, fps, total, pos, value, equal, stepping, opts, border_fn=b
 
 
 def seek_logo(path, fps, total, pos, ref, equal, stepping, opts, conf_fn=confidence_at, avg_fn=bottom_line_average,
-              cancel=lambda: False, shown=lambda n: n) -> int:
+              cancel=lambda: False, shown=lambda n: n, stats: Optional[dict] = None) -> int:
     """Like seek_border, but with the station logo: equal=True looks for the next frame WITH logo and then goes back a bit
-        (the logo often appears only some seconds after the movie has started), equal=False for the next frame WITHOUT logo."""
+        (the logo often appears only some seconds after the movie has started), equal=False for the next frame WITHOUT logo.
+        stats (dict) receives "confidences" = [(frame, confidence)] of all frames that were examined, and "result"."""
     def check() -> None:
         if cancel():
             raise SeekCancelled()
@@ -119,6 +120,8 @@ def seek_logo(path, fps, total, pos, ref, equal, stepping, opts, conf_fn=confide
     def conf_of(n: int) -> float:
         check()
         found = conf_fn(path, n, fps, ref, opts)
+        if stats is not None:
+            stats.setdefault("confidences", []).append((n, float(found)))
         text = f"frame {shown(n)}: logo confidence {found:.2f}"
         debug_log(f"logo search: {text}")
         if note:
@@ -133,6 +136,8 @@ def seek_logo(path, fps, total, pos, ref, equal, stepping, opts, conf_fn=confide
 
     result = where_logo(conf_of, pos, total, equal, stepping, rewind_fn, min_conf)
     debug_log(f"logo search: result frame {shown(result)}")
+    if stats is not None:
+        stats["result"] = result
     return result
 
 

@@ -2982,7 +2982,32 @@ def test_reference_logo(tmp, videos):
     win._frame_fn = lambda path, n, fps: (_ for _ in ()).throw(RuntimeError("no frame"))
     win.cmdLogo_Click()
     check(win.messages[-1] == "Creation of logo failed.", "a frame that cannot be read")
-    print("Reference logo: OK (button L, messages, Seek next commercial with crop = 0)")
+    # --- a search with the logo that runs to the end of the movie says what it saw (first a good reference again)
+    from frames import grab_frame
+    win._frame_fn = grab_frame
+    win.Slider1.setValue(first + 25)
+    win.cmdLogo_Click()
+    seg = win.segments[0]
+    seen = []
+    win._conf_fn = lambda path, n, fps_, ref_, opts_: (seen.append(n), 0.95)[1]
+    win.Slider1.setValue(first)
+    n_msgs = len(win.messages)
+    win.mnuNext_Click()
+    check(win.Slider1.value() == seg.total_frames and len(win.messages) == n_msgs + 1, "logo present everywhere: the search ends at the end of the movie")
+    text = win.messages[-1]
+    check(text.startswith("No frame without the logo was found up to the end of the movie.") and f"all {len(seen)} frames" in text and "between 0.95 and 0.95" in text
+          and 'button "L"' in text, f"message with the confidences: {text[:130]}")
+    win._conf_fn = lambda path, n, fps_, ref_, opts_: 0.04
+    win.Slider1.setValue(first)
+    win.mnuEnd_Click()
+    text = win.messages[-1]
+    check(text.startswith("No frame with the logo was found up to the end of the movie.") and "at most 0.04" in text, f"end of commercial: {text[:120]}")
+    win._conf_fn = logo.confidence_at
+    n_msgs = len(win.messages)
+    win.Slider1.setValue(first)
+    win.mnuNext_Click()
+    check(len(win.messages) == n_msgs and abs(win.Slider1.value() - first - 60) <= 1, "a successful search says nothing")
+    print("Reference logo: OK (button L, messages, Seek next commercial with crop = 0, report at the end of the movie)")
 
 
 def test_first_frame_check(tmp, videos):
@@ -3270,6 +3295,196 @@ def test_save_dialog(tmp, videos):
     print("Save dialog: OK (Qt dialog with the overwrite question, history, native option)")
 
 
+def test_player_recovery():
+    """A stuck VLC preview (opening a medium on a slow network drive never ends) is recovered by a new media player."""
+    import time
+    import types
+    from types import SimpleNamespace
+    import player as pl
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QWidget
+
+    class Events:
+        def __init__(self): self.attached, self.detached = [], []
+        def event_attach(self, t, cb): self.attached.append(t)
+        def event_detach(self, t): self.detached.append(t)
+
+    class Mp:
+        def __init__(self):
+            self.events, self.cb_calls, self.format, self.stops, self.released, self.calls_play, self.xwindow = Events(), [], None, 0, False, 0, None
+            self.state, self.t, self.media = 5, 0, None
+        def event_manager(self): return self.events
+        def video_set_callbacks(self, lock, unlock, display, opaque): self.cb_calls.append(display)
+        def video_set_format(self, chroma, w, h, pitch): self.format = (chroma, w, h, pitch)
+        def video_set_aspect_ratio(self, r): pass
+        def set_xwindow(self, w): self.xwindow = w
+        def set_media(self, m): self.media = m
+        def stop(self): self.stops += 1; self.state = 5
+        def release(self): self.released = True
+        def get_state(self): return self.state
+        def audio_set_mute(self, v): pass
+        def play(self): self.calls_play += 1
+        def set_pause(self, v): pass
+        def get_time(self): return self.t
+        def set_time(self, ms): pass
+        def is_playing(self): return False
+
+    class Media:
+        def __init__(self, path): self.path, self.options = path, []
+        def add_option(self, o): self.options.append(o)
+
+    class Inst:
+        def __init__(self): self.players, self.released = [], False
+        def media_player_new(self):
+            self.players.append(Mp())
+            return self.players[-1]
+        def media_new_path(self, p): return Media(p)
+        def release(self): self.released = True
+
+    holder = []
+    fake = types.ModuleType("vlc")
+    fake.Instance = lambda *a: (holder.append(Inst()), holder[-1])[1]
+    fake.EventType = SimpleNamespace(MediaPlayerPlaying=1, MediaPlayerPaused=2, MediaPlayerStopped=3, MediaPlayerEndReached=4,
+                                     MediaPlayerTimeChanged=5, MediaPlayerSeekableChanged=6)
+    fake.State = SimpleNamespace(Playing=3, Paused=4, Stopped=5)
+    fake.CallbackDecorators = SimpleNamespace(VideoLockCb=lambda f: f, VideoDisplayCb=lambda f: f)
+    sys.modules["vlc"] = fake
+    def watchdog():
+        timers = [fn for ms, fn in QTimer.pending if ms == pl.VlcPlayer.WATCHDOG_MS]
+        return timers[-1] if timers else None
+    def wait_for(condition):
+        for _ in range(100):
+            if condition():
+                return True
+            time.sleep(0.01)
+        return False
+    try:
+        player = pl.MemoryVlcPlayer()
+        inst = holder[0]
+        area = QWidget()
+        area.setGeometry(0, 0, 513, 290)
+        player.attach(area)
+        player.load("/nas/film.ts", (720, 576))
+        mp1 = player.mp
+        check(len(mp1.events.attached) == 6 and len(inst.players) == 1 and player.recoveries == 0, "one media player with its six events")
+        # --- the opening of a medium never ends: nothing is reported
+        QTimer.pending.clear()
+        player.show_at(5000)
+        check(watchdog() is not None and mp1.calls_play == 1 and mp1.media.options == [":start-time=5.000"], "a medium is started: the watchdog is set (8 s)")
+        watchdog()()
+        mp2 = player.mp
+        check(player.recoveries == 1 and mp2 is not mp1 and len(inst.players) == 2, "no report within 8 s: a new media player")
+        check(len(mp2.events.attached) == 6 and mp1.events.detached == mp1.events.attached, "the events of the new one are attached, those of the old one detached")
+        check(len(mp2.cb_calls) == 1 and mp2.format == ("RV32", 720, 576, 2880), f"the video callbacks of the new one are installed again: {mp2.format}")
+        check(mp2.calls_play == 1 and mp2.media.options == [":start-time=5.000"] and mp2.media.path == "/nas/film.ts", "the last position is requested again from the new one")
+        check(wait_for(lambda: mp1.stops == 2 and mp1.released), "the old one is stopped (again) and released in a thread of its own")
+        check(player._old_players == [mp1] and player._old_callbacks, "old player and callbacks stay referenced (libvlc may still call them)")
+        # --- VLC reports something: no recovery
+        QTimer.pending.clear()
+        player.show_at(7000) if player.mp.get_state() == 5 else None
+        fn = watchdog()
+        player._on_time(100)                                      # VLC is alive
+        fn()
+        check(player.recoveries == 1, "VLC reported something: no recovery")
+        # --- superseded requests do nothing
+        QTimer.pending.clear()
+        player.show_at(9000)
+        first = watchdog()
+        player.show_at(9500)
+        first()
+        check(player.recoveries == 1, "an outdated watchdog does nothing")
+        QTimer.pending.clear()
+        player.show_at(9900)
+        fn = watchdog()
+        player.stop()
+        fn()
+        check(player.recoveries == 1, "stopped meanwhile: nothing")
+        # --- reloading does not help: the third attempt replaces the media player
+        player._awaiting_position = None
+        mp = player.mp
+        mp.state = 4
+        QTimer.pending.clear()
+        for attempt in (1, 2):
+            mp.state, mp.t = 4, 90_000
+            player._do_seek(560 + attempt)
+            QTimer.pending[-1][1]()
+            player._awaiting_position = None
+            check(player.recoveries == 1 and player._reloads == attempt, f"reload {attempt}: the medium is started again")
+        mp.state, mp.t = 4, 90_000
+        player._do_seek(563)
+        QTimer.pending[-1][1]()
+        check(player.recoveries == 2 and player.mp is not mp and player.mp.media.options == [":start-time=0.563"], "the third reload in a row: the media player is replaced")
+        # a picture resets the counter
+        player._awaiting_position = None
+        player._reloads = 2
+        player.surface.image = None
+        player._on_frame((b"\x00" * (720 * 576 * 4), 720, 576))
+        check(player._reloads == 0 and player._frames_shown >= 1, "a picture resets the counter")
+        # --- the base player (embedded in a window) gets its window again
+        player2 = pl.VlcPlayer()
+        holder2 = holder[-1]
+        box = SimpleNamespace(winId=lambda: 77)
+        player2.attach(box)
+        check(player2.mp.xwindow == 77, "embedded: the window is set")
+        player2._path = "/nas/two.ts"
+        player2._last_show = 3000
+        old = player2.mp
+        player2.recover("test")
+        check(player2.mp is not old and player2.mp.xwindow == 77 and player2.mp.calls_play == 1, "embedded: the new media player gets the window and the position")
+        # --- shutdown after a recovery
+        progress = player.recoveries
+        player.shutdown()
+        player2.shutdown()
+        check(player.mp.released and holder[0].released and wait_for(lambda: True), "shutdown after recoveries: current media player and instance released")
+        QTimer.pending.clear()
+        player.recover("after shutdown")
+        check(player.recoveries == progress, "no recovery after shutdown")
+    finally:
+        del sys.modules["vlc"]
+    print("Player recovery: OK (watchdog, new media player, reload limit, embedded window, shutdown)")
+
+
+def test_make_test_clips(tmp, videos):
+    """tools/make_test_clips.py: pieces around cuts, from times, frame numbers or the saved list."""
+    import dataclasses as dc
+    from cutlist import Segment
+    from project import save_segments
+    from mediaprobe import first_frame_number, probe
+    script = os.path.join(ROOT, "tools", "make_test_clips.py")
+    out = os.path.join(tmp, "clips_at")
+    run = lambda *a: subprocess.run([sys.executable, script, *a], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    source = os.path.join(videos, "sample3.ts")
+    res = run(source, "--at", "0:00:04", "--before", "1", "--after", "2", "--out", out)
+    clips = sorted(f for f in os.listdir(out) if f.endswith(".ts"))
+    check(res.returncode == 0 and len(clips) == 1 and "clips_info.txt" in os.listdir(out), f"a piece from a time: {clips} {res.stderr[-200:]}")
+    info = probe(os.path.join(out, clips[0]))
+    check(2.5 <= float(info.video.frames) / 25 <= 3.5 and info.video.width == 720, f"about 3 seconds of video, 720 wide: {info.video.frames} frames")
+    check("the place at_0-00-04 is at about 1.0 s in the piece" in open(os.path.join(out, "clips_info.txt")).read() or "at about" in res.stdout, "the position of the cut inside the piece is told")
+    out2 = os.path.join(tmp, "clips_frames")
+    first = first_frame_number(source, Fraction(25))
+    res = run(source, "--frame", str(first + 100), "--frame", str(first + 200), "--before", "1", "--after", "1", "--out", out2)
+    check(res.returncode == 0 and len([f for f in os.listdir(out2) if f.endswith(".ts")]) == 2, f"pieces from frame numbers: {res.stderr[-200:]}")
+    # --- from the saved list: around the end of every segment and the start of the next one
+    segs = [Segment(index=i, path=source, name="sample3.ts", start=a, end=b, total_frames=362, fps=Fraction(25), width=720, height=576, vbitrate_kbit=2000,
+                    abitrate_kbit=192, audio_sel="a", crop_top=0, crop_bottom=0, crop_left=0, crop_right=0, sample_rate=48000, mask="", first_frame=first)
+            for i, (a, b) in enumerate(((first, first + 125), (first + 175, first + 300), (first + 320, 362)), 1)]
+    save_list = os.path.join(tmp, "list.json")
+    save_segments(save_list, segs)
+    out3 = os.path.join(tmp, "clips_list")
+    res = run(source, "--list", save_list, "--before", "1", "--after", "1", "--out", out3)
+    names = sorted(f for f in os.listdir(out3) if f.endswith(".ts"))
+    check(res.returncode == 0 and len(names) == 4 and "MediaMaker_clips.json" in os.listdir(out3), f"around the cuts of the list (2 ends, 2 starts): {names}")
+    check(any("seg1_end" in n for n in names) and any("seg2_start" in n for n in names) and not any("seg1_start" in n or "seg3_end" in n for n in names),
+          "the start of the file and the end of the movie are no cuts")
+    one = os.path.join(tmp, "list1.json")
+    save_segments(one, segs[:1] if False else [dc.replace(segs[0], end=362)])
+    res = run(source, "--list", one, "--out", os.path.join(tmp, "clips_none"))
+    check(res.returncode != 0 and "no cut between segments" in res.stderr, "a list without a cut: says so")
+    res = run(source, "--out", os.path.join(tmp, "clips_nothing"))
+    check(res.returncode != 0 and "Nothing to cut" in res.stderr, "no place given: says so")
+    print("Test clips tool: OK (times, frame numbers, saved list)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -3316,6 +3531,8 @@ def main():
     test_profiles(tmp, sys.argv[1])
     test_dialog()
     test_memory_player()
+    test_player_recovery()
+    test_make_test_clips(tmp, sys.argv[1])
     test_timeline(tmp, sys.argv[1])
     test_segments(tmp, sys.argv[1])
     test_thumbnail_errors(tmp, sys.argv[1])

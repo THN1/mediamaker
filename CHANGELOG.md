@@ -3,6 +3,15 @@
 ## 0.3 (in progress)
 
 - Version number set to 0.3-dev.
+- **Frozen preview on a network drive**: if VLC reports nothing for 8 s after a medium was started (opening never ends, no picture comes any more), the
+  media player is replaced by a new one (the old one is stopped in a thread of its own) and the last position is requested again; a jump that brings
+  no picture is reloaded at most twice in a row before the media player is replaced. With `MEDIAMAKER_DEBUG=1` the log shows `RECOVERY ...`.
+- A search with the logo that finds nothing (no frame without the logo for "Seek next commercial", none with it for "Seek end of commercial")
+  now says what it saw: the number of examined frames and their confidences, and what to check (rectangle, reference logo).
+- The program sets its desktop file name; the harmless KDE messages "kf.jobwidgets: Cannot register a job with KUiServerV2JobTracker ..." and
+  "... instance contains N stalled jobs" are filtered.
+- New tool `tools/make_test_clips.py`: cuts short pieces (stream copy) out of a long recording from times, frame numbers or the saved list, so that
+  they can be sent for testing.
 - **Analyze cut point** (Ctrl+Y, as in VB6; not for the last segment): makes a clip of the last 3 seconds of the selected segment and the first 3
   seconds of the next one (without cropping and logo filters, scaled to the profile, with a note in the picture), plays it in VLC outside of the
   program and, after VLC is closed, offers to open it in Avidemux to look at the cut picture by picture. The programs are taken from the INI file

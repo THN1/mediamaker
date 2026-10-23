@@ -11,6 +11,7 @@ import ctypes
 import os
 import shlex
 import sys
+import threading
 import time
 from typing import Callable, Optional
 
@@ -200,12 +201,27 @@ class VlcPlayer(Player):
                 + shlex.split(os.environ.get("MEDIAMAKER_VLC_ARGS", "")))
         debug_log(f"VLC arguments: {args}")
         self.instance = vlc.Instance(*args)
-        self.mp = self.instance.media_player_new()
         self._pending_show: Optional[int] = None
         self._awaiting_position: Optional[int] = None         # still picture is requested, VLC is not there yet
         self._path: Optional[str] = None
         self._closed = False
         self._throttle = SeekThrottle(self._do_seek)
+        self._widget = None                                     # window of the video output (for a new media player)
+        self._progress = 0                                      # counts what VLC reports (events, pictures): the watchdog looks at it
+        self._watch_token = 0
+        self._last_show: Optional[int] = None                   # last position that was requested for a new medium
+        self.recoveries = 0                                     # how often the media player had to be replaced
+        self._old_callbacks: list = []                          # libvlc may still call the functions of replaced media players
+        self._old_players: list = []
+        self._new_media_player()
+        self.playing.connect(self._after_playing)
+        self.seekable.connect(self._after_seekable)
+        self._muted = False
+
+    def _new_media_player(self) -> None:
+        """Creates the libvlc media player and attaches the events (at the start and after a recovery)."""
+        vlc = self._vlc
+        self.mp = self.instance.media_player_new()
         self._callbacks = []                                    # keep references, otherwise Python cleans up the functions
         self._event_types = []
         events = self.mp.event_manager()
@@ -224,22 +240,22 @@ class VlcPlayer(Player):
         self._callbacks.append(tc)
         self._event_types.append(T.MediaPlayerTimeChanged)
         events.event_attach(T.MediaPlayerTimeChanged, tc)
-        self.playing.connect(self._after_playing)
-        self.seekable.connect(self._after_seekable)
-        self._muted = False
 
     # These functions run in the VLC thread; after shutdown they must not trigger Qt signals any more.
     def _on_event(self, signal, name: str) -> None:
         if not self._closed:
+            self._progress += 1
             debug_log(f"event {name}")
             signal.emit()
 
     def _on_time(self, ms: int) -> None:
         if not self._closed:
+            self._progress += 1
             self.time_changed.emit(ms)
 
     def _on_seekable(self, flag: bool) -> None:
         if not self._closed:
+            self._progress += 1
             debug_log(f"event seekable={flag}")
             self.seekable.emit(flag)
 
@@ -266,6 +282,7 @@ class VlcPlayer(Player):
             return
         self._closed = True
         debug_log("shutdown")
+        self._watch_token += 1
         self._pending_show = None
         self._throttle.timer.stop()
         try:
@@ -311,7 +328,63 @@ class VlcPlayer(Player):
         if self._muted:
             self._mute(False)
 
+    # ------------------------------------------------------------------ Recovery of a stuck preview
+    # With a recording on a network drive (slow, sometimes blocking reads) libvlc can get stuck: the opening of a medium never ends, no picture comes
+    # any more, and further jumps change nothing. If nothing is reported for WATCHDOG_MS after a medium was started, the media player is replaced by
+    # a new one (the old one is stopped in a thread of its own, because stopping can block) and the last position is requested again.
+    WATCHDOG_MS = 8000
+
+    def _start_watchdog(self) -> None:
+        self._watch_token += 1
+        token, progress = self._watch_token, self._progress
+        QtCore.QTimer.singleShot(self.WATCHDOG_MS, lambda: self._watchdog(token, progress))
+
+    def _watchdog(self, token: int, progress: int) -> None:
+        if self._closed or token != self._watch_token:
+            return                                               # superseded (stopped, another request, shutdown)
+        if self._progress == progress:
+            self.recover(f"nothing reported by VLC for {self.WATCHDOG_MS} ms")
+
+    def recover(self, reason: str) -> None:
+        """Replaces the media player by a new one and requests the last position again."""
+        if self._closed:
+            return
+        self.recoveries += 1
+        debug_log(f"RECOVERY {self.recoveries} ({reason}): new media player")
+        old = self.mp
+        try:
+            events = old.event_manager()
+            for event_type in self._event_types:
+                events.event_detach(event_type)
+        except Exception as e:
+            debug_log(f"detaching the events of the old media player failed: {e}")
+        self._old_callbacks.extend(self._callbacks)              # libvlc may still call them
+        self._old_players.append(old)                            # kept alive for the same reason
+        threading.Thread(target=self._dispose, args=(old,), daemon=True).start()
+        self._pending_show = self._awaiting_position = None
+        self._muted = False
+        self._watch_token += 1
+        self._new_media_player()
+        self._after_recover()
+        if self._path and self._last_show is not None:
+            self.show_at(self._last_show)
+
+    @staticmethod
+    def _dispose(old) -> None:
+        """Stops and releases a replaced media player (may block, therefore not in the Qt thread)."""
+        try:
+            old.stop()
+            old.release()
+        except Exception as e:
+            debug_log(f"disposing of the old media player failed: {e}")
+
+    def _after_recover(self) -> None:
+        """The new media player needs its video output again."""
+        if self._widget is not None:
+            self.attach(self._widget)
+
     def attach(self, widget) -> None:
+        self._widget = widget
         win_id = int(widget.winId())
         if sys.platform.startswith("linux"):
             self.mp.set_xwindow(win_id)
@@ -337,6 +410,7 @@ class VlcPlayer(Player):
     def stop(self) -> None:
         self._pending_show = None
         self._awaiting_position = None
+        self._watch_token += 1
         if self._muted:
             self._mute(False)
         self.mp.stop()
@@ -352,6 +426,7 @@ class VlcPlayer(Player):
             # media option start-time, with which playback starts at the desired position right away.
             self._pending_show = ms
             self._awaiting_position = ms
+            self._last_show = ms
             debug_log(f"show_at {ms} ms (Medium {self._path})")
             if self._path:
                 media = self.instance.media_new_path(self._path)
@@ -359,6 +434,7 @@ class VlcPlayer(Player):
                 self.mp.set_media(media)
             self.mp.play()
             self._mute(True)
+            self._start_watchdog()
 
     @property
     def is_playing(self) -> bool:
@@ -443,6 +519,7 @@ class MemoryVlcPlayer(VlcPlayer):
         super().__init__(extra_args)
         self.surface: Optional[VideoSurface] = None
         self._frames_shown = 0                                   # counter of the pictures shown (for checking jumps)
+        self._reloads = 0                                        # reloads in a row that did not bring a picture
         self._last_seek: Optional[int] = None
         self._size = (0, 0)
         self._buf = None
@@ -481,6 +558,12 @@ class MemoryVlcPlayer(VlcPlayer):
         self.mp.video_set_aspect_ratio(f"{width}:{height}")      # picture fills the memory area without black borders of its own
         debug_log(f"memory output {width}x{height}")
 
+    def _after_recover(self) -> None:
+        size, self._size = self._size, (0, 0)                    # the new media player knows nothing yet: install the video callbacks again
+        self._reloads = 0
+        if size != (0, 0):
+            self._install(*size)
+
     def _position_reached(self, ms: int) -> None:
         """Position reached: show pictures again. The picture VLC has already delivered was discarded; another
                 jump in the paused state delivers one for this position."""
@@ -489,14 +572,17 @@ class MemoryVlcPlayer(VlcPlayer):
 
     def _on_frame(self, frame) -> None:
         data, width, height = frame
+        self._progress += 1
         if self._awaiting_position is not None:
             return                                           # VLC still shows the wrong position (e.g. the start of the file)
+        self._reloads = 0
         if self.surface is not None and not self._closed:
             image = QtGui.QImage(data, width, height, width * 4, QtGui.QImage.Format.Format_RGB32).copy()
             self.surface.set_image(image)
             self._frames_shown += 1
 
     SEEK_CHECK_MS = 600                                          # how long to wait for the picture after a jump
+    MAX_RELOADS = 2                                              # reloads of the medium in a row before the media player is replaced
     SEEK_CHECK_MIN_DISTANCE_MS = 100                             # closer jumps sometimes deliver no new picture
 
     def _do_seek(self, ms: int) -> None:
@@ -512,6 +598,11 @@ class MemoryVlcPlayer(VlcPlayer):
         if self._closed or self._awaiting_position is not None or self._last_seek != ms:
             return                                               # superseded: another jump has come in the meantime
         if self._frames_shown == frames_before and self.mp.get_state() == self._vlc.State.Paused:
+            self._reloads += 1
+            self._last_show = ms
+            if self._reloads > self.MAX_RELOADS:                 # reloading does not help: replace the media player
+                self.recover(f"{self._reloads - 1} reloads in a row brought no picture")
+                return
             debug_log(f"jump to {ms} ms delivered no picture: reloading the medium")
             self.stop()
             self.show_at(ms)

@@ -1416,13 +1416,35 @@ class frmMain(frmMainBase):
                          "Please set one of them first (for the logo: place the DeLogo rectangle or select a RemoveLogo frame, then click the "
                          "button \"L\" at a frame where the logo is visible).")
                 return
+            stats: dict = {}
+
             def job(cancel):
                 return seek.seek_logo(seg.path, seg.fps, total, start, ref, end, stepping, opts, self._conf_fn, self._avg_fn, cancel,
-                                      shown=lambda n, f=seg.first_frame: n - f)
+                                      shown=lambda n, f=seg.first_frame: n - f, stats=stats)
+            self._run_seek(job, lambda frame: (self.seek_done(frame), self.logo_seek_report(stats, frame, end, seg)))
+            return
         self._run_seek(job)
 
-    def _run_seek(self, job) -> None:
-        self._run_job(job, "Seeking", self.seek_done)
+    def _run_seek(self, job, on_done=None) -> None:
+        self._run_job(job, "Seeking", on_done or self.seek_done)
+
+    def logo_seek_report(self, stats: dict, frame: int, end: bool, seg: Segment) -> None:
+        """A search with the logo that found nothing says what it saw (the confidences of the frames it examined), so that a wrong reference logo
+        or a wrongly placed rectangle can be recognized. Nothing found: no examined frame with the logo (end of commercial) or none without it
+        (next commercial)."""
+        found = [c for _, c in stats.get("confidences", [])]
+        threshold = float(self.options.get("logo_conf", 0.2))
+        if not found or (any(c >= threshold for c in found) if end else any(c < threshold for c in found)):
+            return
+        low, high = min(found), max(found)
+        if end:
+            text = (f"No frame with the logo was found up to the end of the movie. The logo was not recognized in any of the {len(found)} frames that "
+                    f"were examined (confidence at most {high:.2f}; from {threshold:.2f} on the logo counts as present).")
+        else:
+            text = (f"No frame without the logo was found up to the end of the movie. The logo was recognized in all {len(found)} frames that were "
+                    f"examined (confidence between {low:.2f} and {high:.2f}; below {threshold:.2f} counts as 'no logo').")
+        self.msg(text + "\n\nCheck that the DeLogo rectangle surrounds the logo and that the reference logo was created with the button \"L\" at a "
+                 "frame where the logo is clearly visible.")
 
     def _run_job(self, job, message: str, on_done) -> None:
         """Work in the background with a wait dialog ("<message>, please wait...") and cancel; on_done(result) in the Qt thread."""

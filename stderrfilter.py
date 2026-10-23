@@ -21,6 +21,9 @@ DEFAULT_PATTERNS = (
     # KDE file dialog (KIO): warning of its directory model when a file in a watched folder disappears again, e.g. temporary
     # files of the TV receiver on the network drive or MediaMaker's own temporary files. Harmless.
     "kf.kio.widgets.kdirmodel: No node found for item",
+    # KDE job tracker at the end of the program (the file dialog of the desktop had a job on a network drive that never ended). Harmless.
+    "kf.jobwidgets: Cannot register a job with KUiServerV2JobTracker",
+    "KUiServerV2JobTracker instance contains",
 )
 
 
