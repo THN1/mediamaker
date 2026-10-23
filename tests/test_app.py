@@ -103,6 +103,7 @@ def make_window(tmp, probe=None, fresh=False, thumb_fn=None, first_fn=None, **kw
     win.messages = []
     win.msg = win.messages.append
     win.inform = win.messages.append
+    win.verify_first_frame = False                       # most tests give the first frame by hand (first_fn); test_first_frame_check switches it on
     win.answer = True
     win.ask = lambda text: win.answer
     win.busy = lambda on: None
@@ -2984,6 +2985,91 @@ def test_reference_logo(tmp, videos):
     print("Reference logo: OK (button L, messages, Seek next commercial with crop = 0)")
 
 
+def test_first_frame_check(tmp, videos):
+    """The first thumbnails of a file that was just opened confirm the first frame: if the pictures begin later than assumed, the first frame,
+    the length and the start are corrected and the timeline shows the first picture right at the marker (no crosses between)."""
+    import numpy as np
+    from mediaprobe import decoded_first_pts, first_frame_number
+    from PIL import Image
+    path = os.path.join(tmp, "dummy.ts")
+    shutil.copy(os.path.join(videos, "sample2.ts"), path)
+    TRUE_FIRST = 10                                         # sample2.ts: the first picture the decoder delivers is frame 10
+    def thumbs_from(first_real):
+        def fn(p, first, count, fps, size, on_start=None):
+            w, h = size
+            return {n: np.zeros((h, w, 3), np.uint8) for n in range(max(first, first_real, 0), first + count)}
+        return fn
+    def window(assumed, real, name):
+        work = os.path.join(tmp, name)
+        os.makedirs(work, exist_ok=True)
+        win = make_window(work, thumb_fn=thumbs_from(real), fresh=True, first_fn=lambda p, fps: assumed)
+        win.verify_first_frame = True
+        win.showEvent(None)
+        win.dialogs = []
+        win.wait_dialog = lambda message, cancel: win.dialogs.append(FakeWait(message, cancel)) or win.dialogs[-1]
+        win.OpenVideo(path)
+        return win
+    marks = lambda win: "".join("X" if c[0] == "cross" else "B" if c[0] == "image" else "?" for c in win.timeline_cells())
+    # --- the stream data say 10, the decoder delivers from 13 (the case of the report: 13 crosses, 7 pictures)
+    win = window(10, 13, "ff_late")
+    seg = win.segments[0]
+    check(seg.first_frame == 13 and seg.start == 13 and seg.total_frames == 158 + 3 and seg.end == 158 + 3, f"corrected: first {seg.first_frame}, start {seg.start}, end {seg.end}, length {seg.total_frames}")
+    check(marks(win) == "X" * 10 + "B" * 10, f"timeline: ten crosses, then the first picture right at the marker: {marks(win)}")
+    check(win.Slider1.minimum() == 13 and win.Slider1.maximum() == 161 and win.Slider1.value() >= 13, "slider limits follow")
+    check(len(win.messages) == 1 and "frame 13" in win.messages[0] and "3 frame(s) later" in win.messages[0], f"a note tells what happened: {win.messages}")
+    check(load_segments(os.path.join(tmp, "ff_late", "MediaMaker.json"))[0].first_frame == 13, "saved with the corrected first frame")
+    check("dummy.ts" not in win._verify_first and path not in win._verify_first, "checked once")
+    # --- nothing to correct
+    win = window(10, 10, "ff_ok")
+    check(win.segments[0].first_frame == 10 and win.segments[0].start == 10 and not win.messages and marks(win) == "X" * 10 + "B" * 10, "pictures begin where expected: nothing changes")
+    check(path not in win._verify_first, "checked once, also without a correction")
+    win = window(10, 40, "ff_far")
+    check(win.segments[0].first_frame == 10 and not win.messages, "a gap larger than 12 frames is no correction (something else is wrong)")
+    # --- the window does not contain the first frame yet: wait for the next thumbnails
+    win = window(30, 33, "ff_wait")
+    check(win.segments[0].first_frame == 33 and win.segments[0].start == 33, "first frame 30 -> 33")
+    work = os.path.join(tmp, "ff_off")
+    os.makedirs(work, exist_ok=True)
+    win = make_window(work, thumb_fn=thumbs_from(13), fresh=True, first_fn=lambda p, fps: 10)
+    win.verify_first_frame = True
+    win.showEvent(None)
+    win.OpenVideo(path)
+    win.verify_first_frame = False
+    seg_first = win.segments[0].first_frame
+    check(seg_first == 13, "with the check on, the correction happens at the first load")
+    # --- a segment that is cut in the middle keeps its markers, a whole-file segment follows
+    work = os.path.join(tmp, "ff_two")
+    os.makedirs(work, exist_ok=True)
+    win = make_window(work, thumb_fn=thumbs_from(13), fresh=True, first_fn=lambda p, fps: 10)
+    win.verify_first_frame = False
+    win.showEvent(None)
+    win.OpenVideo(path)
+    win.segments[0].first_frame, win.segments[0].start, win.segments[0].end, win.segments[0].total_frames = 10, 10, 158, 158
+    win.segments.append(dataclasses.replace(win.segments[0], index=2, start=60, end=100))
+    win._verify_first.add(path)
+    win.check_first_frame(path, {n: np.zeros((2, 2, 3), np.uint8) for n in range(13, 23)}, (10, 22))
+    a, b = win.segments
+    check((a.first_frame, a.start, a.end, a.total_frames) == (13, 13, 161, 161) and (b.first_frame, b.start, b.end, b.total_frames) == (13, 60, 100, 161),
+          f"both segments of the file: first frame and length shift, only the whole-file segment moves its markers: {(a.first_frame, a.start, a.end)} {(b.first_frame, b.start, b.end)}")
+    # --- saved lists are not touched
+    work = os.path.join(tmp, "ff_saved")
+    os.makedirs(work, exist_ok=True)
+    win = make_window(work, thumb_fn=thumbs_from(13), fresh=True, first_fn=lambda p, fps: 10)
+    win.verify_first_frame = True
+    win.showEvent(None)
+    win.OpenVideo(path)
+    json_path = os.path.join(work, "MediaMaker.json")
+    win2 = make_window(work, thumb_fn=thumbs_from(20), first_fn=lambda p, fps: 10)
+    win2.verify_first_frame = True
+    win2.showEvent(None)
+    check(win2.segments[0].first_frame == 13 and path not in win2._verify_first, "a saved list is loaded as it is and not checked again")
+    # --- the decoder as the source of the first frame
+    check(decoded_first_pts(os.path.join(videos, "sample2.ts")) is not None and abs(decoded_first_pts(os.path.join(videos, "sample2.ts")) - 1.824) < 1e-6
+          and decoded_first_pts(os.path.join(tmp, "missing.ts")) is None, "decoded_first_pts: the timestamp of the first frame the decoder delivers; None for a missing file")
+    check(first_frame_number(os.path.join(videos, "sample2.ts"), Fraction(25)) == TRUE_FIRST, "first_frame_number: from the decoder")
+    print("First frame check: OK (correction by the thumbnails, timeline, saving, once per open, saved lists untouched)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -3052,6 +3138,7 @@ def main():
     test_removelogo(tmp, sys.argv[1])
     test_logo_mask_as_in_vb6(tmp, sys.argv[1])
     test_reference_logo(tmp, sys.argv[1])
+    test_first_frame_check(tmp, sys.argv[1])
     test_display_aspect(tmp, sys.argv[1])
     test_recent_dirs(tmp, sys.argv[1])
     test_logo_options_tooltip_and_dialog_layout(tmp, sys.argv[1])

@@ -183,28 +183,46 @@ def count_video_packets(path: str, ffprobe: str = "ffprobe", on_start=None) -> t
     return usable, len(rows) - usable, key_pts
 
 
+def decoded_first_pts(path: str, ffprobe: str = "ffprobe", packets: int = 300) -> Optional[float]:
+    """Timestamp (seconds) of the first video frame that the DECODER delivers, or None. The decoder drops frames it cannot decode (B-frames
+    in front of the first keyframe that refer to the previous GOP, frames before a recovery point ...); what it delivers is also what the
+    thumbnails and the cut result contain. Only the first packets are read and decoded (fast, also on a network drive)."""
+    cmd = [ffprobe, "-v", "error", "-select_streams", "v:0", "-read_intervals", f"%+#{packets}", "-show_entries", "frame=pts_time",
+           "-of", "csv=p=0", path]
+    try:
+        out = subprocess.run(cmd, capture_output=True, check=True, text=True, stdin=subprocess.DEVNULL).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    times = [_float(line.split(",")[0], -1.0) for line in out.splitlines() if line.strip()]
+    times = [t for t in times if t >= 0]
+    return min(times) if times else None
+
+
 def first_frame_number(path: str, fps, ffprobe: str = "ffprobe", packets: int = 300) -> int:
     """Number of the first decodable video frame, counted from the container start (like the frame numbers in the program).
 
-        If in a TV recording the sound starts earlier than the video, the first frame does not have the number 0. Only
-        the first packets are read (fast, also on a network drive). The first frame is the first keyframe packet; B-frames before it
-        are not decodable. Without a keyframe among the first packets the start of the video stream applies.
+        If in a TV recording the sound starts earlier than the video, the first frame does not have the number 0. Only the first packets
+        are read (fast, also on a network drive). The first frame is the first one the decoder delivers (decoded_first_pts); that is what
+        the thumbnails and the cut result contain. If the decoder yields nothing, the first keyframe packet applies (B-frames before it are
+        not decodable), and without a keyframe among the first packets the start of the video stream.
     """
     from math import floor
     from ffmpeg_cmd import stream_times_of
     container, video = stream_times_of(path)
-    cmd = [ffprobe, "-v", "error", "-select_streams", "v:0", "-read_intervals", f"%+#{packets}", "-show_entries",
-           "packet=pts_time,flags", "-of", "csv=p=0", path]
-    try:
-        out = subprocess.run(cmd, capture_output=True, check=True, text=True, stdin=subprocess.DEVNULL).stdout
-    except (OSError, subprocess.CalledProcessError):
-        out = ""
-    pts = video
-    for line in out.splitlines():
-        parts = line.split(",")
-        if len(parts) > 1 and "K" in parts[1] and _float(parts[0], -1.0) >= 0:
-            pts = _float(parts[0])
-            break
+    pts = decoded_first_pts(path, ffprobe, packets)
+    if pts is None:
+        cmd = [ffprobe, "-v", "error", "-select_streams", "v:0", "-read_intervals", f"%+#{packets}", "-show_entries",
+               "packet=pts_time,flags", "-of", "csv=p=0", path]
+        try:
+            out = subprocess.run(cmd, capture_output=True, check=True, text=True, stdin=subprocess.DEVNULL).stdout
+        except (OSError, subprocess.CalledProcessError):
+            out = ""
+        pts = video
+        for line in out.splitlines():
+            parts = line.split(",")
+            if len(parts) > 1 and "K" in parts[1] and _float(parts[0], -1.0) >= 0:
+                pts = _float(parts[0])
+                break
     return max(0, floor((float(pts) - float(container)) * float(fps) + 1e-3))
 
 

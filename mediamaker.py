@@ -118,6 +118,8 @@ class frmMain(frmMainBase):
         self._count_fn = count_fn
         self._counters: list[FrameCounter] = []
         self._thumb_fn = thumb_fn
+        self._verify_first: set = set()                # files opened just now: the first picture of the thumbnails confirms the first frame
+        self.verify_first_frame = True                 # False: take the first frame from the stream data as it is (tests)
         self._frame_fn = frame_fn
         self._aspect_fn = display_aspect               # proportions of the picture as a player shows it
         self._aspects: dict = {}
@@ -565,6 +567,8 @@ class frmMain(frmMainBase):
             abitrate_kbit=chosen.bitrate // 1000, audio_sel=selector, crop_top=0, crop_bottom=0, crop_left=0,
             crop_right=0, sample_rate=chosen.sample_rate, mask="", first_frame=first))
         self.settings.last = fn
+        if self.verify_first_frame:
+            self._verify_first.add(fn)
         self.refresh_list()
         self._save()
         self.lblText_Upd()
@@ -1440,7 +1444,49 @@ class frmMain(frmMainBase):
         for n in range(rng[0], rng[1] + 1):
             if n not in frames and (path, n) not in self.thumb_cache:
                 self.thumb_missing.add((path, n))                     # before the first frame or behind the end
+        self.check_first_frame(path, frames, rng)
         self.picTimeline.update()
+
+    MAX_FIRST_SHIFT = 12                                              # frames: largest correction of the first frame
+
+    def check_first_frame(self, path: str, frames: dict, rng: tuple) -> None:
+        """The first thumbnails of a file that was just opened confirm the first frame. If the pictures begin LATER than the number that was
+        taken as the first frame (the decoder drops some frames at the start that the stream data suggested), the first frame, the length and
+        the start of the segment are corrected, so that the marker lies exactly on the first picture. Saved lists are not touched."""
+        if path not in self._verify_first:
+            return
+        same = [s for s in self.segments if s.path == path]
+        if not same:
+            self._verify_first.discard(path)
+            return
+        first = same[0].first_frame
+        if not rng[0] <= first <= rng[1]:
+            return                                                    # the window does not contain the first frame (yet)
+        self._verify_first.discard(path)
+        delivered = sorted(n for n in frames if n >= first)
+        if not delivered or delivered[0] == first or delivered[0] - first > self.MAX_FIRST_SHIFT:
+            return
+        delta = delivered[0] - first
+        debug_log(f"first frame corrected from {first} to {first + delta}: the first picture of the thumbnails is {delivered[0]}")
+        for seg in same:
+            if seg.first_frame != first:
+                continue
+            old_total = seg.total_frames
+            seg.first_frame += delta
+            seg.total_frames += delta
+            seg.start = max(seg.start + (delta if seg.start == first else 0), seg.first_frame)
+            if seg.end == old_total:
+                seg.end += delta
+        self.refresh_list()
+        self._save()
+        self.lblText_Upd()
+        current = self.segment
+        if current is not None and current in same:
+            self.Slider1.setRange(current.first_frame, current.total_frames)
+            self._go(max(self.Slider1.value(), current.first_frame))
+        self.timeline_refresh()
+        self.inform(f"The first picture that the decoder delivers is frame {first + delta}, {delta} frame(s) later than the stream data suggested; "
+                    "the start of the video was set to it.")
 
     def thumbs_failed(self, token: int, text: str) -> None:
         """Loading the thumbnails failed: report once (otherwise the fields would stay empty without a word)."""

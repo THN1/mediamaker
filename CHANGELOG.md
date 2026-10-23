@@ -3,6 +3,12 @@
 ## 0.3 (in progress)
 
 - Version number set to 0.3-dev.
+- **First frame**: it is now taken from the first picture that the decoder delivers (`decoded_first_pts`), not from the first keyframe packet; the
+  decoder drops frames it cannot decode, and the thumbnails and the cut result contain exactly what it delivers. In addition, the first thumbnails of a
+  file that was just opened confirm it: if the pictures begin later than assumed (up to 12 frames), the first frame, the length and the start of the
+  segment are corrected and a note says so, so that the first picture lies right at the cut marker (before: ten crosses, then the picture
+  was missing for a few frames at the marker, e.g. 13 crosses and 7 pictures). Saved lists are not touched. New tool
+  `tools/first_frame_check.py FILE` shows the start times, packets, decoded frames and the pictures of the timeline loader.
 - **Button L (reference logo)**: creates the reference logo for the search with the station logo from the DeLogo rectangle of the segment at the
   current frame (the logo must be visible there); with a RemoveLogo mask the reference comes from the mask. With it "Seek next commercial" /
   "Seek end of commercial" work when the recording has no black border (`crop = 0`). A reference counts as usable with more than 5 % edge pixels
