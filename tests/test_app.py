@@ -2922,6 +2922,68 @@ def test_logo_mask_as_in_vb6(tmp, videos):
     print("Logo mask as in VB6: OK (unchanged mask, removelogo only, dropped options removed)")
 
 
+def test_reference_logo(tmp, videos):
+    """Button L: reference logo from the DeLogo rectangle; with it "Seek next commercial" finds the first frame without the logo (crop = 0)."""
+    import numpy as np
+    import logo
+    from PIL import Image, ImageDraw
+    from mediaprobe import first_frame_number
+    # --- a clip with a station logo (light box, dark symbol) that disappears at frame 60 (2.4 s)
+    work = tempfile.mkdtemp()
+    box = Image.new("RGB", (34, 37), (210, 210, 210))
+    ImageDraw.Draw(box).arc((6, 6, 28, 30), 200, 520, fill=(40, 40, 40), width=5)
+    box.save(os.path.join(work, "logo.png"))
+    clip = os.path.join(work, "logo_gone.ts")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x909090:s=720x576:r=25:d=6,noise=alls=10:allf=t+u", "-loop", "1", "-i", os.path.join(work, "logo.png"),
+                    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=6", "-filter_complex", "[0][1]overlay=632:81:enable='lt(n,60)':shortest=1[v]", "-map", "[v]",
+                    "-map", "2:a", "-c:v", "mpeg2video", "-q:v", "2", "-g", "12", "-c:a", "mp2", "-shortest", "-f", "mpegts", clip], check=True, stdin=subprocess.DEVNULL)
+    win = seek_window(tmp, work, ("logo_gone.ts",), workdir="reflogo", first_fn=first_frame_number)
+    win.settings.set_option("crop", "0")
+    seg = win.segments[0]
+    first = seg.first_frame
+    # --- messages when the button cannot work
+    win.cmdLogo_Click()
+    check(win.messages[-1] == "Please first select a DeLogo area or a frame for RemoveLogo before calling this function." and not win.delogo_refs, "no rectangle: message")
+    win.mnuNext_Click()
+    check("Cannot seek" in win.messages[-1] and 'button "L"' in win.messages[-1], f"searching without crop and logo: message names the button L")
+    seg.mask = logo.mask_to_png_b64(np.ones((576, 720), bool))
+    win.cmdLogo_Click()
+    check("RemoveLogo mask" in win.messages[-1] and not win.delogo_refs, "with a RemoveLogo mask nothing is created")
+    win.segments.clear()
+    win.current = -1
+    win.cmdLogo_Click()
+    check(win.messages[-1] == "Please select a video segment first.", "no segment: message")
+    win.OpenVideo(clip)
+    seg = win.segments[0]
+    seg.mask = f"{632 / 720 - 0.003:.6f} {81 / 576 - 0.004:.6f} {37 / 720:.6f} {42 / 576:.6f}"      # DeLogo rectangle around the logo
+    win.lvwSegments.select_row(0)
+    win.lvwSegments_Click()
+    # --- reference logo at frame 25
+    win.Slider1.setValue(first + 25)
+    win.cmdLogo_Click()
+    ref = win.delogo_refs.get(seg.mask)
+    check(ref is not None and ref.rect == logo.absolute_rect(seg.mask, 720, 576) and ref.ones > 0, f"reference logo from the rectangle: {ref.rect if ref else None}")
+    check(win.messages[-1].startswith("The reference logo was successfully created") and "edge pixels" in win.messages[-1], f"message: {win.messages[-1]}")
+    share = ref.ones / ref.edges.size
+    check(share > win.LOGO_USABLE, f"the logo has {share:.0%} edge pixels")
+    # --- the search: next frame without logo
+    win.Slider1.setValue(first)
+    win.mnuNext_Click()
+    found = win.Slider1.value() - first
+    check(abs(found - 60) <= 1, f"Seek next commercial finds the first frame without the logo: frame {found} (logo gone from frame 60)")
+    win.Slider1.setValue(first + 40)
+    win.mnuNext_Click()
+    check(abs(win.Slider1.value() - first - 60) <= 1, "also from the middle of the logo section")
+    # --- a weak reference (a frame without edges) is stored but warned about; a failing frame
+    win._frame_fn = lambda path, n, fps: np.full((576, 720, 3), 100, np.uint8)
+    win.cmdLogo_Click()
+    check("probably not usable" in win.messages[-1] and "0% edge pixels" in win.messages[-1] and win.delogo_refs[seg.mask].ones == 0, f"flat picture: {win.messages[-1][:90]}")
+    win._frame_fn = lambda path, n, fps: (_ for _ in ()).throw(RuntimeError("no frame"))
+    win.cmdLogo_Click()
+    check(win.messages[-1] == "Creation of logo failed.", "a frame that cannot be read")
+    print("Reference logo: OK (button L, messages, Seek next commercial with crop = 0)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -2989,6 +3051,7 @@ def main():
     test_delogo(tmp, sys.argv[1])
     test_removelogo(tmp, sys.argv[1])
     test_logo_mask_as_in_vb6(tmp, sys.argv[1])
+    test_reference_logo(tmp, sys.argv[1])
     test_display_aspect(tmp, sys.argv[1])
     test_recent_dirs(tmp, sys.argv[1])
     test_logo_options_tooltip_and_dialog_layout(tmp, sys.argv[1])

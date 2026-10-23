@@ -3,6 +3,11 @@
 ## 0.3 (in progress)
 
 - Version number set to 0.3-dev.
+- **Button L (reference logo)**: creates the reference logo for the search with the station logo from the DeLogo rectangle of the segment at the
+  current frame (the logo must be visible there); with a RemoveLogo mask the reference comes from the mask. With it "Seek next commercial" /
+  "Seek end of commercial" work when the recording has no black border (`crop = 0`). A reference counts as usable with more than 5 % edge pixels
+  in the logo area (VB6: 10 %; the test logo had 9 % and was found reliably: confidence 0.93 to 1.0 with the logo and 0.00 without, whichever
+  frame served as reference); the message shows the percentage. The reference is kept in memory only (as in VB6): after a restart press L again.
 - Tried and dropped again: a smooth fill instead of `removelogo` (`logo_fill`, `fill_sigma`) and changes to the RemoveLogo mask (`mask_fill`,
   `mask_grow`, a grey preview). In a test on a real recording the smooth fill still left a grey area with cross-shaped traces, and it made
   ffmpeg slower (7.5 x instead of 12 to 14 x real time). The mask chosen in the dialog is used unchanged, as in VB6; the grey haze of

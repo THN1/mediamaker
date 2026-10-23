@@ -1253,6 +1253,37 @@ class frmMain(frmMainBase):
             return self._logo_refs[key]
         return self.delogo_refs.get(seg.mask) if seg.mask else None
 
+    LOGO_USABLE = 0.05                  # share of edge pixels in the logo area from which a reference logo counts as usable (VB6: 0.1)
+
+    def cmdLogo_Click(self):
+        """Button L: creates the reference logo for the search with the station logo at the current frame, from the DeLogo rectangle of the
+        segment (the logo must be visible in this frame). With a RemoveLogo mask the reference is taken from the mask."""
+        seg = self.segment
+        if seg is None:
+            self.msg("Please select a video segment first.")
+            return
+        if seg.has_png_mask:
+            self.msg("The reference logo of this segment is taken from its RemoveLogo mask; there is nothing to create.")
+            return
+        if not seg.mask:
+            self.msg("Please first select a DeLogo area or a frame for RemoveLogo before calling this function.")
+            return
+        frame = self.Slider1.value()
+        try:
+            rect = logo_module.absolute_rect(seg.mask, seg.width, seg.height)
+            ref = logo_module.ref_from_rect(self._frame_fn(seg.path, frame, seg.fps), rect, int(self.options.get("logo_edge", logo_module.BIN_MIN)))
+        except Exception as e:
+            debug_log(f"reference logo failed: {e!r}")
+            self.msg("Creation of logo failed.")
+            return
+        self.delogo_refs[seg.mask] = ref
+        share = ref.ones / ref.edges.size if ref.edges.size else 0.0
+        if share > self.LOGO_USABLE:
+            self.msg(f"The reference logo was successfully created (frame {self.shown(frame)}, {share:.0%} edge pixels in the logo area).")
+        else:
+            self.msg(f"The logo at this frame position is probably not usable since it contains only little relevant visual information "
+                     f"({share:.0%} edge pixels in the logo area); it is advised to create the logo at a different frame.")
+
     def mnuEnd_Click(self):
         self.seek_commercial(end=True)
 
@@ -1277,8 +1308,9 @@ class frmMain(frmMainBase):
         else:
             ref = self.logo_reference(seg)
             if ref is None:
-                self.msg("Cannot seek: neither a cropping value (option \"crop\") nor a logo has been defined for this video. "
-                         "Please set one of them first.")
+                self.msg("Cannot seek: neither a cropping value (option \"crop\") nor a reference logo has been defined for this video. "
+                         "Please set one of them first (for the logo: place the DeLogo rectangle or select a RemoveLogo frame, then click the "
+                         "button \"L\" at a frame where the logo is visible).")
                 return
             def job(cancel):
                 return seek.seek_logo(seg.path, seg.fps, total, start, ref, end, stepping, opts, self._conf_fn, self._avg_fn, cancel,
