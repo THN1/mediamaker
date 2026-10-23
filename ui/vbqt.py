@@ -309,22 +309,33 @@ def on_mouse(widget, down=None, move=None, up=None) -> None:
 
 
 def _shift_down() -> bool:
-    return bool(QtWidgets.QApplication.keyboardModifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
+    """Is the Shift key down right now? (asks the window system; where that is not possible, the state of the last event)"""
+    app = QtWidgets.QApplication
+    query = getattr(app, "queryKeyboardModifiers", None) or app.keyboardModifiers
+    return bool(query() & QtCore.Qt.KeyboardModifier.ShiftModifier)
 
 
 class ShiftToolTip(QtCore.QObject):
-    """Tooltip of a control that shows another text while the Shift key is held down (for buttons whose Shift + click does
-    something else). The text is chosen when the pointer enters the control, when it moves over it and when the tooltip is about to
-    appear; a tooltip that is already showing gets the new text at the next movement of the pointer. (Only events of this control are
-    watched, not those of the whole application.)"""
+    """Tooltip of a control that shows another text while the Shift key is held down (for buttons whose Shift + click does something
+    else). The text follows the key: it is chosen when the pointer enters the control or moves over it, when the tooltip is about to
+    appear, and as long as the pointer stays on the control a timer looks at the key several times a second, so pressing or releasing
+    Shift also changes a tooltip that is already showing. Only events of this control are watched, not those of the whole application."""
+
+    POLL_MS = 100
 
     def __init__(self, widget, normal: str, with_shift: str, shift_down=None):
         super().__init__(widget)
         self.widget, self.normal, self.with_shift = widget, normal, with_shift
         self._shift_down = shift_down or _shift_down
         self.shift = False
+        self.timer = QtCore.QTimer(self)
+        self.timer.setInterval(self.POLL_MS)
+        self.timer.timeout.connect(self.poll)
         widget.setToolTip(normal)
         widget.installEventFilter(self)
+
+    def poll(self) -> None:
+        self.set_shift(self._shift_down())
 
     def set_shift(self, shift: bool) -> None:
         if shift == self.shift:
@@ -336,8 +347,16 @@ class ShiftToolTip(QtCore.QObject):
             QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), text, self.widget)
 
     def eventFilter(self, obj, ev):
-        if obj is self.widget and ev.type() in (QtCore.QEvent.Type.Enter, QtCore.QEvent.Type.ToolTip, QtCore.QEvent.Type.MouseMove):
-            self.set_shift(self._shift_down())
+        if obj is not self.widget:
+            return False
+        t, E = ev.type(), QtCore.QEvent.Type
+        if t == E.Enter:
+            self.poll()
+            self.timer.start()                                  # watches the key as long as the pointer is on the control
+        elif t == E.Leave:
+            self.timer.stop()
+        elif t in (E.ToolTip, E.MouseMove):
+            self.poll()
         return False
 
 

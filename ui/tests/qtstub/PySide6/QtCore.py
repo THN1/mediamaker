@@ -32,7 +32,7 @@ class QRect(Base):
 
 class QEvent(Base):
     Type = EnumGroup("QEvent.Type", {"ActivationChange", "MouseButtonPress", "MouseMove", "MouseButtonRelease",
-                                      "MouseButtonDblClick", "KeyPress", "KeyRelease", "DragEnter", "DragMove", "Drop", "Enter", "ToolTip"})
+                                      "MouseButtonDblClick", "KeyPress", "KeyRelease", "DragEnter", "DragMove", "Drop", "Enter", "Leave", "ToolTip"})
     methods = {"type", "position", "button", "buttons", "modifiers", "key", "mimeData", "acceptProposedAction"}
 
 
@@ -52,7 +52,7 @@ class Qt:
 
 class QTimer(QObject):
     signals = {"timeout"}
-    methods = {"setSingleShot", "setInterval", "stop"}
+    methods = {"setSingleShot", "setInterval"}
     pending = []                         # in the test: (ms, function) of QTimer.singleShot
 
     @staticmethod
@@ -61,6 +61,11 @@ class QTimer(QObject):
 
     def start(self, ms=None):
         self._active = True
+        self.__dict__.setdefault("starts_", []).append(ms)
+
+    def stop(self):
+        self._active = False
+        self.__dict__["stops_"] = self.__dict__.get("stops_", 0) + 1
 
     def isActive(self):
         return getattr(self, "_active", False)

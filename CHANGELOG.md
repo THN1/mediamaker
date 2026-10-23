@@ -7,8 +7,9 @@
   `mask_grow`, a grey preview). In a test on a real recording the smooth fill still left a grey area with cross-shaped traces, and it made
   ffmpeg slower (7.5 x instead of 12 to 14 x real time). The mask chosen in the dialog is used unchanged, as in VB6; the grey haze of
   `removelogo` can be avoided with the DeLogo filter (solid rectangle). The four options are removed from old INI files at the start.
-- The tooltips of the RemoveLogo dialog are wrapped at 70 characters. The tooltip of the logo button with Shift now changes when the pointer
-  enters or moves over the button (no event filter on the whole application any more).
+- The tooltips of the RemoveLogo dialog are wrapped at 70 characters. The tooltip of the logo button follows the Shift key again ("...DeLogo..." / "...RemoveLogo..."): the key is asked for
+  when the pointer enters or moves over the button and by a timer (every 100 ms) as long as the pointer stays on it, so pressing or releasing
+  Shift also changes a tooltip that is already showing. No event filter on the whole application any more.
 - The Batch dialog asks for the target file with a selection list of the (up to 10) folders used recently (INI key `recent_dirs`, also
   filled by Save as MP4/AVI), the file name and a "Browse..." button. The dialog is a class of its own and is deleted after use (a crash
   when closing the program after writing a batch script was reported: "QObject: shared QObject was deleted directly"; cause not yet known).

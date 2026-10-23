@@ -2689,18 +2689,35 @@ def test_logo_options_tooltip_and_dialog_layout(tmp, videos):
     state["shift"] = False
     tip2.eventFilter(widget, Ev(E.MouseMove))
     check(last() == "normal", "Shift released, the pointer moves")
-    before = len(widget.called("setToolTip"))
-    tip2.eventFilter(widget, Ev(E.KeyPress, K.Key_Shift))
-    tip2.eventFilter(widget, Ev(E.KeyRelease, K.Key_Shift))
-    tip2.eventFilter(object(), Ev(E.Enter))
-    check(len(widget.called("setToolTip")) == before, "key events and events of other controls are ignored (nothing is watched on the whole application)")
-    check(tip2.eventFilter(widget, Ev(E.Enter)) is False, "events are never swallowed")
-    check(not hasattr(vbqt.ShiftToolTip, "keyPressEvent"), "no key handling")
-    widget.under_mouse_ = True
-    QToolTip.shown.append(("pos", "old", widget))
+    # the key is watched by a timer as long as the pointer is on the control
+    widget3 = type(button)()
+    tip3 = vbqt.ShiftToolTip(widget3, "normal", "with shift", shift_down=lambda: state["shift"])
+    last3 = lambda: widget3.called("setToolTip")[-1][0]
+    state["shift"] = False
+    check(tip3.timer.called("setInterval")[-1] == (100,) and not tip3.timer.isActive(), "a timer of 100 ms that is not running at first")
+    tip3.eventFilter(widget3, Ev(E.Enter))
+    check(tip3.timer.isActive() and len(tip3.timer.__dict__["starts_"]) == 1, "the pointer enters: the timer starts")
     state["shift"] = True
-    tip2.eventFilter(widget, Ev(E.MouseMove))
-    check(QToolTip.shown[-1][1] == "with shift" and QToolTip.shown[-1][2] is widget, "a tooltip that is showing gets the new text at the next movement of the pointer")
+    tip3.timer.fire()
+    check(last3() == "with shift", "Shift is pressed while the pointer rests on the control: the text changes")
+    state["shift"] = False
+    tip3.timer.fire()
+    check(last3() == "normal", "Shift is released: the text changes back")
+    tip3.eventFilter(widget3, Ev(E.Leave))
+    check(tip3.timer.__dict__["stops_"] == 1, "the pointer leaves: the timer stops")
+    tip3.eventFilter(object(), Ev(E.Enter))
+    tip3.eventFilter(object(), Ev(E.Leave))
+    check(len(tip3.timer.__dict__["starts_"]) == 1 and tip3.timer.__dict__["stops_"] == 1, "events of other controls are ignored")
+    before = len(widget3.called("setToolTip"))
+    tip3.eventFilter(widget3, Ev(E.KeyPress, K.Key_Shift))
+    tip3.eventFilter(widget3, Ev(E.KeyRelease, K.Key_Shift))
+    check(len(widget3.called("setToolTip")) == before, "key events are not handled (the key is asked for, nothing is watched on the whole application)")
+    check(tip3.eventFilter(widget3, Ev(E.Enter)) is False, "events are never swallowed")
+    widget3.under_mouse_ = True
+    QToolTip.shown.append(("pos", "old", widget3))
+    state["shift"] = True
+    tip3.timer.fire()
+    check(QToolTip.shown[-1][1] == "with shift" and QToolTip.shown[-1][2] is widget3, "a tooltip that is showing gets the new text at once")
     QToolTip.shown.clear()
     # --- RemoveLogo dialog: width stays, the height follows the proportions of the picture, no distortion
     sample = os.path.join(videos, "sample2.ts")
