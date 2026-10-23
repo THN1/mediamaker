@@ -3,9 +3,13 @@
 ## 0.3 (in progress)
 
 - Version number set to 0.3-dev.
-- **Frozen preview on a network drive**: if VLC reports nothing for 8 s after a medium was started (opening never ends, no picture comes any more), the
-  media player is replaced by a new one (the old one is stopped in a thread of its own) and the last position is requested again; a jump that brings
-  no picture is reloaded at most twice in a row before the media player is replaced. With `MEDIAMAKER_DEBUG=1` the log shows `RECOVERY ...`.
+- **Frozen preview on a network drive** (log of a 2.5 GB recording on the NAS: opening a medium at a position took under a second, but every jump in
+  the open medium 3 to 7 seconds, and `stop()` waited 4 seconds for such a jump, which blocked the whole window). Now a jump that brings no picture
+  within 600 ms marks the medium as slow; from then on every jump opens the medium anew at the position, with a NEW media player instead of
+  stopping the old one (which is stopped and released in a thread of its own). While such a reload runs, further jumps only keep the latest
+  position, which is loaded as soon as the picture of the running one has arrived. `stop()` does not block for such media either. If VLC reports
+  nothing for 8 s after a medium was started, the media player is replaced as well (watchdog). The log (`MEDIAMAKER_DEBUG=1`) now tells how many
+  milliseconds a picture needed after a jump or reload, and `RECOVERY ...` / `slow medium: reloading at ...`.
 - A search with the logo that finds nothing (no frame without the logo for "Seek next commercial", none with it for "Seek end of commercial")
   now says what it saw: the number of examined frames and their confidences, and what to check (rectangle, reference logo).
 - The program sets its desktop file name; the harmless KDE messages "kf.jobwidgets: Cannot register a job with KUiServerV2JobTracker ..." and
