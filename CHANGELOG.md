@@ -3,6 +3,14 @@
 ## 0.4 (in progress)
 
 - Version number set to 0.4-dev.
+- **Sessions** (File => Backup session / Restore session / Delete session): a session is one zip file in the folder `sessions` next to the INI file
+  (option `sessions_dir` for another place), named with the time as in VB6 (`2026.10.25_14-03-12.zip`), with the INI file, the segment list and a small
+  manifest (time, optional note, number and titles of the segments, program version). No 7-Zip any more; nothing is rewritten when a session is
+  added, deleting is deleting a file, a session can be copied or sent, any archive program opens it, a damaged file harms no other session.
+  Backup asks for an optional note. Restore shows the sessions (newest first, with note and titles), lets you choose what to restore (segment list,
+  settings, or both), saves the current state as a session first ("automatic backup before restoring ..."), checks the session (zip intact, the
+  list is a MediaMaker list) before anything is written, and takes the files up in the running program: no restart as in VB6 (options for the
+  player and VLC arguments apply at the next start). Delete accepts several sessions. Old 7-Zip archives of VB6 are not read.
 
 ## 0.3
 

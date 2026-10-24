@@ -171,6 +171,10 @@ class QAbstractButton(QWidget):
         args = self.called("setText")
         return args[-1][0] if args else ""
 
+    def _ret_isChecked(self):
+        args = self.called("setChecked")
+        return bool(args[-1][0]) if args else False
+
 
 class QPushButton(QAbstractButton):
     methods = {"setAutoDefault", "setDefault"}
@@ -304,9 +308,16 @@ class QTabWidget(QWidget):
         return self.__dict__.get("cur_", 0)
 
 
-class QListWidget(QWidget):
+class QAbstractItemView(QWidget):
+    SelectionMode = EnumGroup("QAbstractItemView.SelectionMode", {"SingleSelection", "ExtendedSelection", "MultiSelection", "NoSelection"})
+
+
+class QListWidget(QAbstractItemView):
     signals = {"currentRowChanged"}
-    methods = {"setFixedWidth"}
+    methods = {"setFixedWidth", "setSelectionMode", "setMinimumWidth", "setMinimumHeight"}
+
+    def selectedIndexes(self):
+        return [type("Index", (), {"row": (lambda self, r=r: r)})() for r in self.__dict__.get("sel_", [])]
 
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
@@ -317,6 +328,7 @@ class QListWidget(QWidget):
 
     def setCurrentRow(self, i):
         self.row_ = i
+        self.sel_ = [i]
         self.currentRowChanged.emit(i)
 
     def currentRow(self):

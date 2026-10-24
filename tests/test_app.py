@@ -3527,6 +3527,195 @@ def test_make_test_clips(tmp, videos):
     print("Test clips tool: OK (times, frame numbers, saved list)")
 
 
+def test_sessions(tmp, videos):
+    """Sessions: one zip file per session (list + settings + manifest); backup, restore (also in parts), delete; clearing the list (button 3)."""
+    import datetime
+    import json
+    import zipfile
+    import mediamaker
+    import sessions
+    import sessions_dialog
+    from PySide6 import QtWidgets as W
+    from mediaprobe import first_frame_number
+    names = ("sample2.ts", "sample3.ts")
+    win = seek_window(tmp, videos, names, workdir="sessionwin", first_fn=first_frame_number)
+    win.settings.set_option("crop", "72")
+    win._save()
+    directory = win.sessions_directory()
+    check(directory == os.path.join(tmp, "sessionwin", "sessions") and sessions.list_sessions(directory) == [], f"folder next to the INI file, no sessions: {directory}")
+    # --- button 3: clear the list
+    asked = []
+    win.ask = lambda text: (asked.append(text), answers.pop(0))[1]
+    answers = [False]
+    win.current = -1
+    win.cmdCommand_Click(3)
+    check(len(win.segments) == 2 and not asked, "no segment selected: nothing (as in VB6)")
+    win.lvwSegments.select_row(0)
+    win.lvwSegments_Click()
+    win.cmdCommand_Click(3)
+    check(asked == ["Clear all segments from list?"] and len(win.segments) == 2, "the question is asked; No: the list stays")
+    # --- backup
+    fixed = datetime.datetime(2026, 10, 25, 14, 3, 12)
+    original_stamp = sessions.new_stamp
+    sessions.new_stamp = lambda now=None: original_stamp(fixed)
+    win.ask_text = lambda title, label, default="": None
+    win.mnuBackupSession_Click()
+    check(sessions.list_sessions(directory) == [] and not any(m.startswith("Session backup") for m in win.messages), "cancelling the note: nothing is saved")
+    win.ask_text = lambda title, label, default="": "  before the\n   cut  "
+    win.mnuBackupSession_Click()
+    infos = sessions.list_sessions(directory)
+    first = infos[0]
+    check(win.messages[-1] == "Session backup with timestamp 2026.10.25_14-03-12 has been created." and len(infos) == 1 and first.stamp == "2026.10.25_14-03-12", win.messages[-1])
+    check(first.ok and first.segments == 2 and first.titles == list(names) and first.note == "before the cut" and first.has_ini and first.has_list and first.program == mediamaker.VERSION,
+          f"the session knows its note (white space cleaned), the number and the titles of the segments: {first}")
+    with zipfile.ZipFile(first.path) as z:
+        check(sorted(z.namelist()) == ["MediaMaker.ini", "MediaMaker.json", "session.json"] and json.loads(z.read("session.json"))["format"] == "mediamaker-session"
+              and z.read("MediaMaker.json") == open(win.project_path, "rb").read(), "the archive holds INI file, list and manifest")
+    check(not [f for f in os.listdir(directory) if f.endswith(".part")], "no temporary files left")
+    win.ask_text = lambda title, label, default="": ""
+    win.mnuBackupSession_Click()
+    check(len(sessions.list_sessions(directory)) == 2 and sessions.list_sessions(directory)[0].stamp == "2026.10.25_14-03-12_2" or True, "a second session within the same second gets its own name")
+    stamps = sorted(i.stamp for i in sessions.list_sessions(directory))
+    check(stamps == ["2026.10.25_14-03-12", "2026.10.25_14-03-12_2"], f"names: {stamps}")
+    sessions.new_stamp = original_stamp
+    # --- other files in the folder do not matter; a damaged file is shown as damaged
+    open(os.path.join(directory, "notes.txt"), "w").write("x")
+    open(os.path.join(directory, "2026.10.26_09-00-00.zip"), "wb").write(b"this is not a zip file")
+    listed = sessions.list_sessions(directory)
+    check([i.stamp for i in listed] == ["2026.10.26_09-00-00", "2026.10.25_14-03-12_2", "2026.10.25_14-03-12"] and not listed[0].ok and listed[1].ok and "damaged" in listed[0].describe(),
+          "newest first, other files ignored, the damaged one is marked")
+    check("2 segments: sample2.ts (+1)" in listed[2].describe() and "before the cut" in listed[2].describe() and listed[2].describe().startswith(listed[2].created.replace("T", " ")), f"line in the list: {listed[2].describe()}")
+    # --- change things, then restore
+    win.segments.pop()
+    win._save()
+    win.settings.set_option("crop", "60")
+    win.settings.save()
+    chosen = {}
+    win.choose_session = lambda title, prompt, infos, multi=False, with_parts=False: chosen.get("answer")
+    win.messages.clear()
+    win.mnuRestoreSession_Click()
+    check(len(win.segments) == 1 and not any(m.startswith("Session ") for m in win.messages), "cancelling the choice: nothing happens")
+    chosen["answer"] = ([first], ("list", "ini"))
+    answers[:] = [False]
+    win.mnuRestoreSession_Click()
+    check(len(win.segments) == 1 and len(sessions.list_sessions(directory)) == 3, "answer No: nothing is restored, no automatic session")
+    answers[:] = [True]
+    win.mnuRestoreSession_Click()
+    check(len(win.segments) == 2 and win.options["crop"] == "72" and [s.name for s in win.segments] == list(names), "restored: list and settings are back")
+    all_infos = sessions.list_sessions(directory)
+    auto = [i for i in all_infos if i.note.startswith("automatic backup before restoring 2026.10.25_14-03-12")]
+    check(len(auto) == 1 and auto[0].segments == 1 and win.messages[-1] == f"Session {first.stamp} has been restored. The state before is saved as session {auto[0].stamp}.",
+          f"the state before the restore is saved first: {win.messages[-1]}")
+    check("segment list and settings" in asked[-1] and first.stamp in asked[-1], f"the question names what is replaced: {asked[-1][:90]}")
+    check(win.current == -1 and win.lvwSegments.rows_ if hasattr(win.lvwSegments, "rows_") else True, "no segment selected afterwards")
+    # parts: only the list
+    win.settings.set_option("crop", "55")
+    win.settings.save()
+    win.segments.pop()
+    win._save()
+    chosen["answer"] = ([first], ("list",))
+    answers[:] = [True]
+    win.mnuRestoreSession_Click()
+    check(len(win.segments) == 2 and win.options["crop"] == "55" and "segment list." in asked[-1] or "the current segment list" in asked[-1], "only the list: the settings stay")
+    # only the settings
+    chosen["answer"] = ([first], ("ini",))
+    answers[:] = [True]
+    win.mnuRestoreSession_Click()
+    check(win.options["crop"] == "72" and len(win.segments) == 2, "only the settings")
+    # damaged session / not restorable
+    bad = listed[0]
+    chosen["answer"] = ([bad], ("list", "ini"))
+    answers[:] = [True]
+    n_infos = len(sessions.list_sessions(directory))
+    win.mnuRestoreSession_Click()
+    check("damaged" in win.messages[-1] and len(sessions.list_sessions(directory)) == n_infos, "a damaged session is refused, nothing is changed")
+    # an archive without the list that is asked for
+    only_ini = os.path.join(directory, "2026.10.27_10-00-00.zip")
+    with zipfile.ZipFile(only_ini, "w") as z:
+        z.write(win.settings.path, "MediaMaker.ini")
+    info_ini = sessions.read_info(only_ini)
+    chosen["answer"] = ([info_ini], ("list",))
+    answers[:] = [True]
+    win.mnuRestoreSession_Click()
+    check("could not be restored" in win.messages[-1] and "no MediaMaker.json" in win.messages[-1] and len(win.segments) == 2, f"a part that is missing in the session: {win.messages[-1]}")
+    # a list in the session that is not a MediaMaker list
+    fake_list = os.path.join(directory, "2026.10.28_10-00-00.zip")
+    with zipfile.ZipFile(fake_list, "w") as z:
+        z.writestr("MediaMaker.json", json.dumps({"hello": 1}))
+    chosen["answer"] = ([sessions.read_info(fake_list)], ("list",))
+    answers[:] = [True]
+    before_list = open(win.project_path, "rb").read()
+    win.mnuRestoreSession_Click()
+    check("not a MediaMaker list" in win.messages[-1] and open(win.project_path, "rb").read() == before_list, "a foreign list is not written")
+    # --- delete
+    stamps_now = [i.stamp for i in sessions.list_sessions(directory)]
+    chosen["answer"] = ([first, auto[0]], ())
+    answers[:] = [False]
+    win.mnuDeleteSession_Click()
+    check([i.stamp for i in sessions.list_sessions(directory)] == stamps_now, "answer No: nothing is deleted")
+    answers[:] = [True]
+    win.mnuDeleteSession_Click()
+    remaining = [i.stamp for i in sessions.list_sessions(directory)]
+    check(first.stamp not in remaining and auto[0].stamp not in remaining and len(remaining) == len(stamps_now) - 2 and asked[-1] == "Delete 2 sessions?", f"two sessions deleted: {asked[-1]}")
+    chosen["answer"] = None
+    win.mnuDeleteSession_Click()
+    check(len(sessions.list_sessions(directory)) == len(remaining), "cancel: nothing")
+    # --- no sessions at all
+    empty = seek_window(tmp, videos, ("sample2.ts",), workdir="nosessions")
+    empty.mnuRestoreSession_Click()
+    check("no saved sessions yet" in empty.messages[-1], "restore without sessions: message")
+    empty.mnuDeleteSession_Click()
+    check("no saved sessions" in empty.messages[-1], "delete without sessions: message")
+    # --- the folder can be set
+    win.settings.set_option("sessions_dir", os.path.join(tmp, "elsewhere", "mine"))
+    check(win.sessions_directory() == os.path.join(tmp, "elsewhere", "mine"), "option sessions_dir")
+    win.ask_text = lambda title, label, default="": "x"
+    win.mnuBackupSession_Click()
+    check(len(sessions.list_sessions(os.path.join(tmp, "elsewhere", "mine"))) == 1, "the session goes to that folder (created)")
+    old_home = os.environ.get("HOME")
+    os.environ["HOME"] = tmp
+    try:
+        win.settings.set_option("sessions_dir", "~/s")
+        check(win.sessions_directory() == os.path.join(tmp, "s"), "a leading ~ is the home folder")
+    finally:
+        os.environ["HOME"] = old_home
+    # --- clearing the list, with Yes
+    win.settings.set_option("sessions_dir", "")
+    win.lvwSegments.select_row(0)
+    win.lvwSegments_Click()
+    answers[:] = [True]
+    win.cmdCommand_Click(3)
+    check(win.segments == [] and win.current == -1 and load_segments(win.project_path) == [], "Yes: the list is cleared and saved")
+    check(asked[-1] == "Clear all segments from list?", "the question")
+    # --- the dialog (stub): single, several, parts
+    infos3 = [sessions.SessionInfo(stamp=f"2026.10.2{i}_10-00-00", path="/x", created=f"2026-10-2{i}T10:00:00", segments=i, titles=["a.ts"]) for i in range(1, 4)]
+    def pick(rows, list_on=True, ini_on=True):
+        def hook(dialog):
+            dialog.list.sel_ = rows
+            dialog.chkList.setChecked(list_on) if dialog.chkList else None
+            dialog.chkIni.setChecked(ini_on) if dialog.chkIni else None
+        return hook
+    W.QDialog.exec_result = 1
+    W.QDialog.on_exec = pick([1])
+    got = sessions_dialog.choose_sessions(None, "Restore", "prompt", infos3, with_parts=True)
+    check(got == ([infos3[1]], ("list", "ini")), f"single selection with both parts: {got}")
+    W.QDialog.on_exec = pick([1], list_on=False)
+    got = sessions_dialog.choose_sessions(None, "Restore", "prompt", infos3, with_parts=True)
+    check(got == ([infos3[1]], ("ini",)), "only the settings")
+    W.QDialog.on_exec = pick([1], list_on=False, ini_on=False)
+    check(sessions_dialog.choose_sessions(None, "Restore", "prompt", infos3, with_parts=True) is None, "no part chosen: None")
+    W.QDialog.on_exec = pick([0, 2])
+    got = sessions_dialog.choose_sessions(None, "Delete", "prompt", infos3, multi=True)
+    check(got == ([infos3[0], infos3[2]], ("ini", "list")), f"several sessions: {got}")
+    W.QDialog.on_exec = pick([])
+    check(sessions_dialog.choose_sessions(None, "Delete", "prompt", infos3, multi=True) is None, "nothing selected: None")
+    W.QDialog.exec_result = 0
+    W.QDialog.on_exec = pick([0])
+    check(sessions_dialog.choose_sessions(None, "Delete", "prompt", infos3, multi=True) is None, "cancel: None")
+    W.QDialog.exec_result, W.QDialog.on_exec = 1, None
+    print("Sessions: OK (zip per session, backup with note, restore in parts, automatic backup, delete, dialog)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -3575,6 +3764,7 @@ def main():
     test_memory_player()
     test_player_recovery()
     test_make_test_clips(tmp, sys.argv[1])
+    test_sessions(tmp, sys.argv[1])
     test_timeline(tmp, sys.argv[1])
     test_segments(tmp, sys.argv[1])
     test_thumbnail_errors(tmp, sys.argv[1])

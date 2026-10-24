@@ -32,6 +32,7 @@ from PySide6 import QtCore, QtGui, QtWidgets                         # noqa: E40
 
 from cutlist import Job, Segment, resolve_source                          # noqa: E402
 from external import ExternalWorker, run_external                         # noqa: E402
+import sessions                                                       # noqa: E402
 import ffmpeg_cmd                                                     # noqa: E402
 from frames import grab_frame, grab_numbered                         # noqa: E402
 import timeline as tl                                                # noqa: E402
@@ -308,17 +309,7 @@ class frmMain(frmMainBase):
             self.segments = []                  # new job: the saved list is discarded
             self._save()
         else:
-            self.segments = load_segments(self.project_path)
-            moved = False
-            for s in self.segments:
-                found = resolve_source(s.path)           # KDE network drives: the directory kio-fuse-... changes
-                if found != s.path:
-                    s.path, moved = found, True
-                if not os.path.exists(s.path):
-                    self.msg(f"File {s.path} not found.")
-            moved = self.upgrade_legacy(self.segments) or moved
-            if moved:
-                self._save()
+            self.load_list()
         self.setup_columns()
         self.picTimeline.paint_hook = self.timeline_paint
         self.picProgress.paint_hook = self.progress_paint
@@ -327,6 +318,21 @@ class frmMain(frmMainBase):
         self.refresh_profile_menu()
         self.lblText_Upd()
         self.vscVolume_Scroll()
+
+    def load_list(self) -> None:
+        """Reads the saved segment list: KDE network drives get their current path, missing files are reported, lists of older versions are
+        brought up to date."""
+        self.segments = load_segments(self.project_path)
+        moved = False
+        for s in self.segments:
+            found = resolve_source(s.path)               # KDE network drives: the directory kio-fuse-... changes
+            if found != s.path:
+                s.path, moved = found, True
+            if not os.path.exists(s.path):
+                self.msg(f"File {s.path} not found.")
+        moved = self.upgrade_legacy(self.segments) or moved
+        if moved:
+            self._save()
 
     def setup_columns(self) -> None:
         metrics = self.lvwSegments.fontMetrics()
@@ -1239,6 +1245,97 @@ class frmMain(frmMainBase):
         self.picTimeline.update()
         self.refresh_list()
         self._save()
+        self.lblText_Upd()
+
+    # ------------------------------------------------------------------ Sessions (File => Backup session / Restore session / Delete session)
+    def sessions_directory(self) -> str:
+        """Folder of the sessions: the option sessions_dir (a leading ~ is the home folder), otherwise `sessions` next to the INI file."""
+        custom = (self.options.get("sessions_dir", "") or "").strip()
+        return os.path.expanduser(custom) if custom else sessions.default_directory(self.settings.path)
+
+    def choose_session(self, title: str, prompt: str, infos: list, multi: bool = False, with_parts: bool = False):
+        import sessions_dialog
+        return sessions_dialog.choose_sessions(self, title, prompt, infos, multi, with_parts)
+
+    def make_session(self, note: str) -> "sessions.SessionInfo":
+        self._save()                                              # the list on disk is the current one
+        return sessions.create_session(self.sessions_directory(), self.settings.path, self.project_path, self.segments, note, VERSION)
+
+    def mnuBackupSession_Click(self):
+        """Saves the segment list and the settings as a session (one zip file, named with the time)."""
+        note = self.ask_text("Backup session", "Optional note for this session (what was done, what is next):", "")
+        if note is None:
+            return
+        try:
+            info = self.make_session(note)
+        except OSError as e:
+            self.msg(f"The session could not be saved: {e}")
+            return
+        self.msg(f"Session backup with timestamp {info.stamp} has been created.")
+
+    def mnuRestoreSession_Click(self):
+        """Puts a saved session back: the segment list and/or the settings. The state before is saved as a session first."""
+        infos = sessions.list_sessions(self.sessions_directory())
+        if not infos:
+            self.msg("There are no saved sessions yet (menu File => Backup session).")
+            return
+        choice = self.choose_session("Restore session", "Select the session to restore and what to restore from it:", infos, with_parts=True)
+        if choice is None:
+            return
+        (info,), parts = choice
+        if not info.ok:
+            self.msg(f"The session {info.stamp} is damaged and cannot be restored.")
+            return
+        if not self.ask(f"The session {info.stamp} replaces the current " + " and ".join({"list": "segment list", "ini": "settings (INI file)"}[p] for p in parts)
+                        + ". The current state is saved as a session first, so that you can go back.\n\nRestore the session?"):
+            return
+        try:
+            before = self.make_session(f"automatic backup before restoring {info.stamp}")
+            sessions.restore_session(info, self.settings.path, self.project_path, parts)
+        except (sessions.SessionError, OSError) as e:
+            self.msg(f"The session could not be restored: {e}")
+            return
+        self.reload_session()
+        self.msg(f"Session {info.stamp} has been restored. The state before is saved as session {before.stamp}.")
+
+    def mnuDeleteSession_Click(self):
+        """Deletes sessions (several can be selected)."""
+        infos = sessions.list_sessions(self.sessions_directory())
+        if not infos:
+            self.msg("There are no saved sessions.")
+            return
+        choice = self.choose_session("Delete session(s)", "Select the session(s) to delete:", infos, multi=True)
+        if choice is None:
+            return
+        chosen, _ = choice
+        if not self.ask(f"Delete {len(chosen)} session{'s' if len(chosen) != 1 else ''}?"):
+            return
+        failed = []
+        for info in chosen:
+            try:
+                sessions.delete_session(info)
+            except OSError as e:
+                failed.append(f"{info.stamp}: {e}")
+        if failed:
+            self.msg("Not all sessions could be deleted:\n" + "\n".join(failed))
+
+    def reload_session(self) -> None:
+        """Takes up the files that a restored session has written: settings and segment list are read again, the window shows them."""
+        self.player.stop()
+        self.settings.load()
+        self.migrate_settings()
+        self.load_list()
+        self.current = -1
+        self.timeline_mode = self.timeline_center = None
+        self.Slider1.blockSignals(True)
+        self.Slider1.setValue(self.Slider1.minimum())
+        self.Slider1.blockSignals(False)
+        import dialogs
+        dialogs.set_style(self.options.get("dialog_style"))
+        self.style_delogo_frame()
+        self.refresh_list()
+        self.refresh_profile_menu()
+        self.picTimeline.update()
         self.lblText_Upd()
 
     def duplicate_segment(self) -> None:

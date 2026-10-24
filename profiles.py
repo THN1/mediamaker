@@ -80,7 +80,7 @@ OPTION_GROUPS = (
     ("Logo", ("overlay_opacity",)),
     ("Audio/Subtitles", ("audio", "multilanguage", "subtitle", "aflags")),
     ("Batch", ("path_map", "batch")),
-    ("Technical", ("floor", "detect", "player", "vlc_args", "hide_messages", "dialog_style", "file_dialog")),
+    ("Technical", ("floor", "detect", "player", "vlc_args", "hide_messages", "dialog_style", "file_dialog", "sessions_dir")),
 )
 
 
@@ -116,7 +116,7 @@ def validate_options(o: dict) -> list[str]:
         if not equals or not source.strip() or not target.strip():
             errors.append('"path_map" must be a list of source=target pairs separated by semicolons.')
             break
-    for key in ("path_map", "batch", "vlc_args", "hide_messages", "aflags"):
+    for key in ("path_map", "batch", "vlc_args", "hide_messages", "aflags", "sessions_dir"):
         if '"' in o.get(key, ""):
             errors.append(f'"{key}" must not contain double quotes.')
     if "player" in o and o["player"] not in ("memory", "embed"):
