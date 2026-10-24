@@ -1,5 +1,9 @@
 # Changes
 
+## 0.4 (in progress)
+
+- Version number set to 0.4-dev.
+
 ## 0.3
 
 Third frozen state: DeLogo and RemoveLogo filters, reference logo, Analyze cut point, first frame from the decoder, frozen-preview recovery on slow
