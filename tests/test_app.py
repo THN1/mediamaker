@@ -3,6 +3,7 @@
 Usage:  python3 tests/test_app.py FOLDER_WITH_SAMPLE_VIDEOS   (expects sample2.ts and sample3.ts in it)
 The user interface runs against the Qt replacement in ui/tests/qtstub, the playback against FakePlayer.
 """
+import base64
 import dataclasses
 import json
 import os
@@ -921,7 +922,7 @@ def test_segments(tmp, videos):
     # intermediate results in the wait window
     texts = win.dialogs[-1].texts
     probe_texts = [t for t in texts if "looking for about 72" in t]
-    check(texts and texts[0].startswith("Seeking, please wait...\nframe ") and "border" in texts[0] and "about 72" in texts[0]
+    check(texts and texts[0].startswith("Seeking with crop = 72, please wait...\nframe ") and "border" in texts[0] and "about 72" in texts[0]
           and any("border 72" in t for t in texts) and len(probe_texts) == len(probes)
           and "looking for a cut" in texts[-1], f"wait window shows every probe and the cut search: {texts[:2]}")
     # neither crop nor logo: message, no search
@@ -3695,6 +3696,148 @@ def test_sessions(tmp, videos):
     print("Sessions: OK (zip per session, backup with note, restore in parts, automatic backup, delete, dialog)")
 
 
+def test_debug_package(tmp, videos):
+    """Deploy => Create debug package: cut values, DeLogo, reference logo, last search, an unchanged piece around marker B, all as a folder and a zip;
+    the wait window of a search says whether crop or the reference logo is used."""
+    import json
+    import zipfile
+    import numpy as np
+    import logo
+    import sessions
+    from PIL import Image, ImageDraw
+    from mediaprobe import first_frame_number, probe
+    from runner import RunResult
+    work = tempfile.mkdtemp()
+    box = Image.new("RGB", (34, 37), (210, 210, 210))
+    ImageDraw.Draw(box).arc((6, 6, 28, 30), 200, 520, fill=(40, 40, 40), width=5)
+    box.save(os.path.join(work, "logo.png"))
+    clip = os.path.join(work, "logo_gone.ts")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x909090:s=720x576:r=25:d=6,noise=alls=10:allf=t+u", "-loop", "1", "-i", os.path.join(work, "logo.png"),
+                    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=6", "-filter_complex", "[0][1]overlay=632:81:enable='lt(n,60)':shortest=1[v]", "-map", "[v]",
+                    "-map", "2:a", "-c:v", "mpeg2video", "-q:v", "2", "-g", "12", "-c:a", "mp2", "-shortest", "-f", "mpegts", clip], check=True, stdin=subprocess.DEVNULL)
+    win = seek_window(tmp, work, ("logo_gone.ts",), workdir="debugpkg", first_fn=first_frame_number)
+    win.settings.set_option("crop", "0")
+    seg = win.segments[0]
+    first = seg.first_frame
+    folder_base = os.path.join(tmp, "debugpkg", "debug")
+    # --- the menu entry
+    check(hasattr(win, "mnuDebug") and any(a[0] is win.mnuDebug for a in win.mnuDeploy.called("addAction")), "the entry \"Create debug package\" is in the menu Deploy")
+    check("debug/" in open(os.path.join(ROOT, ".gitignore")).read().split(), ".gitignore lists debug/")
+    # --- without a segment
+    win.current = -1
+    win.mnuDebug_Click()
+    check(win.messages[-1] == "Please select a segment first." and not os.path.exists(folder_base), "no segment: message, nothing is made")
+    # --- the wait window of a search says what is used
+    win.lvwSegments.select_row(0)
+    win.lvwSegments_Click()
+    seg.mask = f"{632 / 720 - 0.003:.6f} {81 / 576 - 0.004:.6f} {37 / 720:.6f} {42 / 576:.6f}"
+    win.Slider1.setValue(first + 25)
+    win.cmdLogo_Click()
+    win.Slider1.setValue(first)
+    win.mnuNext_Click()
+    texts = win.dialogs[-1].texts
+    check(win.dialogs[-1].message == "Seeking with reference logo" and texts and texts[0].startswith("Seeking with reference logo, please wait...\nframe ") and "logo confidence" in texts[0],
+          f"crop = 0: the wait window says it seeks with the reference logo: {texts[:1]}")
+    win.Slider1.setValue(first)
+    win.mnuEnd_Click()
+    check(win.dialogs[-1].message == "Seeking with reference logo", "also for Seek end of commercial")
+    win.settings.set_option("crop", "60")
+    win._border_fn = lambda path, n, fps, opts: 60 if n < first + 100 else 0
+    win.Slider1.setValue(first)
+    win.mnuNext_Click()
+    check(win.dialogs[-1].message == "Seeking with crop = 60" and win.dialogs[-1].texts[0].startswith("Seeking with crop = 60, please wait...\nframe "), "crop > 0: \"Seeking with crop = 60\"")
+    check(win._last_search["method"] == "black border (crop)" and win._last_search["crop"] == 60 and win._last_search["probe_kind"] == "black border lines"
+          and win._last_search["probes"] and abs(win._last_search["result_frame"] - (first + 100)) <= 1, f"the search is recorded: {win._last_search['result_frame']}")
+    win.mnuEnd_Click()
+    check(win.dialogs[-1].message == "Seeking with crop = 60", "also for Seek end of commercial")
+    win.settings.set_option("crop", "0")
+    # --- the search that goes into the package
+    win.Slider1.setValue(first)
+    win.mnuNext_Click()
+    search = win._last_search
+    check(search["method"] == "reference logo" and search["direction"].startswith("next commercial") and abs(search["result_frame"] - (first + 60)) <= 1
+          and search["probe_kind"] == "logo confidence" and len(search["probes"]) >= 5 and all("value" in p for p in search["probes"]) and search["start_frame_shown"] == 0,
+          f"last search recorded: {search['method']}, result {search['result_frame_shown']}, {len(search['probes'])} probes")
+    # --- the package
+    seg.end = first + 100                                       # marker B at 4 s
+    win.Slider1.setValue(first + 30)
+    stamps = iter(["2026.10.26_09-30-00", "2026.10.26_09-31-00", "2026.10.26_09-32-00", "2026.10.26_09-33-00", "2026.10.26_09-34-00"])
+    original = sessions.new_stamp
+    sessions.new_stamp = lambda now=None: next(stamps)
+    try:
+        win.mnuDebug_Click()
+        folder = os.path.join(folder_base, "2026.10.26_09-30-00")
+        names = sorted(os.listdir(folder))
+        expected = ["README.txt", "clip.ts", "clip_info.txt", "debug_log_tail.txt", "delogo.json", "frame_at_slider.png", "last_search.json", "list.json", "logo_area_at_slider.png",
+                    "options.txt", "reference_logo.json", "reference_logo_edges.png", "segment.json", "versions.txt"]
+        check(names == expected, f"files of the package: {names}")
+        zip_path = os.path.join(folder_base, "2026.10.26_09-30-00.zip")
+        with zipfile.ZipFile(zip_path) as z:
+            check(sorted(n.split("/", 1)[1] for n in z.namelist()) == expected and all(n.startswith("2026.10.26_09-30-00/") for n in z.namelist()), "the zip holds the same files in a folder of the same name")
+        check(not [f for f in os.listdir(folder_base) if f.endswith(".part")], "no temporary files")
+        m = win.messages[-1]
+        check(m.startswith(f"Debug package created: {zip_path}") and "upload the zip file" in m and "Not everything could be collected" not in m, f"message: {m[:100]}")
+        read = lambda name: json.load(open(os.path.join(folder, name), encoding="utf-8"))
+        s = read("segment.json")
+        check(s["numbers"]["marker_B_end"] == first + 100 and s["numbers"]["marker_B_shown"] == 100 and s["numbers"]["marker_A_shown"] == 0 and s["numbers"]["first_frame"] == first
+              and s["numbers"]["slider_shown"] == 30 and s["numbers"]["frames_in_segment"] == 100, f"cut values: {s['numbers']}")
+        check(s["times_from_recording_start"]["marker_B"] == "0:00:04.000" and s["times_from_recording_start"]["slider"] == "0:00:01.200" and s["next"] is None and s["previous"] is None, f"times: {s['times_from_recording_start']}")
+        d = read("delogo.json")
+        check(d["kind"] == "DeLogo rectangle" and d["pixels_left_top_right_bottom"] == list(logo.absolute_rect(seg.mask, 720, 576)) and d["fractions"] == seg.mask
+              and d["ffmpeg_filter"].startswith("delogo=x="), f"DeLogo values: {d}")
+        r = read("reference_logo.json")
+        ref = win.delogo_refs[seg.mask]
+        check(r["edge_pixels"] == ref.ones and r["rect_left_top_right_bottom"] == list(ref.rect) and r["source"].startswith("DeLogo") and 0 < r["edge_share"] < 1, f"reference logo: {r}")
+        edges = Image.open(os.path.join(folder, "reference_logo_edges.png"))
+        check(edges.size == (ref.edges.shape[1] * 6, ref.edges.shape[0] * 6), f"edge picture enlarged: {edges.size}")
+        check(Image.open(os.path.join(folder, "frame_at_slider.png")).size == (720, 576) and Image.open(os.path.join(folder, "logo_area_at_slider.png")).size[0] > 200, "pictures at the slider")
+        last = read("last_search.json")
+        check(last["method"] == "reference logo" and last["probes"] == search["probes"] and last["result_frame"] == search["result_frame"], "last search in the package")
+        check('crop="0"' in open(os.path.join(folder, "options.txt")).read() and open(os.path.join(folder, "versions.txt")).read().startswith("MediaMaker "), "options and versions")
+        info = open(os.path.join(folder, "clip_info.txt")).read()
+        piece = probe(os.path.join(folder, "clip.ts"))
+        check("marker B (end of the segment, frame" in info and "is at 4.00 s in the piece" in info and "marker A" in info and "is at 0.00 s" in info and "(ffmpeg -c copy)" in info,
+              f"clip_info: {info.splitlines()[1:4]}")
+        check(5.5 <= piece.video.frames / 25 <= 6.5 and piece.video.width == 720, f"the piece: {piece.video.frames} frames (B at 4 s, the file is 6 s long: from 0 s to the end)")
+        # --- RemoveLogo mask, nothing at all, failing piece
+        mask = np.zeros((576, 720), bool)
+        mask[81:118, 632:666] = True
+        seg.mask = logo.mask_to_png_b64(mask)
+        win.mnuDebug_Click()
+        folder2 = os.path.join(folder_base, "2026.10.26_09-31-00")
+        d = json.load(open(os.path.join(folder2, "delogo.json")))
+        check(d["kind"] == "RemoveLogo mask" and os.path.exists(os.path.join(folder2, "removelogo_mask.png"))
+              and np.array_equal(logo.mask_from_png_b64(base64.b64encode(open(os.path.join(folder2, "removelogo_mask.png"), "rb").read()).decode()), mask), "RemoveLogo mask: the PNG is in the package")
+        check(json.load(open(os.path.join(folder2, "segment.json")))["segment"]["mask"].startswith("<PNG mask"), "the long mask text is not repeated in segment.json")
+        seg.mask = ""
+        win.delogo_refs.clear()
+        win._render_fn = lambda cmd, total, on_progress, cwd=None, cancel=None: RunResult(1, False, 0.1, "Invalid data found when processing input")
+        win.mnuDebug_Click()
+        folder3 = os.path.join(folder_base, "2026.10.26_09-32-00")
+        files3 = sorted(os.listdir(folder3))
+        check("clip.ts" not in files3 and "clip_info.txt" in files3 and "logo_area_at_slider.png" not in files3 and os.path.exists(folder3 + ".zip"), f"without logo and with a failing piece: {files3}")
+        check(json.load(open(os.path.join(folder3, "delogo.json")))["kind"] == "none" and json.load(open(os.path.join(folder3, "reference_logo.json")))["reference_logo"] == "none", "no DeLogo, no reference logo: said so")
+        check("THE PIECE COULD NOT BE CUT" in open(os.path.join(folder3, "clip_info.txt")).read() and "could not be cut" in win.messages[-1] and "Not everything could be collected" in win.messages[-1], "the failing piece is reported")
+        # --- cancelled while the piece is cut: no zip
+        win._render_fn = lambda cmd, total, on_progress, cwd=None, cancel=None: RunResult(-15, True, 0.1, "")
+        n = len(win.messages)
+        win.mnuDebug_Click()
+        check(not os.path.exists(os.path.join(folder_base, "2026.10.26_09-33-00.zip")) and len(win.messages) == n, "cancelled: no zip, no message")
+        # --- marker B close to the start: the piece begins at 0, B is where it is
+        win._render_fn = fake = lambda cmd, total, on_progress, cwd=None, cancel=None: (fake.calls.append(cmd), RunResult(1, False, 0.1, ""))[1]
+        fake.calls = []
+        seg.end = first + 25
+        win.mnuDebug_Click()
+        cmd = fake.calls[0]
+        check(cmd[cmd.index("-ss") + 1] == "0.000" and cmd[cmd.index("-t") + 1] == "11.000" and "-c" in cmd and cmd[cmd.index("-c") + 1] == "copy", f"the command: {' '.join(cmd[:12])}")
+    finally:
+        sessions.new_stamp = original
+    import debugpack
+    check(debugpack.clip_window(100.0) == (50.0, 60.0, 50.0) and debugpack.clip_window(20.0) == (0.0, 30.0, 20.0), "50 s before and 10 s after marker B, not before 0")
+    check(debugpack.hms(3725.5) == "1:02:05.500", "time format")
+    print("Debug package: OK (menu, files, zip, clip around B, DeLogo, reference logo, last search, header of the search)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -3744,6 +3887,7 @@ def main():
     test_player_recovery()
     test_make_test_clips(tmp, sys.argv[1])
     test_sessions(tmp, sys.argv[1])
+    test_debug_package(tmp, sys.argv[1])
     test_timeline(tmp, sys.argv[1])
     test_segments(tmp, sys.argv[1])
     test_thumbnail_errors(tmp, sys.argv[1])

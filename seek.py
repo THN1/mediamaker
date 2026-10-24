@@ -75,7 +75,7 @@ def snap_to_cut(path, fps, pos, window, threshold, frames_fn=grab_numbered, canc
 
 
 def seek_border(path, fps, total, pos, value, equal, stepping, opts, border_fn=border_at, cancel=lambda: False,
-                shown=lambda n: n, frames_fn=grab_numbered) -> int:
+                shown=lambda n: n, frames_fn=grab_numbered, stats: Optional[dict] = None) -> int:
     """Starting at frame `pos`, searches for the first frame whose black border matches `value` (equal=True: movie starts) or
         differs from it (equal=False: commercial starts). `shown` converts frame numbers for display; every probe is reported in the
         wait window (cancel.note) and in the log.
@@ -88,6 +88,8 @@ def seek_border(path, fps, total, pos, value, equal, stepping, opts, border_fn=b
         if cancel():
             raise SeekCancelled()
         found = border_fn(path, n, fps, opts)
+        if stats is not None:
+            stats.setdefault("borders", []).append((n, int(found)))
         text = f"frame {shown(n)}: border {found} (looking for {'about ' if equal else 'not '}{value})"
         debug_log(f"border search: {text}")
         if note:
@@ -102,6 +104,8 @@ def seek_border(path, fps, total, pos, value, equal, stepping, opts, border_fn=b
         if refined != result:
             debug_log(f"border search: moved to the cut at frame {shown(refined)}")
         result = refined
+    if stats is not None:
+        stats["result"] = result
     return result
 
 

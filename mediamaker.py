@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import base64
 import shutil
 import sys
 import tempfile
@@ -33,6 +34,7 @@ from PySide6 import QtCore, QtGui, QtWidgets                         # noqa: E40
 from cutlist import Job, Segment, resolve_source                          # noqa: E402
 from external import ExternalWorker, run_external                         # noqa: E402
 import sessions                                                       # noqa: E402
+import debugpack                                                      # noqa: E402
 import ffmpeg_cmd                                                     # noqa: E402
 from frames import grab_frame, grab_numbered                         # noqa: E402
 import timeline as tl                                                # noqa: E402
@@ -55,7 +57,7 @@ from profiles import (GROUP_TEXTS, HIDDEN_OPTIONS, OPTION_GROUPS, PRESETS, REMOV
                       ordered_profile, profile_from_segment, valid_profile_name, validate_options, validate_profile,
                       weighted_bitrate)
 from project import format_hms, load_segments, save_segments, segment_row, timeof  # noqa: E402
-from settings import Settings, default_options                       # noqa: E402
+from settings import Settings, default_options, format_kv            # noqa: E402
 import vbqt                                                          # noqa: E402
 from ui_frmMain import frmMainBase                                   # noqa: E402
 
@@ -123,6 +125,7 @@ class frmMain(frmMainBase):
         self._thumb_fn = thumb_fn
         self._external_fn = run_external               # starts VLC / Avidemux (replaced in the tests)
         self._external: list = []                      # running helper programs (keeps the workers alive)
+        self._last_search: dict = {}                   # what the last search for a commercial did (debug package)
         self._verify_first: set = set()                # files opened just now: the first picture of the thumbnails confirms the first frame
         self.verify_first_frame = True                 # False: take the first frame from the stream data as it is (tests)
         self._frame_fn = frame_fn
@@ -303,6 +306,7 @@ class frmMain(frmMainBase):
     def Form_Load(self):
         self.setWindowTitle(f"MediaMaker {VERSION}")
         self.style_delogo_frame()
+        self.add_debug_menu()
         self.logo_tooltip = vbqt.ShiftToolTip(self.cmdCommand[6], "Open/close DeLogo dialog", "Open/close RemoveLogo dialog")
         self.migrate_settings()
         if self.fresh:
@@ -1249,6 +1253,128 @@ class frmMain(frmMainBase):
         self._save()
         self.lblText_Upd()
 
+    # ------------------------------------------------------------------ Debug package (Deploy => Create debug package)
+    def add_debug_menu(self) -> None:
+        """The entry is added here; if the form has an item mnuDebug of its own (designed in VB6), that one is used."""
+        if not hasattr(self, "mnuDebug"):
+            self.mnuDebug = QtGui.QAction("Create debug package", self)
+            self.mnuDeploy.addAction(self.mnuDebug)
+            self.mnuDebug.triggered.connect(lambda *_: self.mnuDebug_Click())
+
+    def mnuDebug_Click(self):
+        """Collects what is needed to understand a wrong search or cut of the selected segment in the folder `debug/<time>` next to the INI file
+        and packs it as a zip file (see debugpack.py)."""
+        seg = self.segment
+        if seg is None:
+            self.msg("Please select a segment first.")
+            return
+        stamp = sessions.new_stamp()
+        base = os.path.join(os.path.dirname(os.path.abspath(self.settings.path)), "debug")
+        folder = os.path.join(base, stamp)
+        index, slider = self.current, self.Slider1.value()
+        data = {"seg": dataclasses.replace(seg), "segments": [dataclasses.replace(s) for s in self.segments], "options": self.options, "profile": dict(self.profile),
+                "ref": self.logo_reference(seg), "last_search": dict(self._last_search), "project": self.project_path, "ini": self.settings.path}
+        result = {"folder": folder, "zip": os.path.join(base, stamp + ".zip"), "problems": []}
+
+        def work(cancel):
+            os.makedirs(folder, exist_ok=True)
+            self.write_debug_files(folder, stamp, index, slider, data, result, cancel)
+            debugpack.make_zip(folder, result["zip"])
+            return 0
+        self._run_job(work, "Creating debug package", lambda rc: self.debug_package_done(result))
+
+    def write_debug_files(self, folder: str, stamp: str, index: int, slider: int, data: dict, result: dict, cancel) -> None:
+        """Writes the files of the debug package; a failure in one item is noted and does not stop the others."""
+        seg, segments, ref = data["seg"], data["segments"], data["ref"]
+        join = lambda name: os.path.join(folder, name)
+        problems = result["problems"]
+        def attempt(what, fn):
+            try:
+                fn()
+            except Exception as e:
+                problems.append(f"{what}: {e}")
+                debug_log(f"debug package, {what}: {e!r}")
+        def to_time(frame: int) -> float:
+            """Seconds from the start of the recording (the frame numbers count from there)."""
+            return float(Fraction(frame) / seg.fps)
+        with open(join("README.txt"), "w", encoding="utf-8") as f:
+            f.write(debugpack.README.format(stamp=stamp, before=debugpack.CLIP_BEFORE, after=debugpack.CLIP_AFTER))
+        attempt("segment.json", lambda: debugpack.write_json(join("segment.json"), debugpack.segment_report(segments, index, slider, to_time)))
+        attempt("list.json", lambda: shutil.copy(data["project"], join("list.json")))
+        attempt("options.txt", lambda: open(join("options.txt"), "w", encoding="utf-8").write(
+            "options: " + format_kv(data["options"]) + "\nprofile: " + format_kv(data["profile"]) + "\n"))
+        attempt("versions.txt", lambda: open(join("versions.txt"), "w", encoding="utf-8").write(debugpack.versions_text(VERSION)))
+        attempt("last_search.json", lambda: debugpack.write_json(join("last_search.json"), data["last_search"] or {"note": "no search was made in this session"}))
+        # --- DeLogo rectangle / RemoveLogo mask
+        def delogo():
+            if seg.has_png_mask:
+                with open(join("removelogo_mask.png"), "wb") as f:
+                    f.write(base64.b64decode(seg.mask))
+                report = {"kind": "RemoveLogo mask", "file": "removelogo_mask.png", "mask_characters": len(seg.mask)}
+            elif seg.has_delogo:
+                rect = logo_module.absolute_rect(seg.mask, seg.width, seg.height)
+                report = {"kind": "DeLogo rectangle", "fractions": seg.mask, "pixels_left_top_right_bottom": list(rect), "size": [rect[2] - rect[0], rect[3] - rect[1]],
+                          "picture_size": [seg.width, seg.height], "ffmpeg_filter": ffmpeg_cmd._delogo(seg, seg.width, seg.height).rstrip(",")}
+            else:
+                report = {"kind": "none", "note": "the segment has no DeLogo rectangle and no RemoveLogo mask"}
+            debugpack.write_json(join("delogo.json"), report)
+        attempt("delogo.json", delogo)
+        # --- reference logo
+        def reference():
+            if ref is None:
+                debugpack.write_json(join("reference_logo.json"), {"reference_logo": "none", "note": "no reference logo exists (button L creates it from the DeLogo rectangle)"})
+                return
+            share = ref.ones / ref.edges.size if ref.edges.size else 0.0
+            debugpack.write_json(join("reference_logo.json"), {"source": "RemoveLogo mask" if seg.has_png_mask else "DeLogo rectangle (button L)",
+                                                              "rect_left_top_right_bottom": list(ref.rect), "edge_pixels": int(ref.ones), "area_pixels": int(ref.edges.size),
+                                                              "edge_share": round(share, 4), "logo_edge": data["options"].get("logo_edge"), "logo_conf": data["options"].get("logo_conf")})
+            debugpack.write_png(join("reference_logo_edges.png"), ref.edges, 6)
+        attempt("reference logo", reference)
+        # --- the picture at the slider and the area of the logo in it
+        def picture():
+            rgb = self._frame_fn(seg.path, slider, seg.fps)
+            debugpack.write_png(join("frame_at_slider.png"), rgb)
+            area = ref.rect if ref is not None else (logo_module.absolute_rect(seg.mask, seg.width, seg.height) if seg.has_delogo else None)
+            if area is not None:
+                left, top, right, bottom = area
+                debugpack.write_png(join("logo_area_at_slider.png"), rgb[max(0, top - 10):bottom + 10, max(0, left - 10):right + 10], 6)
+        attempt("picture at the slider", picture)
+        attempt("debug log", lambda: open(join("debug_log_tail.txt"), "w", encoding="utf-8").write(
+            debugpack.tail(os.path.join(os.path.dirname(os.path.abspath(__file__)), "mediamaker_debug.log")) or "(no log: start the program with MEDIAMAKER_DEBUG=1)\n"))
+        # --- the unchanged piece of the recording around marker B
+        b_seconds = to_time(seg.end)
+        start, duration, b_in = debugpack.clip_window(b_seconds)
+        out = join("clip" + (os.path.splitext(seg.path)[1] or ".ts"))
+        info = [f"source: {seg.path}", f"piece: from {debugpack.hms(start)} to {debugpack.hms(start + duration)} of the recording ({duration:.1f} s), unchanged (ffmpeg -c copy)",
+                f"marker B (end of the segment, frame {seg.end}, shown {seg.end - seg.first_frame}) is at {b_in:.2f} s in the piece",
+                f"marker A (start, frame {seg.start}, shown {seg.start - seg.first_frame}) is at {to_time(seg.start) - start:.2f} s in the piece"
+                + ("" if 0 <= to_time(seg.start) - start <= duration else " (outside)"),
+                f"slider (frame {slider}, shown {slider - seg.first_frame}) is at {to_time(slider) - start:.2f} s in the piece"
+                + ("" if 0 <= to_time(slider) - start <= duration else " (outside)"),
+                "A piece begins at a keyframe: the first picture can lie a little before the start given here."]
+        if cancel():
+            raise seek.SeekCancelled()
+        res = self._render_fn(debugpack.clip_command(seg.path, start, duration, out), duration, lambda p: None, cwd=None, cancel=cancel)
+        if res.cancelled:
+            raise seek.SeekCancelled()
+        if res.returncode != 0 or not os.path.exists(out):
+            problems.append(f"the piece of the recording could not be cut: {(res.errors or '')[-200:].strip() or res.returncode}")
+            info.append("THE PIECE COULD NOT BE CUT: " + (res.errors or "")[-300:].strip())
+            if os.path.exists(out):
+                os.remove(out)
+        else:
+            info.append(f"size: {os.path.getsize(out) / 1e6:.1f} MB")
+        with open(join("clip_info.txt"), "w", encoding="utf-8") as f:
+            f.write("\n".join(info) + "\n")
+
+    def debug_package_done(self, result: dict) -> None:
+        size = os.path.getsize(result["zip"]) / 1e6 if os.path.exists(result["zip"]) else 0
+        text = (f"Debug package created: {result['zip']} ({size:.1f} MB).\nThe files are also in {result['folder']}.\n\n"
+                "Please upload the zip file and describe what went wrong (for example: the end of the commercial was found too early / too late, at about ...).")
+        if result["problems"]:
+            text += "\n\nNot everything could be collected:\n" + "\n".join(result["problems"])
+        self.msg(text)
+
     # ------------------------------------------------------------------ Sessions (File => Backup session / Restore session / Delete session)
     def sessions_directory(self) -> str:
         """Folder of the sessions: the option sessions_dir (a leading ~ is the home folder), otherwise `sessions` next to the INI file."""
@@ -1504,28 +1630,43 @@ class frmMain(frmMainBase):
         crop = int(opts.get("crop", 0))
         stepping = seek.step_frames(seek.step_seconds(opts, end), seg.fps)
         start, total = self.Slider1.value(), seg.total_frames
+        method = f"crop = {crop}" if crop > 0 else "reference logo"
+        stats: dict = {}
+        self._last_search = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "direction": "end of commercial (movie starts)" if end else "next commercial (movie ends)",
+                             "method": "black border (crop)" if crop > 0 else "reference logo", "crop": crop, "start_frame": start,
+                             "start_frame_shown": start - seg.first_frame, "stepping_frames": stepping, "segment_end_marker": seg.end,
+                             "options": {k: opts.get(k) for k in ("crop", "floor", "blackness", "allowance", "pause", "step_end", "step_next", "border_tol",
+                                                                  "cut_window", "cut_diff", "logo_conf", "logo_edge", "logo_rewind")},
+                             "result_frame": None, "result_frame_shown": None, "probes": []}
         if crop > 0:
             def job(cancel):
                 return seek.seek_border(seg.path, seg.fps, total, start, crop, end, stepping, opts, self._border_fn, cancel,
-                                        shown=lambda n, f=seg.first_frame: n - f, frames_fn=self._thumb_fn)
-        else:
-            ref = self.logo_reference(seg)
-            if ref is None:
-                self.msg("Cannot seek: neither a cropping value (option \"crop\") nor a reference logo has been defined for this video. "
-                         "Please set one of them first (for the logo: place the DeLogo rectangle or select a RemoveLogo frame, then click the "
-                         "button \"L\" at a frame where the logo is visible).")
-                return
-            stats: dict = {}
-
-            def job(cancel):
-                return seek.seek_logo(seg.path, seg.fps, total, start, ref, end, stepping, opts, self._conf_fn, self._avg_fn, cancel,
-                                      shown=lambda n, f=seg.first_frame: n - f, stats=stats)
-            self._run_seek(job, lambda frame: (self.seek_done(frame), self.logo_seek_report(stats, frame, end, seg)))
+                                        shown=lambda n, f=seg.first_frame: n - f, frames_fn=self._thumb_fn, stats=stats)
+            self._run_seek(job, lambda frame: (self.seek_done(frame), self.record_search(stats, frame, seg)), f"Seeking with {method}")
             return
-        self._run_seek(job)
+        ref = self.logo_reference(seg)
+        if ref is None:
+            self.msg("Cannot seek: neither a cropping value (option \"crop\") nor a reference logo has been defined for this video. "
+                     "Please set one of them first (for the logo: place the DeLogo rectangle or select a RemoveLogo frame, then click the "
+                     "button \"L\" at a frame where the logo is visible).")
+            return
 
-    def _run_seek(self, job, on_done=None) -> None:
-        self._run_job(job, "Seeking", on_done or self.seek_done)
+        def job(cancel):
+            return seek.seek_logo(seg.path, seg.fps, total, start, ref, end, stepping, opts, self._conf_fn, self._avg_fn, cancel,
+                                  shown=lambda n, f=seg.first_frame: n - f, stats=stats)
+        self._run_seek(job, lambda frame: (self.seek_done(frame), self.record_search(stats, frame, seg), self.logo_seek_report(stats, frame, end, seg)),
+                       f"Seeking with {method}")
+
+    def record_search(self, stats: dict, frame: int, seg: Segment) -> None:
+        """Keeps what the last search did (for the debug package)."""
+        record = self._last_search
+        record["result_frame"], record["result_frame_shown"] = frame, frame - seg.first_frame
+        probes = stats.get("confidences") or stats.get("borders") or []
+        record["probe_kind"] = "logo confidence" if stats.get("confidences") else "black border lines"
+        record["probes"] = [{"frame": n, "shown": n - seg.first_frame, "value": v} for n, v in probes]
+
+    def _run_seek(self, job, on_done=None, message: str = "Seeking") -> None:
+        self._run_job(job, message, on_done or self.seek_done)
 
     def logo_seek_report(self, stats: dict, frame: int, end: bool, seg: Segment) -> None:
         """A search with the logo that found nothing says what it saw (the confidences of the frames it examined), so that a wrong reference logo

@@ -7,6 +7,14 @@
   made the preview jump to the start of the film first and play it briefly, with sound, before it went to the wanted frame. Kept from 0.3 are the
   watchdog (nothing reported by VLC for 8 s after a medium was started: new media player) and the report of an unsuccessful logo search. Known and
   open: on a slow network drive a jump in the open VLC medium can take seconds, and `stop()` can block the window for that time.
+- **"Seek next commercial" / "Seek end of commercial" say which method they use**: the wait window begins with "Seeking with crop = 72" (crop > 0: black
+  border) or "Seeking with reference logo" (crop = 0), so that a crop left over from an earlier session does not go unnoticed.
+- **Deploy => Create debug package**: collects in the folder `debug/<time>` next to the INI file (and as a zip file of the same name, to be uploaded) what is
+  needed to understand a wrong search or cut: the cut values of the selected segment (numbers as counted and as shown, times, neighbours), the DeLogo
+  rectangle or the RemoveLogo mask, the reference logo (values and edge picture), what the last search did (method, crop, every frame it examined
+  with its confidence or border value, result), options, versions, the list, the picture at the slider and the logo area in it, the end of the debug
+  log, and an unchanged piece of the recording (`ffmpeg -c copy`) from 50 s before to 10 s after marker B with `clip_info.txt` telling where the
+  markers are inside it. Things that fail (e.g. the piece) are noted and do not stop the rest. `debug/` is in `.gitignore`.
 - Clearing the segment list (button, File => Close all), deleting the last segment and restoring a session also clear the VLC preview: it no longer
   keeps showing the film that was loaded last.
 - `MediaMaker.example.ini`: the lines `batch=`, `player=` and `dialog_style=` (and the comments about `vlc_args`/`hide_messages`) are gone, these

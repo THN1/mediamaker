@@ -12,3 +12,4 @@ mediamaker_debug.log
 # test output
 /tmp/
 sessions/
+debug/
