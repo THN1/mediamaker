@@ -58,7 +58,7 @@ from settings import Settings, default_options                       # noqa: E40
 import vbqt                                                          # noqa: E402
 from ui_frmMain import frmMainBase                                   # noqa: E402
 
-VERSION = "0.3-dev"
+VERSION = "0.3"
 # Visible are "#" (narrow), "Title", "First", "Last" and "Time"; all other columns have width 0 (as in VB6).
 # Visible columns of the segment list: number of the entry (fixed width as in VB6), file name/title (fills the rest and gives way
 # as far as the other columns need space), first and last frame, duration of the segment. The widths of the last

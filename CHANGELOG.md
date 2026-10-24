@@ -1,8 +1,10 @@
 # Changes
 
-## 0.3 (in progress)
+## 0.3
 
-- Version number set to 0.3-dev.
+Third frozen state: DeLogo and RemoveLogo filters, reference logo, Analyze cut point, first frame from the decoder, frozen-preview recovery on slow
+network drives, dialogs and options in one place.
+
 - **Frozen preview on a network drive** (log of a 2.5 GB recording on the NAS: opening a medium at a position took under a second, but every jump in
   the open medium 3 to 7 seconds, and `stop()` waited 4 seconds for such a jump, which blocked the whole window). Now a jump that brings no picture
   within 600 ms marks the medium as slow; from then on every jump opens the medium anew at the position, with a NEW media player instead of
