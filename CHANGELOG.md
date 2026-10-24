@@ -7,6 +7,16 @@
   made the preview jump to the start of the film first and play it briefly, with sound, before it went to the wanted frame. Kept from 0.3 are the
   watchdog (nothing reported by VLC for 8 s after a medium was started: new media player) and the report of an unsuccessful logo search. Known and
   open: on a slow network drive a jump in the open VLC medium can take seconds, and `stop()` can block the window for that time.
+- **Button L shows what it did**: after creating the reference logo a window shows the picture L took the logo from (the rectangle marked), the area of the
+  logo enlarged and the edges that are searched for, so that a logo that is not in the picture is seen at once. The picture, the frame number and
+  the preview picture of that moment are kept for the debug package: `reference_logo_frame.png`, `reference_logo_area.png`,
+  `reference_logo_vlc_preview.png` and in `reference_logo.json` the frame and time of creation. (The files `frame_at_slider.png` and
+  `logo_area_at_slider.png` show the slider position at the time the package is made, which can be another picture.)
+- **Debug package: preview against ffmpeg**: `vlc_preview.png` is what the preview shows (taken from the program, no photo needed); `preview_check.json`
+  (and `reference_logo_preview_check.json` for the moment of L) tell which frame number that picture really belongs to in ffmpeg's numbering
+  (`best_offset_frames`; 0 = they agree), because VLC and ffmpeg can count the start of a recording differently.
+- Option `logo_rewind = 0` now returns the first frame WITH logo (before: the last one without it); a search that finds no logo returns the end of
+  the movie.
 - **"Seek next commercial" / "Seek end of commercial" say which method they use**: the wait window begins with "Seeking with crop = 72" (crop > 0: black
   border) or "Seeking with reference logo" (crop = 0), so that a crop left over from an earlier session does not go unnoticed.
 - **Deploy => Create debug package**: collects in the folder `debug/<time>` next to the INI file (and as a zip file of the same name, to be uploaded) what is

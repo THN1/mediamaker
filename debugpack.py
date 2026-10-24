@@ -56,6 +56,45 @@ def write_png(path: str, array: np.ndarray, scale: int = 1) -> None:
     image.save(path)
 
 
+def image_array(image) -> Optional[np.ndarray]:
+    """RGB array (height, width, 3) from a QImage or an array; None if that is not possible."""
+    if image is None:
+        return None
+    if isinstance(image, np.ndarray):
+        return image
+    try:
+        from PySide6 import QtGui
+        converted = image.convertToFormat(QtGui.QImage.Format.Format_RGB888)
+        width, height, per_line = converted.width(), converted.height(), converted.bytesPerLine()
+        raw = np.frombuffer(converted.constBits(), np.uint8, count=height * per_line).reshape(height, per_line)
+        return raw[:, :width * 3].reshape(height, width, 3).copy()
+    except Exception:
+        return None
+
+
+def small_grey(rgb: np.ndarray, size: tuple = (64, 48)) -> np.ndarray:
+    """Small grey picture without the mean brightness (to compare pictures that differ in colour handling and scale)."""
+    from PIL import Image
+    grey = np.asarray(Image.fromarray(rgb).convert("L").resize(size, Image.BILINEAR), np.float32)
+    return grey - grey.mean()
+
+
+def preview_offset(preview_rgb: np.ndarray, frames: dict, centre: int, radius: int = 40) -> dict:
+    """Which frame of `frames` (number -> small RGB picture, as ffmpeg delivers them) does the picture of the preview show? Compares with the frames
+    centre-radius..centre+radius; `best_offset` is the number of frames the preview is AHEAD of the frame number (positive: the preview shows a
+    LATER picture than ffmpeg does for that frame number)."""
+    mine = small_grey(preview_rgb)
+    diffs = {n - centre: float(np.abs(small_grey(f) - mine).mean()) for n, f in frames.items() if abs(n - centre) <= radius}
+    if not diffs:
+        return {"result": "no frames to compare"}
+    best = min(diffs, key=diffs.get)
+    others = sorted(v for k, v in diffs.items() if k != best)
+    return {"best_offset_frames": best, "best_difference": round(diffs[best], 2), "difference_at_0": round(diffs.get(0, float("nan")), 2),
+            "second_best_difference": round(others[0], 2) if others else None,
+            "meaning": ("the preview shows the picture of frame number + %d (ffmpeg numbering)" % best) if best else "preview and ffmpeg agree on this frame number",
+            "reliable": bool(others and diffs[best] < 0.6 * others[0])}
+
+
 def segment_report(segments: list, index: int, slider: int, to_time) -> dict:
     """Cut values of the segment `index` (0-based): the numbers as the program counts them (from the container start) and as it shows them (from
     the first decodable picture), the times, and the neighbours. `to_time(frame)` gives the time in seconds from the start of the recording."""
@@ -143,12 +182,18 @@ What is in here
   segment.json            cut values of the selected segment (the numbers as the program counts them and as it shows them), times, neighbours
   delogo.json             the DeLogo rectangle (fractions and pixels) or the RemoveLogo mask
   removelogo_mask.png     the mask of the RemoveLogo filter (only if the segment has one)
-  reference_logo.json     the reference logo: rectangle, number of edge pixels
+  reference_logo.json     the reference logo: rectangle, number of edge pixels, and at which frame (button L) it was created
   reference_logo_edges.png  its edge picture (white = edge), enlarged
+  reference_logo_frame.png  the picture that the button L took the reference logo from (ffmpeg, whole frame, the rectangle marked)
+  reference_logo_area.png   the area of the logo in that picture, enlarged
+  reference_logo_vlc_preview.png   what the preview showed when L was pressed (if available) - compare with reference_logo_frame.png
+  preview_check.json      which frame number the picture of the preview really belongs to (offset between VLC and ffmpeg numbering)
+  vlc_preview.png         what the preview shows at the moment the package is made
   last_search.json        what the last "Seek next commercial" / "Seek end of commercial" did: method (crop or reference logo), start, every frame
                           that was looked at with its value, and the result
   options.txt, versions.txt, list.json   settings, program and tool versions, the whole segment list
-  frame_at_slider.png, logo_area_at_slider.png   the picture at the position of the slider and the area of the logo in it
+  frame_at_slider.png, logo_area_at_slider.png   the picture (ffmpeg) at the position of the slider when the package is made, and the area of the
+                          logo in it - NOT the picture of the reference logo (that is reference_logo_frame.png)
   debug_log_tail.txt      the end of mediamaker_debug.log (only with MEDIAMAKER_DEBUG=1)
   clip.*, clip_info.txt   an unchanged piece of the recording (ffmpeg -c copy) from {before:.0f} s before to {after:.0f} s after marker B;
                           clip_info.txt says where marker A and B are inside the piece

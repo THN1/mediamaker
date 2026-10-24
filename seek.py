@@ -136,6 +136,8 @@ def seek_logo(path, fps, total, pos, ref, equal, stepping, opts, conf_fn=confide
     min_conf = float(opts.get("logo_conf", 0.2))
 
     def rewind_fn(p: int) -> int:
+        if max_back <= 0:
+            return p + 1                                  # no rewinding (option logo_rewind = 0): the first frame WITH logo (p is the last one without)
         return rewind(p, lambda f: (check(), avg_fn(path, f, fps, opts))[1], max_back)
 
     result = where_logo(conf_of, pos, total, equal, stepping, rewind_fn, min_conf)

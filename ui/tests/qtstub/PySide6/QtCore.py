@@ -39,6 +39,7 @@ class QEvent(Base):
 class Qt:
     TextElideMode = EnumGroup("Qt.TextElideMode", {"ElideNone", "ElideLeft", "ElideRight", "ElideMiddle"})
     TextInteractionFlag = EnumGroup("Qt.TextInteractionFlag", {"TextSelectableByMouse"})
+    TransformationMode = EnumGroup("Qt.TransformationMode", {"SmoothTransformation", "FastTransformation"})
     AlignmentFlag = EnumGroup("Qt.AlignmentFlag", {"AlignLeft", "AlignRight", "AlignHCenter", "AlignTop", "AlignVCenter", "AlignCenter"})
     Orientation = EnumGroup("Qt.Orientation", {"Horizontal", "Vertical"})
     WindowType = EnumGroup("Qt.WindowType", {"WindowMaximizeButtonHint", "WindowMinimizeButtonHint", "FramelessWindowHint"})

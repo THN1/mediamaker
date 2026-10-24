@@ -126,6 +126,7 @@ class frmMain(frmMainBase):
         self._external_fn = run_external               # starts VLC / Avidemux (replaced in the tests)
         self._external: list = []                      # running helper programs (keeps the workers alive)
         self._last_search: dict = {}                   # what the last search for a commercial did (debug package)
+        self.ref_origin: dict = {}                     # mask -> where the reference logo came from (frame, picture, preview), for the debug package
         self._verify_first: set = set()                # files opened just now: the first picture of the thumbnails confirms the first frame
         self.verify_first_frame = True                 # False: take the first frame from the stream data as it is (tests)
         self._frame_fn = frame_fn
@@ -1273,7 +1274,8 @@ class frmMain(frmMainBase):
         folder = os.path.join(base, stamp)
         index, slider = self.current, self.Slider1.value()
         data = {"seg": dataclasses.replace(seg), "segments": [dataclasses.replace(s) for s in self.segments], "options": self.options, "profile": dict(self.profile),
-                "ref": self.logo_reference(seg), "last_search": dict(self._last_search), "project": self.project_path, "ini": self.settings.path}
+                "ref": self.logo_reference(seg), "last_search": dict(self._last_search), "project": self.project_path, "ini": self.settings.path,
+                "origin": self.ref_origin.get(seg.mask), "preview": self.player.preview_image()}
         result = {"folder": folder, "zip": os.path.join(base, stamp + ".zip"), "problems": []}
 
         def work(cancel):
@@ -1325,10 +1327,29 @@ class frmMain(frmMainBase):
                 debugpack.write_json(join("reference_logo.json"), {"reference_logo": "none", "note": "no reference logo exists (button L creates it from the DeLogo rectangle)"})
                 return
             share = ref.ones / ref.edges.size if ref.edges.size else 0.0
-            debugpack.write_json(join("reference_logo.json"), {"source": "RemoveLogo mask" if seg.has_png_mask else "DeLogo rectangle (button L)",
-                                                              "rect_left_top_right_bottom": list(ref.rect), "edge_pixels": int(ref.ones), "area_pixels": int(ref.edges.size),
-                                                              "edge_share": round(share, 4), "logo_edge": data["options"].get("logo_edge"), "logo_conf": data["options"].get("logo_conf")})
+            origin = data["origin"]
+            report = {"source": "RemoveLogo mask" if seg.has_png_mask else "DeLogo rectangle (button L)",
+                      "rect_left_top_right_bottom": list(ref.rect), "edge_pixels": int(ref.ones), "area_pixels": int(ref.edges.size),
+                      "edge_share": round(share, 4), "logo_edge": data["options"].get("logo_edge"), "logo_conf": data["options"].get("logo_conf")}
+            if origin is not None:
+                report.update({"created_at_frame": origin["frame"], "created_at_frame_shown": origin["shown"], "created_at_time": debugpack.hms(origin["seconds"])})
+            elif not seg.has_png_mask:
+                report["created_at"] = "unknown (button L was not pressed in this session)"
+            debugpack.write_json(join("reference_logo.json"), report)
             debugpack.write_png(join("reference_logo_edges.png"), ref.edges, 6)
+            if origin is not None:
+                rgb0 = origin["rgb"]
+                left, top, right, bottom = ref.rect
+                marked = rgb0.copy()
+                marked[top:top + 2, left:right], marked[bottom - 2:bottom, left:right] = (255, 0, 0), (255, 0, 0)
+                marked[top:bottom, left:left + 2], marked[top:bottom, right - 2:right] = (255, 0, 0), (255, 0, 0)
+                debugpack.write_png(join("reference_logo_frame.png"), marked)
+                debugpack.write_png(join("reference_logo_area.png"), rgb0[max(0, top - 10):bottom + 10, max(0, left - 10):right + 10], 6)
+                shown_then = debugpack.image_array(origin["preview"])
+                if shown_then is not None:
+                    debugpack.write_png(join("reference_logo_vlc_preview.png"), shown_then)
+                    check = debugpack.preview_offset(shown_then, self._thumb_fn(seg.path, max(0, origin["frame"] - 40), 81, seg.fps, (64, 48)), origin["frame"])
+                    debugpack.write_json(join("reference_logo_preview_check.json"), {"frame": origin["frame"], **check})
         attempt("reference logo", reference)
         # --- the picture at the slider and the area of the logo in it
         def picture():
@@ -1339,6 +1360,16 @@ class frmMain(frmMainBase):
                 left, top, right, bottom = area
                 debugpack.write_png(join("logo_area_at_slider.png"), rgb[max(0, top - 10):bottom + 10, max(0, left - 10):right + 10], 6)
         attempt("picture at the slider", picture)
+
+        def preview_now():
+            shown_now = debugpack.image_array(data["preview"])
+            if shown_now is None:
+                debugpack.write_json(join("preview_check.json"), {"result": "no preview picture (player=embed, or nothing shown)"})
+                return
+            debugpack.write_png(join("vlc_preview.png"), shown_now)
+            check = debugpack.preview_offset(shown_now, self._thumb_fn(seg.path, max(0, slider - 40), 81, seg.fps, (64, 48)), slider)
+            debugpack.write_json(join("preview_check.json"), {"slider_frame": slider, **check})
+        attempt("preview picture", preview_now)
         attempt("debug log", lambda: open(join("debug_log_tail.txt"), "w", encoding="utf-8").write(
             debugpack.tail(os.path.join(os.path.dirname(os.path.abspath(__file__)), "mediamaker_debug.log")) or "(no log: start the program with MEDIAMAKER_DEBUG=1)\n"))
         # --- the unchanged piece of the recording around marker B
@@ -1520,18 +1551,28 @@ class frmMain(frmMainBase):
         frame = self.Slider1.value()
         try:
             rect = logo_module.absolute_rect(seg.mask, seg.width, seg.height)
-            ref = logo_module.ref_from_rect(self._frame_fn(seg.path, frame, seg.fps), rect, int(self.options.get("logo_edge", logo_module.BIN_MIN)))
+            rgb = self._frame_fn(seg.path, frame, seg.fps)
+            ref = logo_module.ref_from_rect(rgb, rect, int(self.options.get("logo_edge", logo_module.BIN_MIN)))
         except Exception as e:
             debug_log(f"reference logo failed: {e!r}")
             self.msg("Creation of logo failed.")
             return
         self.delogo_refs[seg.mask] = ref
+        self.ref_origin[seg.mask] = {"frame": frame, "shown": self.shown(frame), "seconds": float(Fraction(frame) / seg.fps), "rgb": rgb,
+                                     "preview": self.player.preview_image()}
         share = ref.ones / ref.edges.size if ref.edges.size else 0.0
         if share > self.LOGO_USABLE:
-            self.msg(f"The reference logo was successfully created (frame {self.shown(frame)}, {share:.0%} edge pixels in the logo area).")
+            text = f"The reference logo was successfully created (frame {self.shown(frame)}, {share:.0%} edge pixels in the logo area)."
         else:
-            self.msg(f"The logo at this frame position is probably not usable since it contains only little relevant visual information "
-                     f"({share:.0%} edge pixels in the logo area); it is advised to create the logo at a different frame.")
+            text = (f"The logo at this frame position is probably not usable since it contains only little relevant visual information "
+                    f"({share:.0%} edge pixels in the logo area); it is advised to create the logo at a different frame.")
+        self.show_reference(text, rgb, ref)
+
+    def show_reference(self, text: str, rgb, ref) -> None:
+        """Tells the result of the button L and shows the picture it took the logo from, the area of the logo and its edges, so that a wrong
+        position (the logo is not in the picture) is seen at once."""
+        import dialogs
+        dialogs.reference_logo_box(self, text, rgb, ref.rect, ref.edges)
 
     # ------------------------------------------------------------------ Analyze cut point (Ctrl+Y)
     CUTPOINT_SECONDS = 3                       # length of the pieces before and behind the cut (VB6: 3 * 25 frames)

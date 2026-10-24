@@ -21,10 +21,19 @@ class QPainter(Base):
 
 class QImage(Base):
     Format = EnumGroup("QImage.Format", {"Format_RGB32", "Format_RGB888", "Format_Grayscale8"})
-    methods = {"copy"}
+    methods = {"copy", "scaledToWidth"}
 
     def _ret_copy(self):
         return self
+
+    def _ret_scaledToWidth(self, *args):
+        return self
+
+
+class QPixmap(Base):
+    @staticmethod
+    def fromImage(image):
+        return QPixmap()
 
 
 class QAction(QObject):

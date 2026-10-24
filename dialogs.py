@@ -6,7 +6,7 @@ import re
 import textwrap
 from typing import Optional
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from profiles import wrapped_lines
 
@@ -275,6 +275,58 @@ def ask_text_box(parent, title: str, prompt: str, default: str = "") -> Optional
     box = _input_box(parent, title, prompt, QtWidgets.QInputDialog.InputMode.TextInput)
     box.setTextValue(default)
     return box.textValue() if box.exec() else None
+
+
+def array_pixmap(rgb, width: int = 0):
+    """QPixmap from an RGB array (height, width, 3), optionally scaled to `width` (smooth)."""
+    import numpy as np
+    rgb = np.ascontiguousarray(rgb, dtype=np.uint8)
+    height, wide = rgb.shape[:2]
+    image = QtGui.QImage(rgb.data, wide, height, 3 * wide, QtGui.QImage.Format.Format_RGB888).copy()
+    if width and width != wide:
+        image = image.scaledToWidth(width, QtCore.Qt.TransformationMode.SmoothTransformation)
+    return QtGui.QPixmap.fromImage(image)
+
+
+def reference_logo_box(parent, text: str, rgb, rect: tuple, edges) -> None:
+    """Message about the new reference logo with pictures: the whole frame it was taken from (the rectangle marked), the area of the logo
+    enlarged, and its edges."""
+    import numpy as np
+    left, top, right, bottom = rect
+    marked = np.array(rgb, dtype=np.uint8)
+    marked[top:top + 2, left:right], marked[max(bottom - 2, 0):bottom, left:right] = (255, 0, 0), (255, 0, 0)
+    marked[top:bottom, left:left + 2], marked[top:bottom, max(right - 2, 0):right] = (255, 0, 0), (255, 0, 0)
+    area = np.array(rgb[max(0, top - 6):bottom + 6, max(0, left - 6):right + 6], dtype=np.uint8)
+    width = max(area.shape[1] * 4, 1)
+    edge_picture = np.repeat(np.asarray(edges, dtype=np.uint8)[..., None] * 255, 3, axis=2)
+    dialog = QtWidgets.QDialog(parent)
+    dialog.setWindowTitle("Reference logo")
+    layout = QtWidgets.QVBoxLayout(dialog)
+    label = QtWidgets.QLabel(text)
+    label.setWordWrap(True)
+    layout.addWidget(label)
+    row = QtWidgets.QHBoxLayout()
+    left_column = QtWidgets.QVBoxLayout()
+    left_column.addWidget(QtWidgets.QLabel("Picture taken (the rectangle is marked):"))
+    picture = QtWidgets.QLabel()
+    picture.setPixmap(array_pixmap(marked, 360))
+    left_column.addWidget(picture)
+    row.addLayout(left_column)
+    right_column = QtWidgets.QVBoxLayout()
+    for caption, array in (("Area of the logo:", area), ("Its edges (white) that are searched for:", edge_picture)):
+        right_column.addWidget(QtWidgets.QLabel(caption))
+        holder = QtWidgets.QLabel()
+        holder.setPixmap(array_pixmap(array, width))
+        right_column.addWidget(holder)
+    row.addLayout(right_column)
+    layout.addLayout(row)
+    buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok)
+    buttons.accepted.connect(dialog.accept)
+    layout.addWidget(buttons)
+    try:
+        dialog.exec()
+    finally:
+        dialog.deleteLater()
 
 
 class OutputFileDialog(QtWidgets.QDialog):

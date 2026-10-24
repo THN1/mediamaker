@@ -147,7 +147,7 @@ class QFrame(QWidget):
 
 
 class QLabel(QFrame):
-    methods = {"setText", "setAlignment", "text", "wordWrap", "alignment", "setWordWrap", "setTextInteractionFlags"}
+    methods = {"setText", "setAlignment", "text", "wordWrap", "alignment", "setWordWrap", "setTextInteractionFlags", "setPixmap"}
 
     def _ret_text(self):
         args = self.called("setText")

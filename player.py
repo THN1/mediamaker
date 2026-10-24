@@ -50,6 +50,10 @@ class Player(QtCore.QObject):
         """Stops and removes the last picture from the display (the list of segments was emptied: no film is shown any more)."""
         self.stop()
 
+    def preview_image(self):
+        """A copy of the picture the preview shows right now (QImage), or None (no picture, or the video is drawn by VLC itself)."""
+        return None
+
     def show_at(self, ms: int) -> None:
         """Shows the picture at `ms` in the paused state (briefly start playback, jump, pause)."""
         raise NotImplementedError
@@ -156,6 +160,9 @@ class FakePlayer(Player):
     def clear(self) -> None:
         self.log.append("clear")
         self.stop()
+
+    def preview_image(self):
+        return getattr(self, "preview", None)
 
     def show_at(self, ms: int) -> None:
         self.log.append(f"show_at {ms}")
@@ -620,6 +627,10 @@ class MemoryVlcPlayer(VlcPlayer):
         self.stop()
         if self.surface is not None:
             self.surface.clear()
+
+    def preview_image(self):
+        image = self.surface.image if self.surface is not None else None
+        return image.copy() if image is not None and hasattr(image, "copy") else image
 
     def load(self, path: str, size: Optional[tuple] = None) -> None:
         self.stop()                                              # change the memory only without running playback

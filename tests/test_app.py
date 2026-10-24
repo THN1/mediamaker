@@ -105,6 +105,8 @@ def make_window(tmp, probe=None, fresh=False, thumb_fn=None, first_fn=None, **kw
     win.msg = win.messages.append
     win.inform = win.messages.append
     win.verify_first_frame = False                       # most tests give the first frame by hand (first_fn); test_first_frame_check switches it on
+    win.references_shown = []
+    win.show_reference = lambda text, rgb, ref: (win.messages.append(text), win.references_shown.append((text, rgb, ref)))
     win.answer = True
     win.ask = lambda text: win.answer
     win.busy = lambda on: None
@@ -1493,7 +1495,7 @@ def test_option_changes(tmp, videos):
     avg = lambda path, f, fps, opts: (10, 10, 10)
     r1 = seek.seek_logo("/x", Fraction(25), 300, 0, None, True, 100, {"logo_conf": "0.2", "logo_rewind": "0"}, conf, avg)
     r2 = seek.seek_logo("/x", Fraction(25), 300, 0, None, True, 100, {"logo_conf": "0.5", "logo_rewind": "0"}, conf, avg)
-    check(r1 == 89 and r2 == 299, f"minimum match (found from frame 90 or nowhere): {r1}, {r2}")
+    check(r1 == 90 and r2 == 300, f"minimum match, no rewinding: the first frame with logo (90), or the end of the movie (300) if there is none: {r1}, {r2}")
     # --- main window: migration, dialog
     work = os.path.join(tmp, "migrate")
     os.makedirs(work)
@@ -3696,6 +3698,19 @@ def test_sessions(tmp, videos):
     print("Sessions: OK (zip per session, backup with note, restore in parts, automatic backup, delete, dialog)")
 
 
+def origin_rgb_same(win, marked, rect) -> bool:
+    """The picture saved as reference_logo_frame.png is the one that L took (outside of the red frame it is the same as the stored picture)."""
+    import numpy as np
+    seg = win.segments[0]
+    stored = win.ref_origin[seg.mask]["rgb"]
+    left, top, right, bottom = rect
+    inside = np.zeros(stored.shape[:2], bool)
+    inside[top:bottom, left:right] = True
+    inside[top + 2:bottom - 2, left + 2:right - 2] = False
+    keep = ~inside
+    return bool(np.array_equal(stored[keep], marked[keep]))
+
+
 def test_debug_package(tmp, videos):
     """Deploy => Create debug package: cut values, DeLogo, reference logo, last search, an unchanged piece around marker B, all as a folder and a zip;
     the wait window of a search says whether crop or the reference logo is used."""
@@ -3704,7 +3719,7 @@ def test_debug_package(tmp, videos):
     import numpy as np
     import logo
     import sessions
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, Image as PILImage
     from mediaprobe import first_frame_number, probe
     from runner import RunResult
     work = tempfile.mkdtemp()
@@ -3769,7 +3784,8 @@ def test_debug_package(tmp, videos):
         folder = os.path.join(folder_base, "2026.10.26_09-30-00")
         names = sorted(os.listdir(folder))
         expected = ["README.txt", "clip.ts", "clip_info.txt", "debug_log_tail.txt", "delogo.json", "frame_at_slider.png", "last_search.json", "list.json", "logo_area_at_slider.png",
-                    "options.txt", "reference_logo.json", "reference_logo_edges.png", "segment.json", "versions.txt"]
+                    "options.txt", "preview_check.json", "reference_logo.json", "reference_logo_area.png", "reference_logo_edges.png", "reference_logo_frame.png", "segment.json",
+                    "versions.txt"]
         check(names == expected, f"files of the package: {names}")
         zip_path = os.path.join(folder_base, "2026.10.26_09-30-00.zip")
         with zipfile.ZipFile(zip_path) as z:
@@ -3788,6 +3804,14 @@ def test_debug_package(tmp, videos):
         r = read("reference_logo.json")
         ref = win.delogo_refs[seg.mask]
         check(r["edge_pixels"] == ref.ones and r["rect_left_top_right_bottom"] == list(ref.rect) and r["source"].startswith("DeLogo") and 0 < r["edge_share"] < 1, f"reference logo: {r}")
+        check(r["created_at_frame"] == first + 25 and r["created_at_frame_shown"] == 25 and r["created_at_time"] == "0:00:01.000", f"where the reference logo was created: {r}")
+        made = np.asarray(Image.open(os.path.join(folder, "reference_logo_frame.png")).convert("RGB"))
+        left, top, right, bottom = ref.rect
+        check(made.shape == (576, 720, 3) and tuple(made[top, left + 5]) == (255, 0, 0) and tuple(made[bottom - 1, right - 5]) == (255, 0, 0)
+              and tuple(made[top + 10, left - 10]) != (255, 0, 0), "reference_logo_frame.png: the picture L took, with the rectangle marked")
+        check(origin_rgb_same(win, made, ref.rect), "it is the picture at frame 25 (not the picture at the slider, which was at 30): the logo is in it")
+        check(Image.open(os.path.join(folder, "reference_logo_area.png")).size == ((right - left + 20) * 6, (bottom - top + 20) * 6), "reference_logo_area.png: the area, enlarged")
+        check(json.load(open(os.path.join(folder, "preview_check.json")))["result"].startswith("no preview picture"), "no preview picture with the fake player: said so")
         edges = Image.open(os.path.join(folder, "reference_logo_edges.png"))
         check(edges.size == (ref.edges.shape[1] * 6, ref.edges.shape[0] * 6), f"edge picture enlarged: {edges.size}")
         check(Image.open(os.path.join(folder, "frame_at_slider.png")).size == (720, 576) and Image.open(os.path.join(folder, "logo_area_at_slider.png")).size[0] > 200, "pictures at the slider")
@@ -3799,12 +3823,32 @@ def test_debug_package(tmp, videos):
         check("marker B (end of the segment, frame" in info and "is at 4.00 s in the piece" in info and "marker A" in info and "is at 0.00 s" in info and "(ffmpeg -c copy)" in info,
               f"clip_info: {info.splitlines()[1:4]}")
         check(5.5 <= piece.video.frames / 25 <= 6.5 and piece.video.width == 720, f"the piece: {piece.video.frames} frames (B at 4 s, the file is 6 s long: from 0 s to the end)")
+        # --- with a preview picture (as the memory player has): what the preview showed when L was pressed, and what it shows now
+        import mediamaker
+        picture = np.asarray(PILImage.fromarray(np.zeros((576, 720, 3), np.uint8)).convert("RGB"))
+        win.player.preview = picture
+        win.Slider1.setValue(first + 25)
+        win.cmdLogo_Click()
+        check(win.ref_origin[seg.mask]["preview"] is picture and win.ref_origin[seg.mask]["frame"] == first + 25 and win.ref_origin[seg.mask]["shown"] == 25, "L keeps the preview picture of that moment")
+        shown_args = win.references_shown[-1]
+        check(shown_args[0].startswith("The reference logo") and shown_args[1].shape == (576, 720, 3) and shown_args[2] is win.delogo_refs[seg.mask], "the dialog gets the text, the picture L took and the reference logo")
+        mediamaker.frmMain.show_reference(win, shown_args[0], shown_args[1], shown_args[2])        # the real dialog (with the replacement for Qt): runs
+        win.Slider1.setValue(first + 30)
+        win.mnuDebug_Click()
+        folder_p = os.path.join(folder_base, "2026.10.26_09-31-00")
+        names_p = sorted(os.listdir(folder_p))
+        check({"reference_logo_vlc_preview.png", "reference_logo_preview_check.json", "vlc_preview.png", "preview_check.json"} <= set(names_p), f"with a preview picture: {names_p}")
+        check(json.load(open(os.path.join(folder_p, "reference_logo_preview_check.json")))["frame"] == first + 25 and "best_offset_frames" in json.load(open(os.path.join(folder_p, "preview_check.json")))
+              and json.load(open(os.path.join(folder_p, "preview_check.json")))["slider_frame"] == first + 30, "offset between preview and ffmpeg numbering, at L and now")
+        win.player.preview = None
+        stamps_next = iter(["2026.10.26_09-32-00", "2026.10.26_09-33-00", "2026.10.26_09-34-00", "2026.10.26_09-35-00"])
+        sessions.new_stamp = lambda now=None: next(stamps_next)
         # --- RemoveLogo mask, nothing at all, failing piece
         mask = np.zeros((576, 720), bool)
         mask[81:118, 632:666] = True
         seg.mask = logo.mask_to_png_b64(mask)
         win.mnuDebug_Click()
-        folder2 = os.path.join(folder_base, "2026.10.26_09-31-00")
+        folder2 = os.path.join(folder_base, "2026.10.26_09-32-00")
         d = json.load(open(os.path.join(folder2, "delogo.json")))
         check(d["kind"] == "RemoveLogo mask" and os.path.exists(os.path.join(folder2, "removelogo_mask.png"))
               and np.array_equal(logo.mask_from_png_b64(base64.b64encode(open(os.path.join(folder2, "removelogo_mask.png"), "rb").read()).decode()), mask), "RemoveLogo mask: the PNG is in the package")
@@ -3813,7 +3857,7 @@ def test_debug_package(tmp, videos):
         win.delogo_refs.clear()
         win._render_fn = lambda cmd, total, on_progress, cwd=None, cancel=None: RunResult(1, False, 0.1, "Invalid data found when processing input")
         win.mnuDebug_Click()
-        folder3 = os.path.join(folder_base, "2026.10.26_09-32-00")
+        folder3 = os.path.join(folder_base, "2026.10.26_09-33-00")
         files3 = sorted(os.listdir(folder3))
         check("clip.ts" not in files3 and "clip_info.txt" in files3 and "logo_area_at_slider.png" not in files3 and os.path.exists(folder3 + ".zip"), f"without logo and with a failing piece: {files3}")
         check(json.load(open(os.path.join(folder3, "delogo.json")))["kind"] == "none" and json.load(open(os.path.join(folder3, "reference_logo.json")))["reference_logo"] == "none", "no DeLogo, no reference logo: said so")
@@ -3822,7 +3866,7 @@ def test_debug_package(tmp, videos):
         win._render_fn = lambda cmd, total, on_progress, cwd=None, cancel=None: RunResult(-15, True, 0.1, "")
         n = len(win.messages)
         win.mnuDebug_Click()
-        check(not os.path.exists(os.path.join(folder_base, "2026.10.26_09-33-00.zip")) and len(win.messages) == n, "cancelled: no zip, no message")
+        check(not os.path.exists(os.path.join(folder_base, "2026.10.26_09-34-00.zip")) and len(win.messages) == n, "cancelled: no zip, no message")
         # --- marker B close to the start: the piece begins at 0, B is where it is
         win._render_fn = fake = lambda cmd, total, on_progress, cwd=None, cancel=None: (fake.calls.append(cmd), RunResult(1, False, 0.1, ""))[1]
         fake.calls = []
@@ -3833,6 +3877,16 @@ def test_debug_package(tmp, videos):
     finally:
         sessions.new_stamp = original
     import debugpack
+    # --- the picture of the preview and the offset to the numbering of ffmpeg
+    rng = np.random.default_rng(7)
+    small = {n: rng.integers(0, 255, (48, 64, 3), dtype=np.uint8) for n in range(100, 181)}
+    preview = np.asarray(PILImage.fromarray(small[137]).resize((720, 576), PILImage.BILINEAR))
+    result = debugpack.preview_offset(preview, small, 130)
+    check(result["best_offset_frames"] == 7 and result["reliable"] and result["difference_at_0"] > 1.5 * result["best_difference"] and "frame number + 7" in result["meaning"],
+          f"the preview shows frame 137 at number 130: offset 7: {result}")
+    check(debugpack.preview_offset(preview, small, 137)["best_offset_frames"] == 0 and "agree" in debugpack.preview_offset(preview, small, 137)["meaning"], "no offset: they agree")
+    check(debugpack.preview_offset(preview, {}, 130) == {"result": "no frames to compare"}, "nothing to compare")
+    check(debugpack.image_array(None) is None and debugpack.image_array(preview) is preview, "picture of the preview: nothing, or an array as it is")
     check(debugpack.clip_window(100.0) == (50.0, 60.0, 50.0) and debugpack.clip_window(20.0) == (0.0, 30.0, 20.0), "50 s before and 10 s after marker B, not before 0")
     check(debugpack.hms(3725.5) == "1:02:05.500", "time format")
     print("Debug package: OK (menu, files, zip, clip around B, DeLogo, reference logo, last search, header of the search)")
