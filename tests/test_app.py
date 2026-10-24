@@ -571,14 +571,6 @@ def test_memory_player():
     fake.State = SimpleNamespace(Playing=3, Paused=4, Stopped=5)
     fake.CallbackDecorators = SimpleNamespace(VideoLockCb=lambda f: f, VideoDisplayCb=lambda f: f)
     sys.modules["vlc"] = fake
-    # The fake instance always hands out the same media player. A new real media player has no medium and is not playing: the replacement does
-    # the same, and the old one is not stopped in a thread (it would be the same object).
-    original_replace, original_dispose = pl.VlcPlayer._replace_player, pl.VlcPlayer._dispose
-    def replace_like_vlc(self):
-        original_replace(self)
-        self.mp.state = 5
-    pl.VlcPlayer._replace_player = replace_like_vlc
-    pl.VlcPlayer._dispose = staticmethod(lambda old: None)
     try:
         check(pl.fit_rect(513, 290, (16, 9)) == (0, 0, 513, 289) and pl.fit_rect(400, 400, (16, 9)) == (0, 87, 400, 225)
               and pl.fit_rect(1000, 200, (16, 9)) == (322, 0, 356, 200) and pl.fit_rect(0, 10, (16, 9)) == (0, 0, 0, 10),
@@ -608,6 +600,10 @@ def test_memory_player():
         check(mp.format == ("RV32", 1280, 720, 5120) and len(mp.cb_calls) == 2, f"new size (made even): {mp.format}")
         player.set_aspect("4:3")
         check(player.surface.aspect == (4, 3), "display format")
+        stops_before = mp.stops
+        player.surface.image = "last picture"
+        player.clear()
+        check(player.surface.image is None and mp.stops == stops_before + 1, "clear(): stopped and the last picture is removed from the drawing area")
         # pictures before reaching the start position are not shown (VLC shows the start of the file first)
         lock3, _, display3, _ = mp.cb_calls[-1]
         player.load("/x/three.ts", (1280, 720))
@@ -627,9 +623,7 @@ def test_memory_player():
         QTimer.pending.pop(0)[1]()                                  # no picture arrived
         check(mp.calls_play == loads + 1 and player._awaiting_position == 560 and mp.media.options == [":start-time=0.560"],
               f"no picture after the jump: reloaded with start-time: {mp.media.options}")
-        check(player._slow and player._reload_busy, "a jump without a picture marks the medium as slow")
         player._awaiting_position = None
-        player._slow = player._reload_busy = False                  # (the next steps test the normal jumps)
         QTimer.pending.clear()
         mp.state, mp.t = 4, 90_000                                  # paused again (reloading has stopped)
         player._do_seek(2000)
@@ -667,7 +661,6 @@ def test_memory_player():
         display3(None, None)
         check(player.surface.image is image_before and mp.released, "no more pictures after shutdown, player released")
     finally:
-        pl.VlcPlayer._replace_player, pl.VlcPlayer._dispose = original_replace, staticmethod(original_dispose)
         del sys.modules["vlc"]
     print("Memory playback: OK (format, callbacks, picture hand-over, size change, shutdown)")
 
@@ -2135,7 +2128,7 @@ def test_dialog_styles_and_batch_path(tmp, videos):
 
 
 def test_example_ini(tmp, videos):
-    """The example INI file is valid, carries the settings batch, player and dialog_style, and keeps its comments when it is changed."""
+    """The example INI file is valid, carries batch, player, dialog_style ... only inside options=, and keeps its comments when it is changed."""
     import dialogs
     from profiles import validate_options, validate_profile
     from settings import default_options
@@ -2145,9 +2138,10 @@ def test_example_ini(tmp, videos):
     ini = os.path.join(work, "MediaMaker.ini")
     shutil.copy(example, ini)
     st = Settings(ini)
-    check(st.get("settings", "batch") == "~/MediaMaker.sh" and st.get("settings", "player") == "memory" and st.get("settings", "dialog_style") == "tabs",
-          "batch, player and dialog_style are set in the example")
-    check(st.get("settings", "vlc_args") is None and st.get("settings", "hide_messages") is None, "the optional keys are only commented examples")
+    check(st.options.get("batch") == "~/MediaMaker.sh" and st.options.get("player") == "memory" and st.options.get("dialog_style") == "tabs",
+          "batch, player and dialog_style are set in options=")
+    check(all(st.get("settings", k) is None for k in ("batch", "player", "dialog_style", "vlc_args", "hide_messages")), "no standalone lines for the settings that moved into options=")
+    check(not st.migrate_legacy_keys(), "nothing is left to migrate")
     check(validate_options({**default_options(), **st.options}) == [] and validate_profile(st.profile) == [] and len(st.profiles) == 11, "options, profile and the 11 profiles are valid")
     check(dialogs.set_style(st.get("settings", "dialog_style")) == "tabs", "dialog_style value is understood")
     before = open(ini, "rb").read().split(b"\r\n")
@@ -2155,7 +2149,7 @@ def test_example_ini(tmp, videos):
     st.save()
     after = open(ini, "rb").read().split(b"\r\n")
     changed = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
-    check(len(before) == len(after) and len(changed) == 1 and any(l.startswith(b";vlc_args") for l in after) and any(l.startswith(b"; Where the batch") for l in after),
+    check(len(before) == len(after) and len(changed) == 1 and any(l.startswith(b"; optional: helper programs") for l in after),
           f"changing an option replaces one line, the comments stay: {changed}")
     print("Example INI: OK (settings, comments, still valid)")
 
@@ -3410,58 +3404,27 @@ def test_player_recovery():
         player.stop()
         fn()
         check(player.recoveries == 1, "stopped meanwhile: nothing")
-        # --- a jump that brings no picture: the medium is slow, from now on every jump reloads it with a new media player (no blocking stop)
+        # --- reloading does not help: the third attempt replaces the media player
         player._awaiting_position = None
         mp = player.mp
-        players = len(inst.players)
+        mp.state = 4
+        QTimer.pending.clear()
+        for attempt in (1, 2):
+            mp.state, mp.t = 4, 90_000
+            player._do_seek(560 + attempt)
+            QTimer.pending[-1][1]()
+            player._awaiting_position = None
+            check(player.recoveries == 1 and player._reloads == attempt, f"reload {attempt}: the medium is started again")
         mp.state, mp.t = 4, 90_000
-        QTimer.pending.clear()
-        player._do_seek(560)
-        QTimer.pending[0][1]()                                    # 600 ms without a picture
-        check(player._slow and len(inst.players) == players + 1 and player.mp is not mp and player.mp.media.options == [":start-time=0.560"] and player._reload_busy,
-              "no picture after a jump: the medium counts as slow, a new media player is opened at the position")
-        check(wait_for(lambda: mp.released), "the old media player is stopped and released in a thread (the window is not blocked)")
-        mp = player.mp
-        # while a reload runs, jumps only collect the latest position
-        mp.state = 4
-        for target in (700, 800, 900):
-            player._do_seek(target)
-        check(len(inst.players) == players + 1 and player._reload_target == 900 and player._reload_for == 560, "while a reload runs only the latest position is kept")
-        # the picture arrives: the reload is done and the latest position is reloaded
+        player._do_seek(563)
+        QTimer.pending[-1][1]()
+        check(player.recoveries == 2 and player.mp is not mp and player.mp.media.options == [":start-time=0.563"], "the third reload in a row: the media player is replaced")
+        # a picture resets the counter
         player._awaiting_position = None
+        player._reloads = 2
         player.surface.image = None
         player._on_frame((b"\x00" * (720 * 576 * 4), 720, 576))
-        check(len(inst.players) == players + 2 and player.mp.media.options == [":start-time=0.900"] and player._reload_for == 900 and player._reload_busy,
-              "picture arrived: the latest position (900 ms) is reloaded next")
-        mp = player.mp
-        player._awaiting_position = None
-        player._on_frame((b"\x00" * (720 * 576 * 4), 720, 576))
-        check(not player._reload_busy and len(inst.players) == players + 2, "nothing newer was asked for: nothing more is started")
-        # a reload whose picture never arrives is given up after a while; a newer position is then reloaded
-        mp.state = 4
-        player._do_seek(1000)
-        check(player._reload_busy and player._reload_for == 1000, "next jump: reload")
-        player._do_seek(1100)
-        token = player._watch_token
-        QTimer.pending.clear()
-        player._reload_timeout(token)
-        check(player._reload_for == 1100 and player._reload_busy and len(inst.players) == players + 4, "timeout without a picture: given up, the newer position is reloaded")
-        player._reload_timeout(token - 1)                         # an outdated timer does nothing
-        check(len(inst.players) == players + 4, "an outdated timeout does nothing")
-        # stopping with a slow medium does not block either
-        before = len(inst.players)
-        player.stop()
-        check(len(inst.players) == before + 1 and player._pending_show is None, "stop() with a slow medium: a new media player instead of waiting")
-        # a new file is judged anew
-        player.load("/nas/other.ts", (720, 576))
-        check(not player._slow and not player._reload_busy and player._reload_target is None, "a new file: no longer slow")
-        player.surface.image = None
-        player._reload_busy = False
-        player.recoveries = 1 if player.recoveries == 0 else player.recoveries
-        # a picture resets nothing that is left over
-        player._awaiting_position = None
-        player._on_frame((b"\x00" * (720 * 576 * 4), 720, 576))
-        check(player._frames_shown >= 1, "pictures are counted")
+        check(player._reloads == 0 and player._frames_shown >= 1, "a picture resets the counter")
         # --- the base player (embedded in a window) gets its window again
         player2 = pl.VlcPlayer()
         holder2 = holder[-1]
@@ -3477,13 +3440,13 @@ def test_player_recovery():
         progress = player.recoveries
         player.shutdown()
         player2.shutdown()
-        check(player.mp.released and holder[0].released, "shutdown after recoveries: current media player and instance released")
+        check(player.mp.released and holder[0].released and wait_for(lambda: True), "shutdown after recoveries: current media player and instance released")
         QTimer.pending.clear()
         player.recover("after shutdown")
         check(player.recoveries == progress, "no recovery after shutdown")
     finally:
         del sys.modules["vlc"]
-    print("Player recovery: OK (watchdog, new media player, slow medium with collected jumps, embedded window, shutdown)")
+    print("Player recovery: OK (watchdog, new media player, reload limit, embedded window, shutdown)")
 
 
 def test_make_test_clips(tmp, videos):
@@ -3687,6 +3650,22 @@ def test_sessions(tmp, videos):
     win.cmdCommand_Click(3)
     check(win.segments == [] and win.current == -1 and load_segments(win.project_path) == [], "Yes: the list is cleared and saved")
     check(asked[-1] == "Clear all segments from list?", "the question")
+    check(win.player.log[-2:] == ["clear", "stop"], f"the preview is cleared, too (no film stays on the screen): {win.player.log[-3:]}")
+    # --- the preview is cleared also when the last segment is deleted and after a restored session
+    win2 = seek_window(tmp, videos, ("sample2.ts", "sample3.ts"), workdir="clearpreview")
+    win2.lvwSegments.select_row(0)
+    win2.lvwSegments_Click()
+    win2.player.log.clear()
+    win2.delete_segment()
+    check("clear" not in win2.player.log, "one of two segments deleted: the other one is shown, nothing is cleared")
+    win2.lvwSegments.select_row(0)
+    win2.lvwSegments_Click()
+    win2.player.log.clear()
+    win2.delete_segment()
+    check(win2.segments == [] and "clear" in win2.player.log, "the last segment deleted: the preview is cleared")
+    win2.player.log.clear()
+    win2.reload_session()
+    check("clear" in win2.player.log, "after a restored session the preview is cleared")
     # --- the dialog (stub): single, several, parts
     infos3 = [sessions.SessionInfo(stamp=f"2026.10.2{i}_10-00-00", path="/x", created=f"2026-10-2{i}T10:00:00", segments=i, titles=["a.ts"]) for i in range(1, 4)]
     def pick(rows, list_on=True, ini_on=True):

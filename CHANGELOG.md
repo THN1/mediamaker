@@ -3,6 +3,14 @@
 ## 0.4 (in progress)
 
 - Version number set to 0.4-dev.
+- **Preview player taken back to the state before "slow medium" mode** (0.3 had it): there every jump reopened the medium with a new media player, which
+  made the preview jump to the start of the film first and play it briefly, with sound, before it went to the wanted frame. Kept from 0.3 are the
+  watchdog (nothing reported by VLC for 8 s after a medium was started: new media player) and the report of an unsuccessful logo search. Known and
+  open: on a slow network drive a jump in the open VLC medium can take seconds, and `stop()` can block the window for that time.
+- Clearing the segment list (button, File => Close all), deleting the last segment and restoring a session also clear the VLC preview: it no longer
+  keeps showing the film that was loaded last.
+- `MediaMaker.example.ini`: the lines `batch=`, `player=` and `dialog_style=` (and the comments about `vlc_args`/`hide_messages`) are gone, these
+  settings are part of `options=` since 0.3.
 - **Sessions** (File => Backup session / Restore session / Delete session): a session is one zip file in the folder `sessions` next to the INI file
   (option `sessions_dir` for another place), named with the time as in VB6 (`2026.10.25_14-03-12.zip`), with the INI file, the segment list and a small
   manifest (time, optional note, number and titles of the segments, program version). No 7-Zip any more; nothing is rewritten when a session is

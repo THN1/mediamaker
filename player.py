@@ -46,6 +46,10 @@ class Player(QtCore.QObject):
     def stop(self) -> None:
         raise NotImplementedError
 
+    def clear(self) -> None:
+        """Stops and removes the last picture from the display (the list of segments was emptied: no film is shown any more)."""
+        self.stop()
+
     def show_at(self, ms: int) -> None:
         """Shows the picture at `ms` in the paused state (briefly start playback, jump, pause)."""
         raise NotImplementedError
@@ -149,6 +153,10 @@ class FakePlayer(Player):
         self.log.append("stop")
         self.stopped.emit()
 
+    def clear(self) -> None:
+        self.log.append("clear")
+        self.stop()
+
     def show_at(self, ms: int) -> None:
         self.log.append(f"show_at {ms}")
         self.time = ms
@@ -213,9 +221,6 @@ class VlcPlayer(Player):
         self.recoveries = 0                                     # how often the media player had to be replaced
         self._old_callbacks: list = []                          # libvlc may still call the functions of replaced media players
         self._old_players: list = []
-        self._dispose_thread = None
-        self._volume: Optional[int] = None
-        self._slow = False                                      # jumps in the open medium are slow (network drive): every jump reloads the medium
         self._new_media_player()
         self.playing.connect(self._after_playing)
         self.seekable.connect(self._after_seekable)
@@ -354,13 +359,6 @@ class VlcPlayer(Player):
             return
         self.recoveries += 1
         debug_log(f"RECOVERY {self.recoveries} ({reason}): new media player")
-        self._replace_player()
-        if self._path and self._last_show is not None:
-            self.show_at(self._last_show)
-
-    def _replace_player(self) -> None:
-        """Puts a new media player in place of the old one without waiting for it: libvlc's stop() blocks as long as the input thread is busy
-        (on a slow network drive a jump can take seconds), and that would freeze the window. The old one is stopped and released in a thread."""
         old = self.mp
         try:
             events = old.event_manager()
@@ -370,15 +368,14 @@ class VlcPlayer(Player):
             debug_log(f"detaching the events of the old media player failed: {e}")
         self._old_callbacks.extend(self._callbacks)              # libvlc may still call them
         self._old_players.append(old)                            # kept alive for the same reason
-        self._dispose_thread = threading.Thread(target=self._dispose, args=(old,), daemon=True)
-        self._dispose_thread.start()
+        threading.Thread(target=self._dispose, args=(old,), daemon=True).start()
         self._pending_show = self._awaiting_position = None
         self._muted = False
         self._watch_token += 1
         self._new_media_player()
         self._after_recover()
-        if self._volume is not None:
-            self.mp.audio_set_volume(self._volume)
+        if self._path and self._last_show is not None:
+            self.show_at(self._last_show)
 
     @staticmethod
     def _dispose(old) -> None:
@@ -422,9 +419,6 @@ class VlcPlayer(Player):
         self._pending_show = None
         self._awaiting_position = None
         self._watch_token += 1
-        if self._slow and not self._closed:
-            self._replace_player()                               # stopping would block for seconds: new media player instead
-            return
         if self._muted:
             self._mute(False)
         self.mp.stop()
@@ -471,7 +465,6 @@ class VlcPlayer(Player):
         self.mp.set_time(ms)
 
     def set_volume(self, percent: int) -> None:
-        self._volume = int(percent)
         self.mp.audio_set_volume(int(percent))
 
     def set_aspect(self, ratio: str) -> None:
@@ -534,10 +527,7 @@ class MemoryVlcPlayer(VlcPlayer):
         super().__init__(extra_args)
         self.surface: Optional[VideoSurface] = None
         self._frames_shown = 0                                   # counter of the pictures shown (for checking jumps)
-        self._reload_busy = False                                # slow medium: a reload is running, jumps are collected
-        self._reload_for: Optional[int] = None                   # position that the running reload was started for
-        self._reload_target: Optional[int] = None                # latest position that was asked for in the meantime
-        self._seek_time: Optional[float] = None                  # when the last jump or reload was started (log of the delay)
+        self._reloads = 0                                        # reloads in a row that did not bring a picture
         self._last_seek: Optional[int] = None
         self._size = (0, 0)
         self._buf = None
@@ -578,6 +568,7 @@ class MemoryVlcPlayer(VlcPlayer):
 
     def _after_recover(self) -> None:
         size, self._size = self._size, (0, 0)                    # the new media player knows nothing yet: install the video callbacks again
+        self._reloads = 0
         if size != (0, 0):
             self._install(*size)
 
@@ -592,61 +583,20 @@ class MemoryVlcPlayer(VlcPlayer):
         self._progress += 1
         if self._awaiting_position is not None:
             return                                           # VLC still shows the wrong position (e.g. the start of the file)
-        if self._seek_time is not None:
-            debug_log(f"picture {1000 * (time.monotonic() - self._seek_time):.0f} ms after the {'reload' if self._reload_busy else 'jump'}")
-            self._seek_time = None
+        self._reloads = 0
         if self.surface is not None and not self._closed:
             image = QtGui.QImage(data, width, height, width * 4, QtGui.QImage.Format.Format_RGB32).copy()
             self.surface.set_image(image)
             self._frames_shown += 1
-        self._reload_finished()
 
     SEEK_CHECK_MS = 600                                          # how long to wait for the picture after a jump
+    MAX_RELOADS = 2                                              # reloads of the medium in a row before the media player is replaced
     SEEK_CHECK_MIN_DISTANCE_MS = 100                             # closer jumps sometimes deliver no new picture
-
-    RELOAD_MAX_MS = 6000                                         # a reload that brings no picture for so long is given up (the watchdog replaces the player)
-
-    def _request_reload(self, ms: int) -> None:
-        """Slow medium: the medium is opened anew at the position (that is fast, while a jump in the open medium takes seconds). While a reload
-        is running further requests only keep the latest position; it is reloaded as soon as the picture of the running one has arrived."""
-        self._reload_target = ms
-        if self._reload_busy:
-            return
-        self._start_reload(ms)
-
-    def _start_reload(self, ms: int) -> None:
-        self._reload_busy = True
-        self._reload_for = ms
-        self._last_seek = ms
-        self._seek_time = time.monotonic()
-        debug_log(f"slow medium: reloading at {ms} ms")
-        self._replace_player()
-        self.show_at(ms)
-        token = self._watch_token
-        QtCore.QTimer.singleShot(self.RELOAD_MAX_MS, lambda: self._reload_timeout(token))
-
-    def _reload_finished(self) -> None:
-        """A picture has arrived: the running reload is done; the latest position asked for meanwhile is reloaded next."""
-        if not self._reload_busy or self._awaiting_position is not None or self._closed:
-            return
-        self._reload_busy = False
-        if self._reload_target is not None and self._reload_target != self._reload_for:
-            self._start_reload(self._reload_target)
-
-    def _reload_timeout(self, token: int) -> None:
-        if self._reload_busy and token == self._watch_token and not self._closed:
-            self._reload_busy = False                            # give up this one; the watchdog has looked at the player already
-            if self._reload_target is not None and self._reload_target != self._reload_for:
-                self._start_reload(self._reload_target)
 
     def _do_seek(self, ms: int) -> None:
         """Jump as in the base class; in the paused state a picture must arrive afterwards. VLC ignores some jumps
                 (e.g. to the start of the file); then the medium is reloaded with the start position."""
-        if self._slow and self.mp.get_state() in (self._vlc.State.Paused, self._vlc.State.Stopped, self._vlc.State.Playing):
-            self._request_reload(ms)
-            return
         before, here = self._frames_shown, self.mp.get_time()
-        self._seek_time = time.monotonic()
         super()._do_seek(ms)
         self._last_seek = ms
         if self.mp.get_state() == self._vlc.State.Paused and abs(here - ms) > self.SEEK_CHECK_MIN_DISTANCE_MS:
@@ -656,16 +606,23 @@ class MemoryVlcPlayer(VlcPlayer):
         if self._closed or self._awaiting_position is not None or self._last_seek != ms:
             return                                               # superseded: another jump has come in the meantime
         if self._frames_shown == frames_before and self.mp.get_state() == self._vlc.State.Paused:
+            self._reloads += 1
             self._last_show = ms
-            debug_log(f"jump to {ms} ms delivered no picture: the medium is slow, reloading it from now on for every jump")
-            self._slow = True
-            self._request_reload(ms)
+            if self._reloads > self.MAX_RELOADS:                 # reloading does not help: replace the media player
+                self.recover(f"{self._reloads - 1} reloads in a row brought no picture")
+                return
+            debug_log(f"jump to {ms} ms delivered no picture: reloading the medium")
+            self.stop()
+            self.show_at(ms)
+
+    def clear(self) -> None:
+        """Stops and removes the last picture from the drawing area."""
+        self.stop()
+        if self.surface is not None:
+            self.surface.clear()
 
     def load(self, path: str, size: Optional[tuple] = None) -> None:
         self.stop()                                              # change the memory only without running playback
-        self._slow = False                                       # a new file: judge its speed anew
-        self._reload_busy = False
-        self._reload_target = None
         self._install(*(size or (720, 576)))
         if self.surface is not None:
             self.surface.clear()

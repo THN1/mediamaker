@@ -1219,6 +1219,8 @@ class frmMain(frmMainBase):
         self.refresh_list()
         self._save()
         self.lblText_Upd()
+        if not self.segments:
+            self.player.clear()                                      # the last one is gone: the preview must not keep showing its film
         if self.segments:
             # The entry that takes the deleted one's place is selected (after deleting the last entry: the new last one),
             # and loaded like after a click, so that further commands apply to it.
@@ -1235,8 +1237,8 @@ class frmMain(frmMainBase):
         self._save()
 
     def mnuClose_Click(self):
-        """Remove all segments (VB6: Close all)."""
-        self.player.stop()
+        """Remove all segments (VB6: Close all); the preview shows nothing any more."""
+        self.player.clear()
         self.segments, self.current = [], -1
         self.timeline_mode = self.timeline_center = None
         self.Slider1.blockSignals(True)
@@ -1321,7 +1323,7 @@ class frmMain(frmMainBase):
 
     def reload_session(self) -> None:
         """Takes up the files that a restored session has written: settings and segment list are read again, the window shows them."""
-        self.player.stop()
+        self.player.clear()
         self.settings.load()
         self.migrate_settings()
         self.load_list()
