@@ -3995,6 +3995,82 @@ def test_ini_tooltips_and_tools(tmp, videos):
     print("INI help texts and tools: OK (every parameter, sync, migration of [tools.linux], group Tools)")
 
 
+def test_delete_files(tmp, videos):
+    """File => Delete (Ctrl+J): the source files of all segments are deleted for good, the list is cleared; a file that cannot be deleted stays in the list."""
+    import stat
+    from mediaprobe import first_frame_number
+    def copies(folder, names):
+        os.makedirs(folder, exist_ok=True)
+        out = []
+        for i, name in enumerate(names):
+            target = os.path.join(folder, f"copy{i}_{name}")
+            shutil.copy(os.path.join(videos, name), target)
+            out.append(target)
+        return out
+    folder = os.path.join(tmp, "deletefiles")
+    a, b = copies(folder, ("sample2.ts", "sample3.ts"))
+    win = seek_window(tmp, folder, tuple(os.path.basename(p) for p in (a, b)), workdir="deletewin", first_fn=first_frame_number)
+    asked = []
+    answers = [False]
+    win.ask = lambda text: (asked.append(text), answers.pop(0))[1]
+    # --- No: nothing happens
+    win.mnuDelete_Click()
+    check(os.path.exists(a) and os.path.exists(b) and len(win.segments) == 2, "answer No: the files and the list stay")
+    q = asked[0]
+    check(q.startswith("Delete all 2 files of the 2 segments from disk?") and a in q and b in q and "for good, not moved to the trash" in q, f"the question names the files: {q[:90]}")
+    # --- Yes: the files are gone for good, the list is empty, saved, the preview cleared
+    answers[:] = [True]
+    win.player.log.clear()
+    win.mnuDelete_Click()
+    check(not os.path.exists(a) and not os.path.exists(b), "Yes: both files are deleted from the disk")
+    check(win.segments == [] and win.current == -1 and load_segments(win.project_path) == [] and "clear" in win.player.log, "the list is cleared and saved, the preview is empty")
+    check(not [f for f in os.listdir(folder) if "trash" in f.lower()] and not os.path.exists(os.path.join(tmp, "deletewin", ".Trash")), "nothing was moved to a trash folder")
+    # --- an empty list
+    n = len(asked)
+    win.mnuDelete_Click()
+    check(win.messages[-1] == "The list of segments is empty: there is nothing to delete." and len(asked) == n, "empty list: a message, no question")
+    # --- two segments of the same file: counted and deleted once; read-only files go, too; a file that is already gone is no error
+    c, d = copies(os.path.join(tmp, "deletefiles2"), ("sample2.ts", "sample3.ts"))
+    win = seek_window(tmp, os.path.dirname(c), tuple(os.path.basename(p) for p in (c, d)), workdir="deletewin2", first_fn=first_frame_number)
+    win.segments.append(dataclasses.replace(win.segments[0], index=3, start=win.segments[0].start + 10))
+    check(len(win.segments) == 3 and win.segments[2].path == win.segments[0].path, "a third segment of the same file")
+    os.chmod(c, stat.S_IRUSR)                                        # read-only (VB6: DeleteFile with force)
+    os.remove(d)                                                     # already gone
+    asked.clear()
+    win.ask = lambda text: (asked.append(text), True)[1]
+    win.mnuDelete_Click()
+    check(asked[0].startswith("Delete all 2 files of the 3 segments from disk?") and not os.path.exists(c) and win.segments == [], f"the shared file counts once, read-only is deleted, a missing file is no error: {asked[0][:60]}")
+    # --- a file that cannot be deleted: reported, its segment stays, the others go
+    e, f = copies(os.path.join(tmp, "deletefiles3"), ("sample2.ts", "sample3.ts"))
+    win = seek_window(tmp, os.path.dirname(e), tuple(os.path.basename(p) for p in (e, f)), workdir="deletewin3", first_fn=first_frame_number)
+    win.ask = lambda text: True
+    real_remove = os.remove
+    def remove(path, *args, **kw):
+        if path == f:
+            raise PermissionError(13, "Permission denied", path)
+        return real_remove(path, *args, **kw)
+    os.remove = remove
+    try:
+        win.mnuDelete_Click()
+    finally:
+        os.remove = real_remove
+    check(not os.path.exists(e) and os.path.exists(f), "the other file is deleted, the one with the error stays")
+    check([s.path for s in win.segments] == [f] and [s.path for s in load_segments(win.project_path)] == [f], "its segment stays in the list (and in the saved list)")
+    check("1 of 2 file(s) could not be deleted" in win.messages[-1] and f"{f}: Permission denied" in win.messages[-1], f"message: {win.messages[-1][:90]}")
+    # --- many files: the question lists the first ones and says how many more
+    many = [os.path.join(tmp, "many", f"v{i}.ts") for i in range(11)]
+    os.makedirs(os.path.join(tmp, "many"), exist_ok=True)
+    for p in many:
+        shutil.copy(os.path.join(videos, "sample2.ts"), p)
+    win = seek_window(tmp, os.path.join(tmp, "many"), tuple(os.path.basename(p) for p in many), workdir="deletewin4", first_fn=first_frame_number)
+    asked.clear()
+    win.ask = lambda text: (asked.append(text), False)[1]
+    win.mnuDelete_Click()
+    check(asked[0].startswith("Delete all 11 files of the 11 segments") and many[7] in asked[0] and many[8] not in asked[0] and "... and 3 more" in asked[0], "more than 8 files: the first 8 and \"... and 3 more\"")
+    check(all(os.path.exists(p) for p in many), "nothing deleted (answer No)")
+    print("Delete files: OK (question with the files, permanent delete, shared and missing files, errors keep the segment)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -4046,6 +4122,7 @@ def main():
     test_sessions(tmp, sys.argv[1])
     test_debug_package(tmp, sys.argv[1])
     test_ini_tooltips_and_tools(tmp, sys.argv[1])
+    test_delete_files(tmp, sys.argv[1])
     test_timeline(tmp, sys.argv[1])
     test_segments(tmp, sys.argv[1])
     test_thumbnail_errors(tmp, sys.argv[1])

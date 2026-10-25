@@ -7,6 +7,10 @@
   made the preview jump to the start of the film first and play it briefly, with sound, before it went to the wanted frame. Kept from 0.3 are the
   watchdog (nothing reported by VLC for 8 s after a medium was started: new media player) and the report of an unsuccessful logo search. Known and
   open: on a slow network drive a jump in the open VLC medium can take seconds, and `stop()` can block the window for that time.
+- **File => Delete (Ctrl+J)**: deletes the source files of all segments of the list from the disk, for good (no trash), and clears the list. The
+  question names the files (the first 8, then "... and n more"); a file that several segments share counts and is deleted once; a missing file is no
+  error. A file that cannot be deleted is reported with the reason, and its segments stay in the list (also in the saved one) for another try.
+  With an empty list a message says so.
 - **Clearing the list** (button, File => Close all) no longer needs a selected segment: it asks "Clear all segments from list?" and clears; with an
   empty list it says so instead of doing nothing. (The other buttons still need a selected segment.)
 - **`[ToolTipText]` in the INI file has a help text for EVERY parameter**, options and profile parameters, also those added after the VB6 version. At the

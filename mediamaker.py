@@ -1260,6 +1260,39 @@ class frmMain(frmMainBase):
         self._save()
         self.lblText_Upd()
 
+    DELETE_LISTED = 8                                                # files named in the question before "and n more"
+
+    def mnuDelete_Click(self):
+        """File => Delete (Ctrl+J): deletes the source files of all segments of the list from the disk, for good (no trash), and clears the list.
+        A file that several segments share is deleted once. A file that cannot be deleted is reported, and its segments stay in the list."""
+        if not self.segments:
+            self.msg("The list of segments is empty: there is nothing to delete.")
+            return
+        files = list(dict.fromkeys(resolve_source(seg.path) for seg in self.segments))              # every file once, in the order of the list
+        shown = "\n".join(files[:self.DELETE_LISTED]) + (f"\n... and {len(files) - self.DELETE_LISTED} more" if len(files) > self.DELETE_LISTED else "")
+        if not self.ask(f"Delete all {len(files)} file{'s' if len(files) != 1 else ''} of the {len(self.segments)} segment{'s' if len(self.segments) != 1 else ''} "
+                        f"from disk?\n\n{shown}\n\nThis cannot be undone: the files are deleted for good, not moved to the trash."):
+            return
+        self.player.clear()                                          # the player must not hold on to the files
+        failed = {}
+        for path in files:
+            if not os.path.exists(path):
+                continue                                             # already gone
+            try:
+                os.remove(path)
+            except OSError as e:
+                failed[path] = e.strerror or str(e)
+        if not failed:
+            self.mnuClose_Click()
+            return
+        self.segments = [seg for seg in self.segments if resolve_source(seg.path) in failed]       # what could not be deleted stays for another try
+        self.current = -1
+        self.refresh_list()
+        self._save()
+        self.lblText_Upd()
+        self.msg(f"{len(failed)} of {len(files)} file(s) could not be deleted; their segments stay in the list:\n"
+                 + "\n".join(f"{path}: {why}" for path, why in failed.items()))
+
     # ------------------------------------------------------------------ Debug package (Deploy => Create debug package)
     def add_debug_menu(self) -> None:
         """The entry is added here; if the form has an item mnuDebug of its own (designed in VB6), that one is used."""
