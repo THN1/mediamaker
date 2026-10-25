@@ -4,7 +4,8 @@ wrong, in a folder `debug/<time>` next to the INI file and as a zip file of the 
 Contents: README.txt, segment.json (cut values, neighbours, times), delogo.json (the rectangle or the RemoveLogo mask), reference_logo.json and
 reference_logo_edges.png, last_search.json (what the last search did: method, crop, every frame it looked at, the result), options.txt, versions.txt,
 list.json (the whole segment list), frame_at_slider.png and logo_area_at_slider.png, the end of the debug log, and an unchanged piece of the
-recording (ffmpeg -c copy) from 50 s before to 10 s after marker B, with clip_info.txt telling where the markers are inside the piece.
+recording (ffmpeg -c copy) from 50 s before to 10 s after the slider position (where the search stopped), with clip_info.txt telling where the
+slider, the markers and the place where the reference logo was created are inside the piece.
 """
 from __future__ import annotations
 
@@ -20,8 +21,8 @@ from typing import Optional
 
 import numpy as np
 
-CLIP_BEFORE = 50.0              # seconds before marker B
-CLIP_AFTER = 10.0               # seconds after marker B
+CLIP_BEFORE = 50.0              # seconds before the slider position
+CLIP_AFTER = 10.0               # seconds after the slider position
 
 
 def hms(seconds: float) -> str:
@@ -119,10 +120,12 @@ def segment_report(segments: list, index: int, slider: int, to_time) -> dict:
     }
 
 
-def clip_window(b_seconds: float, before: float = CLIP_BEFORE, after: float = CLIP_AFTER) -> tuple:
-    """(start, duration, position of B inside the piece) in seconds, from the start of the recording; the piece does not begin before 0."""
-    start = max(0.0, b_seconds - before)
-    return start, b_seconds + after - start, b_seconds - start
+def clip_window(centre: float, before: Optional[float] = None, after: Optional[float] = None) -> tuple:
+    """(start, duration, position of the centre inside the piece) in seconds, from the start of the recording; the piece does not begin before 0."""
+    before = CLIP_BEFORE if before is None else before
+    after = CLIP_AFTER if after is None else after
+    start = max(0.0, centre - before)
+    return start, centre + after - start, centre - start
 
 
 def clip_command(path: str, start: float, duration: float, out: str, ffmpeg: str = "ffmpeg") -> list:
@@ -195,8 +198,9 @@ What is in here
   frame_at_slider.png, logo_area_at_slider.png   the picture (ffmpeg) at the position of the slider when the package is made, and the area of the
                           logo in it - NOT the picture of the reference logo (that is reference_logo_frame.png)
   debug_log_tail.txt      the end of mediamaker_debug.log (only with MEDIAMAKER_DEBUG=1)
-  clip.*, clip_info.txt   an unchanged piece of the recording (ffmpeg -c copy) from {before:.0f} s before to {after:.0f} s after marker B;
-                          clip_info.txt says where marker A and B are inside the piece
+  clip.*, clip_info.txt   an unchanged piece of the recording (ffmpeg -c copy) from {before:.0f} s before to {after:.0f} s after the slider position
+                          (= frame_at_slider.png, where the search stopped); clip_info.txt says where the slider, marker A and B and the place
+                          where the reference logo was created are inside the piece
 
 Please upload the zip file and describe what went wrong (for example: the end of the commercial was found too early / too late, at about ...).
 """

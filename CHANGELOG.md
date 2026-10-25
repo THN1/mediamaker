@@ -7,6 +7,9 @@
   made the preview jump to the start of the film first and play it briefly, with sound, before it went to the wanted frame. Kept from 0.3 are the
   watchdog (nothing reported by VLC for 8 s after a medium was started: new media player) and the report of an unsuccessful logo search. Known and
   open: on a slow network drive a jump in the open VLC medium can take seconds, and `stop()` can block the window for that time.
+- **Debug package: the piece of the recording is centred on the SLIDER** (= `frame_at_slider.png`, where the search stopped): 50 s before to 10 s after
+  it, not around marker B. `clip_info.txt` tells where the slider, marker A and B and the place where the reference logo was created are inside the
+  piece ("outside" if not).
 - **Button L shows what it did**: after creating the reference logo a window shows the picture L took the logo from (the rectangle marked), the area of the
   logo enlarged and the edges that are searched for, so that a logo that is not in the picture is seen at once. The picture, the frame number and
   the preview picture of that moment are kept for the debug package: `reference_logo_frame.png`, `reference_logo_area.png`,
@@ -23,7 +26,7 @@
   needed to understand a wrong search or cut: the cut values of the selected segment (numbers as counted and as shown, times, neighbours), the DeLogo
   rectangle or the RemoveLogo mask, the reference logo (values and edge picture), what the last search did (method, crop, every frame it examined
   with its confidence or border value, result), options, versions, the list, the picture at the slider and the logo area in it, the end of the debug
-  log, and an unchanged piece of the recording (`ffmpeg -c copy`) from 50 s before to 10 s after marker B with `clip_info.txt` telling where the
+  log, and an unchanged piece of the recording (`ffmpeg -c copy`) from 50 s before to 10 s after the slider with `clip_info.txt` telling where the
   markers are inside it. Things that fail (e.g. the piece) are noted and do not stop the rest. `debug/` is in `.gitignore`.
 - Clearing the segment list (button, File => Close all), deleting the last segment and restoring a session also clear the VLC preview: it no longer
   keeps showing the film that was loaded last.

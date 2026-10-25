@@ -1372,17 +1372,21 @@ class frmMain(frmMainBase):
         attempt("preview picture", preview_now)
         attempt("debug log", lambda: open(join("debug_log_tail.txt"), "w", encoding="utf-8").write(
             debugpack.tail(os.path.join(os.path.dirname(os.path.abspath(__file__)), "mediamaker_debug.log")) or "(no log: start the program with MEDIAMAKER_DEBUG=1)\n"))
-        # --- the unchanged piece of the recording around marker B
-        b_seconds = to_time(seg.end)
-        start, duration, b_in = debugpack.clip_window(b_seconds)
+        # --- the unchanged piece of the recording around the slider: this is where the search stopped
+        centre = to_time(slider)
+        start, duration, slider_in = debugpack.clip_window(centre)
         out = join("clip" + (os.path.splitext(seg.path)[1] or ".ts"))
-        info = [f"source: {seg.path}", f"piece: from {debugpack.hms(start)} to {debugpack.hms(start + duration)} of the recording ({duration:.1f} s), unchanged (ffmpeg -c copy)",
-                f"marker B (end of the segment, frame {seg.end}, shown {seg.end - seg.first_frame}) is at {b_in:.2f} s in the piece",
-                f"marker A (start, frame {seg.start}, shown {seg.start - seg.first_frame}) is at {to_time(seg.start) - start:.2f} s in the piece"
-                + ("" if 0 <= to_time(seg.start) - start <= duration else " (outside)"),
-                f"slider (frame {slider}, shown {slider - seg.first_frame}) is at {to_time(slider) - start:.2f} s in the piece"
-                + ("" if 0 <= to_time(slider) - start <= duration else " (outside)"),
-                "A piece begins at a keyframe: the first picture can lie a little before the start given here."]
+        def where(label: str, frame: int) -> str:
+            t = to_time(frame) - start
+            return f"{label} (frame {frame}, shown {frame - seg.first_frame}) is at {t:.2f} s in the piece" + ("" if 0 <= t <= duration else " (outside)")
+        info = [f"source: {seg.path}",
+                f"piece: from {debugpack.hms(start)} to {debugpack.hms(start + duration)} of the recording ({duration:.1f} s), unchanged (ffmpeg -c copy), "
+                f"{debugpack.CLIP_BEFORE:.0f} s before to {debugpack.CLIP_AFTER:.0f} s after the slider",
+                f"slider (frame {slider}, shown {slider - seg.first_frame}; = frame_at_slider.png, where the search stopped) is at {slider_in:.2f} s in the piece",
+                where("marker A (start of the segment)", seg.start), where("marker B (end of the segment)", seg.end)]
+        if data["origin"] is not None:
+            info.append(where("the reference logo was created here", data["origin"]["frame"]))
+        info.append("A piece begins at a keyframe: the first picture can lie a little before the start given here.")
         if cancel():
             raise seek.SeekCancelled()
         res = self._render_fn(debugpack.clip_command(seg.path, start, duration, out), duration, lambda p: None, cwd=None, cancel=cancel)

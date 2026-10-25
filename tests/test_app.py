@@ -3712,7 +3712,7 @@ def origin_rgb_same(win, marked, rect) -> bool:
 
 
 def test_debug_package(tmp, videos):
-    """Deploy => Create debug package: cut values, DeLogo, reference logo, last search, an unchanged piece around marker B, all as a folder and a zip;
+    """Deploy => Create debug package: cut values, DeLogo, reference logo, last search, an unchanged piece around the slider position, all as a folder and a zip;
     the wait window of a search says whether crop or the reference logo is used."""
     import json
     import zipfile
@@ -3820,8 +3820,12 @@ def test_debug_package(tmp, videos):
         check('crop="0"' in open(os.path.join(folder, "options.txt")).read() and open(os.path.join(folder, "versions.txt")).read().startswith("MediaMaker "), "options and versions")
         info = open(os.path.join(folder, "clip_info.txt")).read()
         piece = probe(os.path.join(folder, "clip.ts"))
-        check("marker B (end of the segment, frame" in info and "is at 4.00 s in the piece" in info and "marker A" in info and "is at 0.00 s" in info and "(ffmpeg -c copy)" in info,
-              f"clip_info: {info.splitlines()[1:4]}")
+        lines = info.splitlines()
+        check(f"slider (frame {first + 30}, shown 30; = frame_at_slider.png, where the search stopped) is at 1.20 s in the piece" in lines[2]
+              and f"marker B (end of the segment) (frame {first + 100}, shown 100) is at 4.00 s in the piece" in info
+              and "marker A (start of the segment)" in info and "is at 0.00 s in the piece" in info and "(ffmpeg -c copy)" in lines[1]
+              and f"the reference logo was created here (frame {first + 25}, shown 25) is at 1.00 s in the piece" in info and "from 0:00:00.000 to 0:00:11.200" in lines[1],
+              f"clip_info: {lines[1:6]}")
         check(5.5 <= piece.video.frames / 25 <= 6.5 and piece.video.width == 720, f"the piece: {piece.video.frames} frames (B at 4 s, the file is 6 s long: from 0 s to the end)")
         # --- with a preview picture (as the memory player has): what the preview showed when L was pressed, and what it shows now
         import mediamaker
@@ -3841,7 +3845,7 @@ def test_debug_package(tmp, videos):
         check(json.load(open(os.path.join(folder_p, "reference_logo_preview_check.json")))["frame"] == first + 25 and "best_offset_frames" in json.load(open(os.path.join(folder_p, "preview_check.json")))
               and json.load(open(os.path.join(folder_p, "preview_check.json")))["slider_frame"] == first + 30, "offset between preview and ffmpeg numbering, at L and now")
         win.player.preview = None
-        stamps_next = iter(["2026.10.26_09-32-00", "2026.10.26_09-33-00", "2026.10.26_09-34-00", "2026.10.26_09-35-00"])
+        stamps_next = iter(["2026.10.26_09-32-00", "2026.10.26_09-33-00", "2026.10.26_09-34-00", "2026.10.26_09-35-00", "2026.10.26_09-36-00", "2026.10.26_09-37-00"])
         sessions.new_stamp = lambda now=None: next(stamps_next)
         # --- RemoveLogo mask, nothing at all, failing piece
         mask = np.zeros((576, 720), bool)
@@ -3867,13 +3871,27 @@ def test_debug_package(tmp, videos):
         n = len(win.messages)
         win.mnuDebug_Click()
         check(not os.path.exists(os.path.join(folder_base, "2026.10.26_09-34-00.zip")) and len(win.messages) == n, "cancelled: no zip, no message")
-        # --- marker B close to the start: the piece begins at 0, B is where it is
+        # --- the slider close to the start: the piece begins at 0
         win._render_fn = fake = lambda cmd, total, on_progress, cwd=None, cancel=None: (fake.calls.append(cmd), RunResult(1, False, 0.1, ""))[1]
         fake.calls = []
         seg.end = first + 25
+        win.Slider1.setValue(first + 25)
         win.mnuDebug_Click()
         cmd = fake.calls[0]
         check(cmd[cmd.index("-ss") + 1] == "0.000" and cmd[cmd.index("-t") + 1] == "11.000" and "-c" in cmd and cmd[cmd.index("-c") + 1] == "copy", f"the command: {' '.join(cmd[:12])}")
+        # --- the piece is built around the SLIDER, not around marker B or the place where the reference logo was created
+        import debugpack as dp
+        saved = dp.CLIP_BEFORE
+        dp.CLIP_BEFORE = 2.0                                     # (a 6 s test file: 50 s would always begin at 0)
+        try:
+            seg.end = first + 25                                 # marker B at 1.0 s, the reference logo from frame 25 as well
+            win.Slider1.setValue(first + 100)                    # where the search stopped: 4.0 s
+            fake.calls.clear()
+            win.mnuDebug_Click()
+            cmd = fake.calls[0]
+            check(cmd[cmd.index("-ss") + 1] == "2.000" and cmd[cmd.index("-t") + 1] == "12.000", f"around the slider (4 s): from 2 s for 12 s: {' '.join(cmd[:10])}")
+        finally:
+            dp.CLIP_BEFORE = saved
     finally:
         sessions.new_stamp = original
     import debugpack
@@ -3887,7 +3905,7 @@ def test_debug_package(tmp, videos):
     check(debugpack.preview_offset(preview, small, 137)["best_offset_frames"] == 0 and "agree" in debugpack.preview_offset(preview, small, 137)["meaning"], "no offset: they agree")
     check(debugpack.preview_offset(preview, {}, 130) == {"result": "no frames to compare"}, "nothing to compare")
     check(debugpack.image_array(None) is None and debugpack.image_array(preview) is preview, "picture of the preview: nothing, or an array as it is")
-    check(debugpack.clip_window(100.0) == (50.0, 60.0, 50.0) and debugpack.clip_window(20.0) == (0.0, 30.0, 20.0), "50 s before and 10 s after marker B, not before 0")
+    check(debugpack.clip_window(100.0) == (50.0, 60.0, 50.0) and debugpack.clip_window(20.0) == (0.0, 30.0, 20.0), "50 s before and 10 s after the centre, not before 0")
     check(debugpack.hms(3725.5) == "1:02:05.500", "time format")
     print("Debug package: OK (menu, files, zip, clip around B, DeLogo, reference logo, last search, header of the search)")
 
