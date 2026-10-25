@@ -613,8 +613,17 @@ class QApplication(Base):
 
 class QMessageBox(Base):
     StandardButton = EnumGroup("QMessageBox.StandardButton", {"Yes", "No"})
+    Icon = EnumGroup("QMessageBox.Icon", {"Warning", "Information"})
+    methods = {"setIcon", "setWindowTitle", "setText", "setStandardButtons", "setDefaultButton", "setCheckBox", "deleteLater", "exec"}
     shown = []
     answer = "Yes"
+    on_exec = None                           # in the test: called with the box before it "returns", to tick the check box
+
+    def _ret_exec(self, *args):
+        QMessageBox.shown.append(self.called("setText")[-1][0])
+        if QMessageBox.on_exec:
+            QMessageBox.on_exec(self)
+        return Enum("QMessageBox.StandardButton." + QMessageBox.answer)
 
     @staticmethod
     def warning(parent, title, text):

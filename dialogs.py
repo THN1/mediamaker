@@ -329,6 +329,25 @@ def reference_logo_box(parent, text: str, rgb, rect: tuple, edges) -> None:
         dialog.deleteLater()
 
 
+def confirm_with_checkbox(parent, text: str, checkbox_text: str) -> tuple:
+    """Yes/No question with a check box that is NOT ticked at first and No as the default button. Returns (answered Yes, box ticked)."""
+    box = QtWidgets.QMessageBox(parent)
+    button = QtWidgets.QMessageBox.StandardButton
+    box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+    box.setWindowTitle("MediaMaker")
+    box.setText(text)
+    box.setStandardButtons(button.Yes | button.No)
+    box.setDefaultButton(button.No)
+    check = QtWidgets.QCheckBox(checkbox_text)
+    check.setChecked(False)
+    box.setCheckBox(check)
+    try:
+        answer = box.exec()
+        return answer == button.Yes, bool(check.isChecked())
+    finally:
+        box.deleteLater()
+
+
 class OutputFileDialog(QtWidgets.QDialog):
     """Dialog for the target file: the folder in an editable selection list (the folders used recently) with a "Browse..." button, and the file name."""
 

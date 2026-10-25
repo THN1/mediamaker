@@ -11,6 +11,10 @@
   question names the files (the first 8, then "... and n more"); a file that several segments share counts and is deleted once; a missing file is no
   error. A file that cannot be deleted is reported with the reason, and its segments stay in the list (also in the saved one) for another try.
   With an empty list a message says so.
+  **Additional files of a TV recording**: if there are any next to a recording (`X.eit`, `X.ts.ap`, `X.ts.cuts`, `X.ts.meta`, `X.ts.sc`: the files that begin with
+  the whole name of the recording and a dot, and the name without extension plus `.eit`; a converted `X.mp4` is not meant), the question lists them and
+  has a check box "Also delete the n additional files ...", NOT ticked at first (the default button is No). They go only with a recording that has been
+  deleted (or was already gone); a recording that cannot be deleted keeps its files. See `sidecars.py`.
 - **Clearing the list** (button, File => Close all) no longer needs a selected segment: it asks "Clear all segments from list?" and clears; with an
   empty list it says so instead of doing nothing. (The other buttons still need a selected segment.)
 - **`[ToolTipText]` in the INI file has a help text for EVERY parameter**, options and profile parameters, also those added after the VB6 version. At the

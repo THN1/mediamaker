@@ -34,6 +34,7 @@ from PySide6 import QtCore, QtGui, QtWidgets                         # noqa: E40
 from cutlist import Job, Segment, resolve_source                          # noqa: E402
 from external import ExternalWorker, run_external                         # noqa: E402
 import sessions                                                       # noqa: E402
+from sidecars import sidecar_files                                    # noqa: E402
 import debugpack                                                      # noqa: E402
 import ffmpeg_cmd                                                     # noqa: E402
 from frames import grab_frame, grab_numbered                         # noqa: E402
@@ -1262,35 +1263,69 @@ class frmMain(frmMainBase):
 
     DELETE_LISTED = 8                                                # files named in the question before "and n more"
 
+    def ask_delete(self, text: str, extra_label: Optional[str]) -> tuple:
+        """The question of File => Delete. With `extra_label` there is a check box (not ticked) for the additional files of the recordings.
+        Returns (Yes, box ticked)."""
+        if extra_label is None:
+            return self.ask(text), False
+        import dialogs
+        return dialogs.confirm_with_checkbox(self, text, extra_label)
+
+    @staticmethod
+    def _listed(paths: list, limit: int) -> str:
+        return "\n".join(paths[:limit]) + (f"\n... and {len(paths) - limit} more" if len(paths) > limit else "")
+
     def mnuDelete_Click(self):
         """File => Delete (Ctrl+J): deletes the source files of all segments of the list from the disk, for good (no trash), and clears the list.
-        A file that several segments share is deleted once. A file that cannot be deleted is reported, and its segments stay in the list."""
+        A file that several segments share is deleted once. The additional files of a TV recording (.eit, .ts.ap, .ts.cuts, .ts.meta, .ts.sc, see
+        sidecars.py) are deleted too if the check box in the question is ticked (it is not at first). A file that cannot be deleted is reported,
+        and its segments stay in the list."""
         if not self.segments:
             self.msg("The list of segments is empty: there is nothing to delete.")
             return
         files = list(dict.fromkeys(resolve_source(seg.path) for seg in self.segments))              # every file once, in the order of the list
-        shown = "\n".join(files[:self.DELETE_LISTED]) + (f"\n... and {len(files) - self.DELETE_LISTED} more" if len(files) > self.DELETE_LISTED else "")
-        if not self.ask(f"Delete all {len(files)} file{'s' if len(files) != 1 else ''} of the {len(self.segments)} segment{'s' if len(self.segments) != 1 else ''} "
-                        f"from disk?\n\n{shown}\n\nThis cannot be undone: the files are deleted for good, not moved to the trash."):
+        extras = {path: sidecar_files(path) for path in files}
+        extra_all = [e for path in files for e in extras[path]]
+        text = (f"Delete all {len(files)} file{'s' if len(files) != 1 else ''} of the {len(self.segments)} segment{'s' if len(self.segments) != 1 else ''} "
+                f"from disk?\n\n{self._listed(files, self.DELETE_LISTED)}")
+        label = None
+        if extra_all:
+            text += (f"\n\nAdditional files of the recording{'s' if len(files) != 1 else ''} ({len(extra_all)}; only deleted if the box below is ticked):\n"
+                     f"{self._listed(extra_all, self.DELETE_LISTED)}")
+            label = f"Also delete the {len(extra_all)} additional file{'s' if len(extra_all) != 1 else ''} of the recording{'s' if len(files) != 1 else ''}"
+        text += "\n\nThis cannot be undone: the files are deleted for good, not moved to the trash."
+        yes, with_extras = self.ask_delete(text, label)
+        if not yes:
             return
         self.player.clear()                                          # the player must not hold on to the files
-        failed = {}
+        failed, main_failed = {}, set()
         for path in files:
-            if not os.path.exists(path):
-                continue                                             # already gone
-            try:
-                os.remove(path)
-            except OSError as e:
-                failed[path] = e.strerror or str(e)
+            gone = True
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError as e:
+                    failed[path] = e.strerror or str(e)
+                    main_failed.add(path)
+                    gone = False
+            if gone and with_extras:                                 # the additional files of a recording that is still there stay as well
+                for extra in extras[path]:
+                    try:
+                        os.remove(extra)
+                    except FileNotFoundError:
+                        pass
+                    except OSError as e:
+                        failed[extra] = e.strerror or str(e)
         if not failed:
             self.mnuClose_Click()
             return
-        self.segments = [seg for seg in self.segments if resolve_source(seg.path) in failed]       # what could not be deleted stays for another try
+        self.segments = [seg for seg in self.segments if resolve_source(seg.path) in main_failed]   # what could not be deleted stays for another try
         self.current = -1
         self.refresh_list()
         self._save()
         self.lblText_Upd()
-        self.msg(f"{len(failed)} of {len(files)} file(s) could not be deleted; their segments stay in the list:\n"
+        total = len(files) + (len(extra_all) if with_extras else 0)
+        self.msg(f"{len(failed)} of {total} file(s) could not be deleted" + ("; their segments stay in the list" if main_failed else "") + ":\n"
                  + "\n".join(f"{path}: {why}" for path, why in failed.items()))
 
     # ------------------------------------------------------------------ Debug package (Deploy => Create debug package)

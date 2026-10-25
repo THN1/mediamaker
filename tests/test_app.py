@@ -4071,6 +4071,137 @@ def test_delete_files(tmp, videos):
     print("Delete files: OK (question with the files, permanent delete, shared and missing files, errors keep the segment)")
 
 
+def test_delete_sidecars(tmp, videos):
+    """File => Delete with the additional files of a TV recording (.eit, .ts.ap, .ts.cuts, .ts.meta, .ts.sc): a check box, not ticked at first."""
+    from PySide6 import QtWidgets as W
+    from mediaprobe import first_frame_number
+    from sidecars import sidecar_files
+    import dialogs
+    # --- which files are meant
+    folder = os.path.join(tmp, "sidecars")
+    os.makedirs(os.path.join(folder, "20261024 2220 - SAT_1 - Chappie.ts.d"), exist_ok=True)
+    name = "20261024 2220 - SAT_1 - Chappie"
+    def make(*names):
+        for n in names:
+            open(os.path.join(folder, n), "wb").write(b"x")
+    shutil.copy(os.path.join(videos, "sample2.ts"), os.path.join(folder, name + ".ts"))
+    make(name + ".eit", name + ".ts.ap", name + ".ts.cuts", name + ".ts.meta", name + ".ts.sc", name + ".mp4", name + ".srt", "Other - Film.ts", "Other - Film.eit",
+         name + " (2).ts.ap", "Chappie.ts.ap")
+    found = [os.path.basename(f) for f in sidecar_files(os.path.join(folder, name + ".ts"))]
+    check(found == [name + ".eit", name + ".ts.ap", name + ".ts.cuts", name + ".ts.meta", name + ".ts.sc"], f"the five files of the receiver: {found}")
+    check(name + ".mp4" not in found and name + ".srt" not in found and "Other - Film.eit" not in found and not any("(2)" in f for f in found) and name + ".ts.d" not in found,
+          "a converted .mp4, a subtitle file, other recordings and a folder are not meant")
+    check(sidecar_files(os.path.join(folder, "Missing.ts")) == [] and sidecar_files("/does/not/exist/x.ts") == [], "no files, no folder: empty")
+    dotted = os.path.join(folder, "Show 1.5 - Part 2.ts")
+    make("Show 1.5 - Part 2.ts", "Show 1.5 - Part 2.eit", "Show 1.5 - Part 2.ts.cuts", "Show 1.5.eit")
+    check([os.path.basename(f) for f in sidecar_files(dotted)] == ["Show 1.5 - Part 2.eit", "Show 1.5 - Part 2.ts.cuts"], "dots in the name: the name without extension is the whole name before .ts")
+    upper = os.path.join(folder, "UPPER.ts")
+    make("UPPER.ts", "UPPER.EIT")
+    check([os.path.basename(f) for f in sidecar_files(upper)] == ["UPPER.EIT"], ".EIT in capital letters")
+    # --- the check box in the question
+    W.QMessageBox.answer = "Yes"
+    W.QMessageBox.shown.clear()
+    W.QMessageBox.on_exec = None
+    check(dialogs.confirm_with_checkbox(None, "Delete?", "Also the rest") == (True, False), "the check box is not ticked at first; Yes")
+    W.QMessageBox.on_exec = lambda box: box.called("setCheckBox")[-1][0].setChecked(True)
+    check(dialogs.confirm_with_checkbox(None, "Delete?", "Also the rest") == (True, True), "ticked")
+    W.QMessageBox.answer = "No"
+    check(dialogs.confirm_with_checkbox(None, "Delete?", "Also the rest") == (False, True), "No")
+    W.QMessageBox.answer, W.QMessageBox.on_exec = "Yes", None
+    # --- File => Delete
+    def window(workdir, names):
+        win = seek_window(tmp, folder, names, workdir=workdir, first_fn=first_frame_number)
+        win.ask_calls = []
+        return win
+    def fill(*files):
+        for f in files:
+            open(os.path.join(folder, f), "wb").write(b"x")
+    def remake():
+        shutil.copy(os.path.join(videos, "sample2.ts"), os.path.join(folder, name + ".ts"))
+        fill(name + ".eit", name + ".ts.ap", name + ".ts.cuts", name + ".ts.meta", name + ".ts.sc", name + ".mp4")
+    side = [name + e for e in (".eit", ".ts.ap", ".ts.cuts", ".ts.meta", ".ts.sc")]
+    # a) the box is offered; not ticked: the recording goes, the additional files stay
+    remake()
+    win = window("delside1", (name + ".ts",))
+    seen = []
+    win.ask_delete = lambda text, label: (seen.append((text, label)), (True, False))[1]
+    win.mnuDelete_Click()
+    text, label = seen[0]
+    check(label == "Also delete the 5 additional files of the recording" and "Additional files of the recording (5; only deleted if the box below is ticked)" in text
+          and all(os.path.join(folder, f) in text for f in side) and name + ".mp4" not in text, f"the question lists the additional files, the label counts them: {label}")
+    check(not os.path.exists(os.path.join(folder, name + ".ts")) and all(os.path.exists(os.path.join(folder, f)) for f in side) and win.segments == [], "not ticked: only the recording is deleted")
+    # b) ticked: everything of the recording goes, the converted .mp4 stays
+    remake()
+    win = window("delside2", (name + ".ts",))
+    win.ask_delete = lambda text, label: (True, True)
+    win.mnuDelete_Click()
+    check(not any(os.path.exists(os.path.join(folder, f)) for f in [name + ".ts"] + side) and os.path.exists(os.path.join(folder, name + ".mp4")) and win.segments == [],
+          "ticked: the recording and its five additional files are deleted, the converted .mp4 stays")
+    # c) No: nothing, also with the box ticked
+    remake()
+    win = window("delside3", (name + ".ts",))
+    win.ask_delete = lambda text, label: (False, True)
+    win.mnuDelete_Click()
+    check(all(os.path.exists(os.path.join(folder, f)) for f in [name + ".ts"] + side) and len(win.segments) == 1, "No: nothing is deleted, even with the box ticked")
+    # d) without additional files: no box, the plain question
+    shutil.copy(os.path.join(videos, "sample3.ts"), os.path.join(folder, "Plain.ts"))
+    win = window("delside4", ("Plain.ts",))
+    asked = []
+    win.ask = lambda text: (asked.append(text), True)[1]
+    win.mnuDelete_Click()
+    check(len(asked) == 1 and "Additional files" not in asked[0] and not os.path.exists(os.path.join(folder, "Plain.ts")), "no additional files: no check box, the plain question")
+    # e) the recording is already gone, its additional files are still there: they can be deleted
+    remake()
+    win = window("delside5", (name + ".ts",))
+    os.remove(os.path.join(folder, name + ".ts"))
+    win.ask_delete = lambda text, label: (True, True)
+    win.mnuDelete_Click()
+    check(not any(os.path.exists(os.path.join(folder, f)) for f in side) and win.segments == [], "recording already gone: the additional files are deleted")
+    # f) a failing additional file: reported, the list is cleared (the recording is gone)
+    remake()
+    win = window("delside6", (name + ".ts",))
+    win.ask_delete = lambda text, label: (True, True)
+    real_remove = os.remove
+    stuck = os.path.join(folder, name + ".ts.meta")
+    def remove(path, *a, **k):
+        if path == stuck:
+            raise PermissionError(13, "Permission denied", path)
+        return real_remove(path, *a, **k)
+    os.remove = remove
+    try:
+        win.mnuDelete_Click()
+    finally:
+        os.remove = real_remove
+    check(win.segments == [] and os.path.exists(stuck) and not os.path.exists(os.path.join(folder, name + ".ts.sc")), "an additional file that cannot be deleted stays, the others go")
+    check("1 of 6 file(s) could not be deleted:" in win.messages[-1] and f"{stuck}: Permission denied" in win.messages[-1] and "segments stay" not in win.messages[-1], f"message: {win.messages[-1][:90]}")
+    # g) the recording cannot be deleted: its additional files stay with it, the segment stays
+    remake()
+    win = window("delside7", (name + ".ts",))
+    win.ask_delete = lambda text, label: (True, True)
+    main = os.path.join(folder, name + ".ts")
+    def remove2(path, *a, **k):
+        if path == main:
+            raise PermissionError(13, "Permission denied", path)
+        return real_remove(path, *a, **k)
+    os.remove = remove2
+    try:
+        win.mnuDelete_Click()
+    finally:
+        os.remove = real_remove
+    check(os.path.exists(main) and all(os.path.exists(os.path.join(folder, f)) for f in side) and len(win.segments) == 1 and "their segments stay in the list" in win.messages[-1],
+          "the recording cannot be deleted: nothing of it goes, the segment stays")
+    # h) two recordings, one folder: each one's own files
+    remake()
+    shutil.copy(os.path.join(videos, "sample3.ts"), os.path.join(folder, "Other - Film.ts"))
+    win = window("delside8", (name + ".ts", "Other - Film.ts"))
+    seen.clear()
+    win.ask_delete = lambda text, label: (seen.append(label), (True, True))[1]
+    win.mnuDelete_Click()
+    check(seen == ["Also delete the 6 additional files of the recordings"] and not os.path.exists(os.path.join(folder, "Other - Film.eit")) and os.path.exists(os.path.join(folder, "Chappie.ts.ap")),
+          f"two recordings: both with their additional files ({seen}), an unrelated file stays")
+    print("Delete with additional files: OK (what is meant, check box, not ticked at first, errors, several recordings)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -4123,6 +4254,7 @@ def main():
     test_debug_package(tmp, sys.argv[1])
     test_ini_tooltips_and_tools(tmp, sys.argv[1])
     test_delete_files(tmp, sys.argv[1])
+    test_delete_sidecars(tmp, sys.argv[1])
     test_timeline(tmp, sys.argv[1])
     test_segments(tmp, sys.argv[1])
     test_thumbnail_errors(tmp, sys.argv[1])
