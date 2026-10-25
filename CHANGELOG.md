@@ -7,6 +7,14 @@
   made the preview jump to the start of the film first and play it briefly, with sound, before it went to the wanted frame. Kept from 0.3 are the
   watchdog (nothing reported by VLC for 8 s after a medium was started: new media player) and the report of an unsuccessful logo search. Known and
   open: on a slow network drive a jump in the open VLC medium can take seconds, and `stop()` can block the window for that time.
+- **Clearing the list** (button, File => Close all) no longer needs a selected segment: it asks "Clear all segments from list?" and clears; with an
+  empty list it says so instead of doing nothing. (The other buttons still need a selected segment.)
+- **`[ToolTipText]` in the INI file has a help text for EVERY parameter**, options and profile parameters, also those added after the VB6 version. At the
+  start the program adds the missing ones (texts that are there, also edited ones, stay) and removes those of dropped options (`focus` ...). A test
+  makes sure that a new option cannot be forgotten.
+- **Tools are options** (new group "Tools" in the options dialog): `avidemux` (path of Avidemux, e.g. the AppImage) and `vlc` (for Analyze cut point);
+  empty: searched in the PATH. The section `[tools.linux]` (also `[tools]` and `[tools.windows]`) is not needed any more: at the start its `avidemux=` and
+  `vlc=` move into `options=`, and a section without keys left is removed. `MediaMaker.example.ini` has no tool section and complete help texts.
 - **Tried and dropped: automatic VLC shift** (commit 45a86a1, reverted). Finding: on the RTL recording on the NAS the VLC preview showed, for the same
   frame number, the picture 17 frames (0.68 s) later than ffmpeg does (see `preview_check.json` of the debug package, which stays). With the option
   `logo_rewind = 0` the search "Seek end of commercial" was precise to within a few frames; the preview offset is therefore only noted, not corrected.

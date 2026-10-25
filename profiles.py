@@ -81,6 +81,7 @@ OPTION_GROUPS = (
     ("Audio/Subtitles", ("audio", "multilanguage", "subtitle", "aflags")),
     ("Batch", ("path_map", "batch")),
     ("Technical", ("floor", "detect", "player", "vlc_args", "hide_messages", "dialog_style", "file_dialog", "sessions_dir")),
+    ("Tools", ("avidemux", "vlc")),
 )
 
 
@@ -92,6 +93,7 @@ GROUP_TEXTS = {
     "Logo": "Station logo: the red areas of the DeLogo rectangle and the RemoveLogo dialog.",
     "Batch": "Writing the job as a bash script (menu Batch).",
     "Technical": "Preview, console messages and dialogs; mostly set once.",
+    "Tools": "Helper programs outside of MediaMaker. Empty: the program is searched in the PATH.",
     "Other": "Values that belong to no group.",
 }
 
@@ -116,7 +118,7 @@ def validate_options(o: dict) -> list[str]:
         if not equals or not source.strip() or not target.strip():
             errors.append('"path_map" must be a list of source=target pairs separated by semicolons.')
             break
-    for key in ("path_map", "batch", "vlc_args", "hide_messages", "aflags", "sessions_dir"):
+    for key in ("path_map", "batch", "vlc_args", "hide_messages", "aflags", "sessions_dir", "avidemux", "vlc"):
         if '"' in o.get(key, ""):
             errors.append(f'"{key}" must not contain double quotes.')
     if "player" in o and o["player"] not in ("memory", "embed"):

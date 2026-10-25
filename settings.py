@@ -1,15 +1,14 @@
 """Settings: reads and writes the INI file of MediaMaker (same format as under VB6).
 
 The file stays readable and editable by hand. When writing, only the changed line is replaced; comments,
-order and all other sections (e.g. the Windows tool paths) remain unchanged.
+order and all other sections remain unchanged. The paths of helper programs (avidemux, vlc) are options (group Tools).
 
 Important keys:
   [settings] options=  options as a key="value" list (crop, floor, blackness, allowance, ...)
   [settings] profile=  current target profile (scale, fps, bv, ar, ba, ...)
   [settings] last=     last opened file
   [profiles]           named profiles, one entry per line
-  [ToolTipText]        explanations of the keys
-  [tools.linux]        optional: paths to ffmpeg/ffprobe (otherwise they are searched in the PATH)
+  [ToolTipText]        explanations of ALL keys (options and profile); missing ones are added at the start (sync_tooltips)
 """
 from __future__ import annotations
 
@@ -193,11 +192,62 @@ class Settings:
         return self.get("ToolTipText", key, "") or DEFAULT_TOOLTIPS.get(key, "")
 
     def tool(self, name: str) -> Optional[str]:
-        """Path of a helper program: [tools.linux], otherwise in the PATH."""
-        value = self.get("tools.linux", name)
+        """Path of a helper program (avidemux, vlc): the option of that name (group Tools), otherwise the PATH."""
+        value = (self.options.get(name) or "").strip()
         if value:
-            return value.split("|")[0]
+            return os.path.expanduser(value)
         return shutil.which(name)
+
+    TOOL_KEYS = ("avidemux", "vlc")
+    TOOL_SECTIONS = ("tools.linux", "tools.windows", "tools")
+
+    def remove_section(self, section: str) -> bool:
+        """Removes a section with its header and everything in it."""
+        rng = self._section_range(section)
+        if rng is None:
+            return False
+        end = rng[1]
+        while end > rng[0] and not self._lines[end - 1].strip():
+            end -= 1                                              # the empty lines before the next section stay
+        del self._lines[rng[0] - 1:end]
+        return True
+
+    def migrate_tools(self) -> bool:
+        """The paths of helper programs used to be keys of a section [tools.linux]; they are options now (group Tools). The values move there
+        (unless the option is set), the lines are removed, and a section that has no keys left is removed, too. True if something changed."""
+        options = self.options
+        changed = False
+        for section in self.TOOL_SECTIONS:
+            for key in self.TOOL_KEYS:
+                value = self.get(section, key)
+                if value is None:
+                    continue
+                if not options.get(key) and value.strip():
+                    options[key] = value.split("|")[0].strip()
+                self.delete(section, key)
+                changed = True
+            if self._section_range(section) is not None and not self.items(section):
+                self.remove_section(section)
+                changed = True
+        if changed:
+            self.set_options(options)
+        return changed
+
+    def sync_tooltips(self, wanted: dict, obsolete: tuple = ()) -> bool:
+        """Makes the section [ToolTipText] complete: every key of `wanted` (key -> text) that is missing is appended (texts that are there, also
+        edited ones, stay), keys in `obsolete` are removed. The section is created if there is none. True if something changed."""
+        changed = False
+        present = {k.lower() for k, _ in self.items("ToolTipText")}
+        for key in obsolete:
+            if key.lower() in present and key not in wanted:
+                self.delete("ToolTipText", key)
+                present.discard(key.lower())
+                changed = True
+        for key, text in wanted.items():
+            if key.lower() not in present:
+                self.set("ToolTipText", key, text)
+                changed = True
+        return changed
 
 
 def default_options() -> dict:
@@ -207,11 +257,36 @@ def default_options() -> dict:
             "pause": "160", "detect": "0", "aflags": "", "subtitle": "0", "multilanguage": "False",
             "step_end": "40", "step_next": "240", "border_tol": "3", "cut_window": "5", "logo_rewind": "1.8",
             "logo_edge": "18", "logo_conf": "0.2", "cut_diff": "30", "path_map": "",
-            "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "file_dialog": "qt", "sessions_dir": ""}
+            "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "file_dialog": "qt", "sessions_dir": "", "avidemux": "", "vlc": ""}
 
 
 # explanations for keys that are still missing in the INI file (section [ToolTipText])
 DEFAULT_TOOLTIPS = {
+    # profile parameters
+    'description': 'Description of settings in this profile',
+    'scale': 'Target video screen size in format width:height',
+    'sws_flags': 'Use this ffmpeg scaling algorithm; see https://ffmpeg.org/ffmpeg-scaler.html#Scaler-Options',
+    'fps': 'Target frame rate (frames per second); format must be exactly ##.###',
+    'bv': 'Target video bitrate (quality); don\'t forget the "k" suffix!',
+    'acodec_in': 'Name of audio codec to be used when extracting the audio track from the source file(s)',
+    'acodec_out': 'Name of audio codec to be used in the target output file',
+    'ar': 'Target audio resampling rate (usually 44100 or 48000)',
+    'ba': 'Target audio bitrate (quality); don\'t forget the "k" suffix!',
+    # options from VB6
+    'crop': 'Remove this many pixels at top and bottom of source video frame; usually in the range of 60 to 74',
+    'floor': 'Seek next earlier keyframe in this many seconds; should be 1 (or maybe 2)',
+    'blackness': 'RGB-related value below which non-black pixels will be considered black (RGB=0) during auto-cropping',
+    'allowance': 'During auto-cropping, max. number of non-black pixels allowed in one scanline to be still considered black',
+    'overlap': 'Max. number of frames tried during segment overlap search (menu Edit => Overlap segments)',
+    'audio': 'Use nth detected audio stream (language); should be 1 unless (optionally) for multilanguage DVD',
+    'pause': 'Min. length (in seconds) of pause caused by commercials in between movie segments (for TV recordings)',
+    'detect': 'Detect audio streams after moving n milliseconds into the source file; useful for streamed recordings (.ts)',
+    'aflags': 'Flags for ffmpeg when extracting audio (like +igndts+genpts); useful when audio is broken',
+    'subtitle': 'Add subtitles from the given track(s) number(s), separated by ",", or zero (0) to disable subtitling (use Ctrl-K or menu Edit => Media info)',
+    'multilanguage': 'False (default) or True; allows to add secondary language stream(s), if present in source video (EXPERIMENTAL)',
+    # options added in the Python version
+    "avidemux": "Tools: path of Avidemux (e.g. an AppImage; it must be executable) for Edit => Analyze cut point; empty: searched in the PATH; applies at once",
+    "vlc": "Tools: path of the VLC program that plays the clip of Edit => Analyze cut point; empty: searched in the PATH, then the standard player of the desktop; applies at once",
     "pad": "If True, source videos will be padded with (minimal) black border(s), else they will be stretched to the target scale",
     "step_end": "Seeking the end of a commercial: initial step width in seconds (refined by factor 10 down to single frames)",
     "step_next": "Seeking the next commercial: initial step width in seconds (refined by factor 10 down to single frames); "

@@ -1568,7 +1568,7 @@ def test_option_changes(tmp, videos):
     check([l._args[0] for l, e in QFormLayout.instances[-1].rows] == ["scale", "fps"] and len(QTabWidget.instances) == tab_widgets, "without groups: one list, no tabs")
     # keys of all options: the tabs are Borders, Seeking, Audio/Subtitles, Batch, Technical
     all_keys = {k: d[k] for k in d if k not in HIDDEN_OPTIONS}
-    check([h for h, _ in dialogs.group_plan(all_keys, OPTION_GROUPS)] == ["Borders", "Seeking", "Logo", "Audio/Subtitles", "Batch", "Technical"], "tabs of the options dialog")
+    check([h for h, _ in dialogs.group_plan(all_keys, OPTION_GROUPS)] == ["Borders", "Seeking", "Logo", "Audio/Subtitles", "Batch", "Technical", "Tools"], "tabs of the options dialog")
     check(dialogs.tab_of_error(['"step_end" must be a whole number between 1 and 3600.'], all_keys, OPTION_GROUPS) == 1
           and dialogs.tab_of_error(['"path_map" must be a list of source=target pairs'], all_keys, OPTION_GROUPS) == 4
           and dialogs.tab_of_error(["something without a key"], all_keys, OPTION_GROUPS) == 0, "tab of an invalid value")
@@ -2152,7 +2152,7 @@ def test_example_ini(tmp, videos):
     st.save()
     after = open(ini, "rb").read().split(b"\r\n")
     changed = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
-    check(len(before) == len(after) and len(changed) == 1 and any(l.startswith(b"; optional: helper programs") for l in after),
+    check(len(before) == len(after) and len(changed) == 1 and any(l.startswith(b"; Everything that Edit => Options can set") for l in after),
           f"changing an option replaces one line, the comments stay: {changed}")
     print("Example INI: OK (settings, comments, still valid)")
 
@@ -2208,7 +2208,7 @@ def test_options_in_options_string(tmp, videos):
     open(ini, "w", encoding="utf-8").write('[settings]\nbatch=~/job.sh\n')
     win = make_window(work)
     win.showEvent(None)
-    check(win.options["batch"] == "~/job.sh" and "\nbatch=" not in open(ini, encoding="utf-8").read(), "the window moves old keys into options=, too")
+    check(win.options["batch"] == "~/job.sh" and Settings(ini).get("settings", "batch") is None, "the window moves old keys into options=, too")
     win.edit_pairs = lambda title, pairs, groups=None, start=0: dict(pairs, dialog_style="list")
     try:
         win.mnuOptions_Click()
@@ -3145,8 +3145,8 @@ def test_cutpoint(tmp, videos):
     win._external_fn = lambda cmd: (external.append(cmd), (0, ""))[1]
     win.ask3 = lambda text: (asked.append(text), answers.pop(0))[1]
     asked = []
-    win.settings.set("tools.linux", "vlc", "/opt/vlc/vlc")
-    win.settings.set("tools.linux", "avidemux", "/opt/avidemux/avidemux_2.8.1.appImage")
+    win.settings.set_option("vlc", "/opt/vlc/vlc")
+    win.settings.set_option("avidemux", "/opt/avidemux/avidemux_2.8.1.appImage")
     win.lvwSegments.select_row(0)
     win.lvwSegments_Click()
     answers[:] = ["yes"]
@@ -3157,7 +3157,7 @@ def test_cutpoint(tmp, videos):
           and "crop=" not in graph and "delogo=" not in graph and "removelogo" not in graph and cmd[-1] == win.cutpoint_path() and "-b:v" in cmd and cmd[cmd.index("-b:v") + 1] == "3072k",
           f"command: two sources, concat, setsar=1, the profile's scale, the note, no crop or logo filter: {graph[:150]}")
     check(external == [["/opt/vlc/vlc", win.cutpoint_path()], ["/opt/avidemux/avidemux_2.8.1.appImage", win.cutpoint_path()]] and asked == ["Open cut point video clip with AVIDEMUX now?"],
-          f"VLC first (from [tools.linux]), then, after Yes, Avidemux: {external}")
+          f"VLC first (from the options), then, after Yes, Avidemux: {external}")
     # without drawtext when the first run fails
     commands.clear(), external.clear(), asked.clear()
     results[:] = [RunResult(1, False, 0.1, "No such filter: drawtext")]
@@ -3192,8 +3192,8 @@ def test_cutpoint(tmp, videos):
     win.mnuCutPoints_Click()
     check("could not be played" in win.messages[-1] and win.cutpoint_path() in win.messages[-1], "neither works: message with the place of the clip")
     # --- Avidemux: not configured / cannot be started
-    win.settings.delete("tools.linux", "avidemux")
-    win.settings.delete("tools.linux", "vlc")
+    win.settings.set_option("avidemux", "")
+    win.settings.set_option("vlc", "")
     old_path = os.environ.get("PATH", "")
     os.environ["PATH"] = os.path.join(tmp, "nothing_here")
     try:
@@ -3201,10 +3201,10 @@ def test_cutpoint(tmp, videos):
         win._external_fn = lambda cmd: (external.append(cmd), (0, ""))[1]
         answers[:] = ["yes"]
         win.mnuCutPoints_Click()
-        check(external == [["vlc", win.cutpoint_path()]] and "[tools.linux]" in win.messages[-1] and "avidemux=" in win.messages[-1], f"no VLC in the INI: 'vlc'; Avidemux not configured: message: {win.messages[-1][:60]!r}")
+        check(external == [["vlc", win.cutpoint_path()]] and "group Tools" in win.messages[-1] and "avidemux" in win.messages[-1], f"no VLC in the INI: 'vlc'; Avidemux not configured: message: {win.messages[-1][:60]!r}")
     finally:
         os.environ["PATH"] = old_path
-    win.settings.set("tools.linux", "avidemux", "/x/avidemux.appImage")
+    win.settings.set_option("avidemux", "/x/avidemux.appImage")
     external.clear()
     win._external_fn = lambda cmd: (external.append(cmd), (-1, "Permission denied") if "avidemux" in cmd[0] else (0, ""))[1]
     answers[:] = ["yes"]
@@ -3515,11 +3515,17 @@ def test_sessions(tmp, videos):
     answers = [False]
     win.current = -1
     win.cmdCommand_Click(3)
-    check(len(win.segments) == 2 and not asked, "no segment selected: nothing (as in VB6)")
+    check(asked == ["Clear all segments from list?"] and len(win.segments) == 2, "no segment selected: the question is asked all the same; No: the list stays")
     win.lvwSegments.select_row(0)
     win.lvwSegments_Click()
+    answers[:] = [False]
     win.cmdCommand_Click(3)
-    check(asked == ["Clear all segments from list?"] and len(win.segments) == 2, "the question is asked; No: the list stays")
+    check(asked[-1] == "Clear all segments from list?" and len(asked) == 2 and len(win.segments) == 2, "with a selection: the same question; No: the list stays")
+    # the other buttons still need a selected segment
+    win.current = -1
+    n_before = len(win.segments)
+    win.cmdCommand_Click(0)
+    check(len(win.segments) == n_before and len(asked) == 2, "delete without a selection: nothing")
     # --- backup
     fixed = datetime.datetime(2026, 10, 25, 14, 3, 12)
     original_stamp = sessions.new_stamp
@@ -3669,6 +3675,15 @@ def test_sessions(tmp, videos):
     win2.player.log.clear()
     win2.reload_session()
     check("clear" in win2.player.log, "after a restored session the preview is cleared")
+    # --- clearing without a selected segment, and an empty list
+    win3 = seek_window(tmp, videos, ("sample2.ts", "sample3.ts"), workdir="clearnoselect")
+    win3.current = -1
+    win3.lvwSegments.clear_selection() if hasattr(win3.lvwSegments, "clear_selection") else None
+    win3.ask = lambda text: True
+    win3.cmdCommand_Click(3)
+    check(win3.segments == [] and win3.current == -1 and load_segments(win3.project_path) == [], "no segment selected, Yes: the list is cleared and saved")
+    win3.cmdCommand_Click(3)
+    check(win3.messages[-1] == "The list of segments is already empty.", "an empty list: a message instead of nothing")
     # --- the dialog (stub): single, several, parts
     infos3 = [sessions.SessionInfo(stamp=f"2026.10.2{i}_10-00-00", path="/x", created=f"2026-10-2{i}T10:00:00", segments=i, titles=["a.ts"]) for i in range(1, 4)]
     def pick(rows, list_on=True, ini_on=True):
@@ -3910,6 +3925,76 @@ def test_debug_package(tmp, videos):
     print("Debug package: OK (menu, files, zip, clip around B, DeLogo, reference logo, last search, header of the search)")
 
 
+def test_ini_tooltips_and_tools(tmp, videos):
+    """[ToolTipText] has a help text for EVERY option and profile parameter; the paths of Avidemux and VLC are options (group Tools) and the old
+    section [tools.linux] is moved there."""
+    import mediamaker
+    import shutil as sh
+    from profiles import OPTION_GROUPS, PROFILE_KEYS, REMOVED_OPTIONS, validate_options
+    from settings import DEFAULT_TOOLTIPS, Settings, default_options
+    keys = mediamaker.tooltip_keys()
+    check(set(default_options()) | set(PROFILE_KEYS) == set(keys) and len(keys) == len(set(keys)), "tooltip_keys: every option and every profile parameter, once")
+    check([k for k in keys if k not in DEFAULT_TOOLTIPS] == [] and [k for k in DEFAULT_TOOLTIPS if k not in keys] == [], "a default text for each of them, and none without a parameter")
+    check(all(DEFAULT_TOOLTIPS[k].strip() for k in keys), "no empty text")
+    check(keys[:len(PROFILE_KEYS)] == list(PROFILE_KEYS), "the profile parameters come first")
+    # --- sync_tooltips
+    work = os.path.join(tmp, "tooltips")
+    os.makedirs(work, exist_ok=True)
+    ini = os.path.join(work, "t.ini")
+    open(ini, "w", encoding="utf-8").write("[settings]\noptions=crop=\"72\"\n; a comment\n[ToolTipText]\ndescription=my own text\n; keep me\nfocus=old text of a dropped option\ncrop=Remove pixels\n[profiles]\nSD=scale=\"720:404\"\n")
+    st = Settings(ini)
+    wanted = {k: DEFAULT_TOOLTIPS[k] for k in keys}
+    obsolete = tuple(REMOVED_OPTIONS - set(PROFILE_KEYS))
+    check(st.sync_tooltips(wanted, obsolete), "sync: something changed")
+    tips = dict(st.items("ToolTipText"))
+    check(set(tips) == set(keys) and tips["description"] == "my own text" and tips["crop"] == "Remove pixels" and "focus" not in tips, "all parameters are there, the texts that were there stay (also edited ones), the dropped option is gone")
+    st.save()
+    raw = open(ini, encoding="utf-8").read()
+    check("; keep me" in raw and "; a comment" in raw and 'options=crop="72"' in raw and raw.rstrip().endswith('SD=scale="720:404"'), "comments and the other sections are untouched")
+    check(raw.index("[ToolTipText]") < raw.index("[profiles]") and raw.index("batch=") < raw.index("[profiles]"), "the new lines are inside the section")
+    check(not Settings(ini).sync_tooltips(wanted, obsolete), "a second time: nothing to do")
+    open(ini, "w", encoding="utf-8").write("[settings]\noptions=\n")
+    st = Settings(ini)
+    st.sync_tooltips(wanted, obsolete)
+    check(set(dict(st.items("ToolTipText"))) == set(keys), "no section yet: it is created")
+    # --- migrate_tools
+    open(ini, "w", encoding="utf-8").write('[settings]\noptions=crop="0"\n[tools.linux]\n; optional: helper programs\navidemux=/opt/ad/avidemux.AppImage|/second\nvlc=/usr/bin/vlc\n[profiles]\nSD=scale="1:1"\n')
+    st = Settings(ini)
+    check(st.migrate_tools() and st.options["avidemux"] == "/opt/ad/avidemux.AppImage" and st.options["vlc"] == "/usr/bin/vlc" and st.options["crop"] == "0", "avidemux and vlc move into options (the first of several paths)")
+    check(st._section_range("tools.linux") is None and "[profiles]" in "\n".join(st._lines) and "optional: helper" not in "\n".join(st._lines), "the section is gone, with its comment")
+    check(not st.migrate_tools(), "a second time: nothing")
+    open(ini, "w", encoding="utf-8").write('[settings]\noptions=avidemux="/mine"\n[tools.linux]\navidemux=/old\nffmpeg=/opt/ffmpeg\n')
+    st = Settings(ini)
+    st.migrate_tools()
+    check(st.options["avidemux"] == "/mine" and st.items("tools.linux") == [("ffmpeg", "/opt/ffmpeg")], "an option that is set wins; a section with other keys stays with them")
+    open(ini, "w", encoding="utf-8").write('[settings]\noptions=\n[tools]\navidemux=/in/tools\n[tools.windows]\nvlc=C:\\vlc\\vlc.exe\n')
+    st = Settings(ini)
+    st.migrate_tools()
+    check(st.options["avidemux"] == "/in/tools" and st.options["vlc"] == "C:\\vlc\\vlc.exe" and st._section_range("tools") is None and st._section_range("tools.windows") is None, "[tools] and [tools.windows], too")
+    # --- tool(): the option, otherwise the PATH
+    st.set_options({"avidemux": "~/ad/avidemux", "vlc": ""})
+    check(st.tool("avidemux") == os.path.expanduser("~/ad/avidemux") and st.tool("vlc") == sh.which("vlc") and st.tool("nonexistent_program") is None, "tool(): the option (with ~), otherwise the PATH")
+    # --- the group Tools
+    check(dict(OPTION_GROUPS)["Tools"] == ("avidemux", "vlc") and default_options()["avidemux"] == "" and validate_options(default_options()) == [], "group Tools")
+    from profiles import GROUP_TEXTS
+    check("PATH" in GROUP_TEXTS["Tools"], "text of the group")
+    # --- the window completes the INI file at the start and keeps what is there
+    w2 = os.path.join(tmp, "tooltips_window")
+    os.makedirs(w2, exist_ok=True)
+    ini2 = os.path.join(w2, "MediaMaker.ini")
+    open(ini2, "w", encoding="utf-8").write('[settings]\noptions=crop="0"\n[ToolTipText]\ncrop=my words\nfocus=gone\n[tools.linux]\navidemux=/x/avidemux\n')
+    win = make_window(w2)
+    win.showEvent(None)
+    after = Settings(ini2)
+    check(set(dict(after.items("ToolTipText"))) == set(keys) and after.get("ToolTipText", "crop") == "my words" and after.get("ToolTipText", "focus") is None
+          and after.get("tools.linux", "avidemux") is None and win.options["avidemux"] == "/x/avidemux" and win.settings.tool("avidemux") == "/x/avidemux", "at the start: help texts complete, tools moved")
+    first_version = open(ini2, "rb").read()
+    win2 = make_window(w2)
+    win2.showEvent(None)
+    check(open(ini2, "rb").read() == first_version, "the next start does not change the file")
+    print("INI help texts and tools: OK (every parameter, sync, migration of [tools.linux], group Tools)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -3960,6 +4045,7 @@ def main():
     test_make_test_clips(tmp, sys.argv[1])
     test_sessions(tmp, sys.argv[1])
     test_debug_package(tmp, sys.argv[1])
+    test_ini_tooltips_and_tools(tmp, sys.argv[1])
     test_timeline(tmp, sys.argv[1])
     test_segments(tmp, sys.argv[1])
     test_thumbnail_errors(tmp, sys.argv[1])

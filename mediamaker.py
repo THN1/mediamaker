@@ -53,11 +53,11 @@ from player import debug_log                                         # noqa: E40
 from border import border_at                                         # noqa: E402
 from logo import bottom_line_average, confidence_at                  # noqa: E402
 from mediaprobe import display_aspect, MediaInfo, ProbeError, count_video_packets, first_frame_number, probe as full_probe  # noqa: E402
-from profiles import (GROUP_TEXTS, HIDDEN_OPTIONS, OPTION_GROUPS, PRESETS, REMOVED_OPTIONS, default_name, normalize_bitrate,  # noqa: E402
+from profiles import (GROUP_TEXTS, HIDDEN_OPTIONS, OPTION_GROUPS, PRESETS, PROFILE_KEYS, REMOVED_OPTIONS, default_name, normalize_bitrate,  # noqa: E402
                       ordered_profile, profile_from_segment, valid_profile_name, validate_options, validate_profile,
                       weighted_bitrate)
 from project import format_hms, load_segments, save_segments, segment_row, timeof  # noqa: E402
-from settings import Settings, default_options, format_kv            # noqa: E402
+from settings import DEFAULT_TOOLTIPS, Settings, default_options, format_kv   # noqa: E402
 import vbqt                                                          # noqa: E402
 from ui_frmMain import frmMainBase                                   # noqa: E402
 
@@ -274,6 +274,7 @@ class frmMain(frmMainBase):
         for the logo mask (logo_fill, fill_sigma, mask_fill, mask_grow) are dropped.
                 The file is only written if something changes."""
         changed = self.settings.migrate_legacy_keys()                 # batch, player, dialog_style: now part of options=
+        changed = self.settings.migrate_tools() or changed            # [tools.linux] avidemux=, vlc=: now options (group Tools)
         raw = self.settings.options
         if "pad" in raw:
             if "pad" not in self.settings.profile:
@@ -284,6 +285,8 @@ class frmMain(frmMainBase):
             if key in raw:
                 del raw[key]
                 changed = True
+        wanted = {key: DEFAULT_TOOLTIPS[key] for key in tooltip_keys() if key in DEFAULT_TOOLTIPS}
+        changed = self.settings.sync_tooltips(wanted, tuple(REMOVED_OPTIONS - set(PROFILE_KEYS))) or changed     # [ToolTipText]: every parameter
         if changed:
             self.settings.set_options(raw)
             self.settings.save()
@@ -1005,15 +1008,18 @@ class frmMain(frmMainBase):
         return len({s.path for s in self.segments}) > 1
 
     def cmdCommand_Click(self, index: int):
+        if index == 3:                                               # clearing the list does not depend on a selected segment
+            if not self.segments:
+                self.msg("The list of segments is already empty.")
+            elif self.ask("Clear all segments from list?"):
+                self.mnuClose_Click()
+            return
         if self.segment is None:
             return
         if index == 0:
             self.delete_segment()
         elif index in (1, 2):
             self.move_segment(-1 if index == 1 else 1)
-        elif index == 3:
-            if self.segments and self.ask("Clear all segments from list?"):
-                self.mnuClose_Click()
         elif index == 4:
             self.duplicate_segment()
         elif index == 6:
@@ -1638,7 +1644,8 @@ class frmMain(frmMainBase):
             return
         avidemux = self.settings.tool("avidemux")
         if not avidemux:
-            self.msg("Avidemux is not configured: add a line avidemux=<path of the program> to the section [tools.linux] of the INI file.")
+            self.msg("Avidemux was not found: enter the path of the program in the options (group Tools, option avidemux) or install it so that it is found "
+                     "in the PATH.")
             return
         self.start_external([avidemux, path], lambda rc2, err2: self.msg(f"Avidemux could not be started: {err2 or rc2}\n\n"
                                                                          "(An AppImage must be executable: chmod +x <file>)") if rc2 != 0 else None)
@@ -1967,6 +1974,14 @@ class frmMain(frmMainBase):
         self.Slider1.blockSignals(True)
         self.Slider1.setValue(max(self.Slider1.minimum(), min(self.Slider1.maximum(), frame)))
         self.Slider1.blockSignals(False)
+
+
+def tooltip_keys() -> list:
+    """All parameters that have a help text in [ToolTipText]: the profile parameters, then the options in the order of the options dialog."""
+    keys = list(PROFILE_KEYS)
+    for _, group in OPTION_GROUPS:
+        keys += [k for k in group if k not in keys]
+    return keys + [k for k in default_options() if k not in keys]
 
 
 def find_ini() -> str:
