@@ -69,14 +69,14 @@ def _float(value: str) -> Optional[float]:
 
 
 # options that no longer appear in the dialog:
-REMOVED_OPTIONS = {"focus", "pad", "logo_fill", "fill_sigma", "mask_fill", "mask_grow"}   # focus: no effect; pad: now belongs to the profile;
-                                                                                         # the others: tried for the logo mask and dropped again
+REMOVED_OPTIONS = {"focus", "pad", "logo_fill", "fill_sigma", "mask_fill", "mask_grow", "logo_rewind"}   # focus: no effect; pad: now belongs to the profile;
+                                                                                         # logo_fill ... mask_grow: tried for the logo mask and dropped again; logo_rewind: the rewinding after a logo search was removed
 HIDDEN_OPTIONS = {"logo_edge", "logo_conf", "cut_diff"}   # for advanced users only, they are only in the INI file
 
 # grouping of the options dialog: (tab, keys)
 OPTION_GROUPS = (
     ("Borders", ("crop", "blackness", "allowance", "border_tol")),
-    ("Seeking", ("pause", "overlap", "step_end", "step_next", "cut_window", "logo_rewind")),
+    ("Seeking", ("pause", "overlap", "step_end", "step_next", "cut_window")),
     ("Logo", ("overlay_opacity",)),
     ("Audio/Subtitles", ("audio", "multilanguage", "subtitle", "aflags")),
     ("Batch", ("path_map", "batch")),
@@ -108,7 +108,7 @@ def validate_options(o: dict) -> list[str]:
             v = _int(o[key])
             if v is None or not lo <= v <= hi:
                 errors.append(f'"{key}" must be a whole number between {lo} and {hi}.')
-    for key, (lo, hi) in {"logo_rewind": (0, 600), "logo_conf": (0, 1)}.items():
+    for key, (lo, hi) in {"logo_conf": (0, 1)}.items():
         if key in o:
             v = _float(o[key])
             if v is None or not lo <= v <= hi:

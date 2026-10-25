@@ -52,7 +52,7 @@ import logo as logo_module                                           # noqa: E40
 import seek                                                          # noqa: E402
 from player import debug_log                                         # noqa: E402
 from border import border_at                                         # noqa: E402
-from logo import bottom_line_average, confidence_at                  # noqa: E402
+from logo import confidence_at                                       # noqa: E402
 from mediaprobe import display_aspect, MediaInfo, ProbeError, count_video_packets, first_frame_number, probe as full_probe  # noqa: E402
 from profiles import (GROUP_TEXTS, HIDDEN_OPTIONS, OPTION_GROUPS, PRESETS, PROFILE_KEYS, REMOVED_OPTIONS, default_name, normalize_bitrate,  # noqa: E402
                       ordered_profile, profile_from_segment, valid_profile_name, validate_options, validate_profile,
@@ -114,7 +114,7 @@ class FrameCounter(QtCore.QThread):
 class frmMain(frmMainBase):
     def __init__(self, settings: Settings, player, project_path: str, probe: Callable[..., MediaInfo] = quick_probe,
                  fresh: bool = False, count_fn=count_video_packets, thumb_fn=grab_numbered, border_fn=border_at,
-                 conf_fn=confidence_at, avg_fn=bottom_line_average, first_fn=first_frame_number,
+                 conf_fn=confidence_at, first_fn=first_frame_number,
                  render_fn=run_ffmpeg, frame_fn=grab_frame, parent=None):
         self.fresh = fresh                      # True: clear the segment list instead of loading the last one
         self.settings = settings
@@ -135,7 +135,6 @@ class frmMain(frmMainBase):
         self._aspects: dict = {}
         self._border_fn = border_fn
         self._conf_fn = conf_fn
-        self._avg_fn = avg_fn
         self._render_fn = render_fn
         self._render = None                     # running save job: dict, None = nothing is being saved
         self._render_worker = None
@@ -282,7 +281,7 @@ class frmMain(frmMainBase):
                 self.settings.update_profile({"pad": raw["pad"]})
             del raw["pad"]
             changed = True
-        for key in ("focus", "logo_fill", "fill_sigma", "mask_fill", "mask_grow"):      # dropped options (see REMOVED_OPTIONS)
+        for key in ("focus", "logo_fill", "fill_sigma", "mask_fill", "mask_grow", "logo_rewind"):      # dropped options (see REMOVED_OPTIONS)
             if key in raw:
                 del raw[key]
                 changed = True
@@ -1756,7 +1755,7 @@ class frmMain(frmMainBase):
                              "method": "black border (crop)" if crop > 0 else "reference logo", "crop": crop, "start_frame": start,
                              "start_frame_shown": start - seg.first_frame, "stepping_frames": stepping, "segment_end_marker": seg.end,
                              "options": {k: opts.get(k) for k in ("crop", "floor", "blackness", "allowance", "pause", "step_end", "step_next", "border_tol",
-                                                                  "cut_window", "cut_diff", "logo_conf", "logo_edge", "logo_rewind")},
+                                                                  "cut_window", "cut_diff", "logo_conf", "logo_edge")},
                              "result_frame": None, "result_frame_shown": None, "probes": []}
         if crop > 0:
             def job(cancel):
@@ -1772,7 +1771,7 @@ class frmMain(frmMainBase):
             return
 
         def job(cancel):
-            return seek.seek_logo(seg.path, seg.fps, total, start, ref, end, stepping, opts, self._conf_fn, self._avg_fn, cancel,
+            return seek.seek_logo(seg.path, seg.fps, total, start, ref, end, stepping, opts, self._conf_fn, cancel,
                                   shown=lambda n, f=seg.first_frame: n - f, stats=stats)
         self._run_seek(job, lambda frame: (self.seek_done(frame), self.record_search(stats, frame, seg), self.logo_seek_report(stats, frame, end, seg)),
                        f"Seeking with {method}")

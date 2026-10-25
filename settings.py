@@ -252,10 +252,10 @@ class Settings:
 
 def default_options() -> dict:
     """Defaults in case the INI file contains no options yet (as in VB6). The step widths of the search are given in seconds
-        (40 s = 1000 frames and 240 s = 6000 frames at 25 FPS, the values from VB6); logo_rewind corresponds to 45 frames."""
+        (40 s = 1000 frames and 240 s = 6000 frames at 25 FPS, the values from VB6)."""
     return {"crop": "0", "floor": "2", "blackness": "12", "allowance": "1000", "overlap": "400", "audio": "1",
             "pause": "160", "detect": "0", "aflags": "", "subtitle": "0", "multilanguage": "False",
-            "step_end": "40", "step_next": "240", "border_tol": "3", "cut_window": "5", "logo_rewind": "1.8",
+            "step_end": "40", "step_next": "240", "border_tol": "3", "cut_window": "5",
             "logo_edge": "18", "logo_conf": "0.2", "cut_diff": "30", "path_map": "",
             "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "file_dialog": "qt", "sessions_dir": "", "avidemux": "", "vlc": ""}
 
@@ -313,8 +313,6 @@ DEFAULT_TOOLTIPS = {
     "dialog_style": "Dialogs with several pages (options, Media info): tabs = tabs along the top, list = list of the pages on the left; "
                     "applies at once",
     "cut_diff": "Seeking with the black border (advanced): min. mean difference (0 to 255) between two frames to count as a hard cut",
-    "logo_rewind": "Seeking with the station logo: max. number of seconds to go back from the first frame showing the logo, "
-                   "looking for the start of the scene (the logo may appear some seconds late)",
     "logo_edge": "Logo detection (advanced): min. grey level difference of neighbouring pixels that counts as an edge",
     "logo_conf": "Logo detection (advanced): min. share (0 to 1) of the reference edges that must be found for the logo to count as present",
 }

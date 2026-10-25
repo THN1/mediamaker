@@ -1,7 +1,8 @@
 """Station logo: mask for removelogo, isolation of the logo, detection and search in the movie.
 
 Port of the VB6 functions monochrome() / frmRemoveLogo, logo(), binary(), bin(), ones(),
-where_logo() and rewind(). The numerical values (8, 5, 400, 18, 0.2, 25, 20, 100) come from VB6.
+and where_logo(). The numerical values (8, 5, 400, 18, 0.2) come from VB6. (The rewind() of VB6 with diff() and average() was left out:
+it did not give satisfying results.)
 """
 from __future__ import annotations
 
@@ -180,58 +181,9 @@ def confidence_at(path: str, frame: int, fps: Fraction, ref: LogoRef, opts: dict
                            int(opts.get("logo_edge", BIN_MIN)))
 
 
-INITIAL_REWIND = 25        # frames that are gone back first (VB6); the reference colour lies there
-DEFAULT_MAX_REWIND = 45    # frames in total (VB6: 25 + up to 20); 1.8 seconds at 25 FPS
-COARSE_STEP = 5            # when rewinding far, the search first uses steps of 5 frames
-
-
-def rewind(pos: int, bottom_line_avg: Callable[[int], tuple[int, int, int]], max_back: int = DEFAULT_MAX_REWIND) -> int:
-    """Goes back from the found start of the logo and looks for the scene change (rewind()).
-
-        The reference is the mean of the bottom picture line 25 frames before `pos` (in VB6 FreeImage scanline 0); then it goes back up to
-        `max_back` frames in total, until the colour changes by more than 100 (VB6: at most 20 further frames,
-        frame by frame). For longer distances the search first uses steps of 5 frames and then refines frame by frame,
-        so that rewinding stays fast even over several seconds.
-    """
-    if max_back <= 0:
-        return pos
-    pos -= min(INITIAL_REWIND, max_back)
-    steps = max_back - INITIAL_REWIND
-    if steps <= 0:
-        return pos
-    ref = bottom_line_avg(pos)
-
-    def changed(p: int) -> bool:
-        return sum(abs(a - b) for a, b in zip(bottom_line_avg(p), ref)) > 100
-
-    if steps <= 20:                                  # as in VB6: frame by frame
-        for _ in range(steps):
-            pos -= 1
-            if changed(pos):
-                break
-        return pos + 1
-    moved = 0
-    while moved < steps:
-        n = min(COARSE_STEP, steps - moved)
-        if changed(pos - n):                         # the change lies in these n frames: look frame by frame
-            for _ in range(n):
-                pos -= 1
-                if changed(pos):
-                    break
-            return pos + 1
-        pos -= n
-        moved += n
-    return pos + 1
-
-
-def bottom_line_average(path: str, frame: int, fps: Fraction, opts: dict, ffmpeg: str = "ffmpeg") -> tuple[int, int, int]:
-    img = grab_frame(path, max(0, frame), fps, int(opts.get("floor", 2)), ffmpeg)
-    return tuple(int(v) for v in img[-1].astype(np.int64).sum(axis=0) // img.shape[1])
-
-
-def where_logo(conf_of: Callable[[int], float], pos: int, last: int, equal: bool, stepping: int,
-               rewind_fn: Optional[Callable[[int], int]] = None, min_conf: float = MIN_CONF) -> int:
-    """Starting at frame `pos`, searches for the next frame WITH logo (equal=True, then rewind) or WITHOUT logo (equal=False).
+def where_logo(conf_of: Callable[[int], float], pos: int, last: int, equal: bool, stepping: int, min_conf: float = MIN_CONF) -> int:
+    """Starting at frame `pos`, searches for the first frame WITH logo (equal=True) or WITHOUT logo (equal=False); `last` (the end of the
+        movie) is returned if there is none.
 
         VB6 calls: 'end of commercial' = (True, 1000), 'next commercial' = (False, 6000).
     """
@@ -244,6 +196,4 @@ def where_logo(conf_of: Callable[[int], float], pos: int, last: int, equal: bool
         if (equal and c > min_conf) or (not equal and c < min_conf):
             pos -= stepping
             stepping = (stepping + 8) // 10
-    if equal:
-        return rewind_fn(pos) if rewind_fn else pos
-    return pos + 1
+    return pos + 1                                   # pos is the last frame before the change

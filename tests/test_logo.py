@@ -12,8 +12,8 @@ from PIL import Image, ImageDraw
 from cutlist import Job, Segment
 from ffmpeg_cmd import build_command, write_masks
 from frames import grab_frame
-from logo import (bottom_line_average, confidence_at, isolate_logo, logo_confidence, make_mask,
-                  mask_to_png_b64, rewind, where_logo)
+from logo import (confidence_at, isolate_logo, logo_confidence, make_mask,
+                  mask_to_png_b64, where_logo)
 from mediaprobe import probe
 
 if len(sys.argv) < 2:
@@ -55,7 +55,7 @@ calls = []
 def conf_of(f):
     calls.append(f); return confidence_at(SRC, f, FPS, ref, opts)
 first_logo = where_logo(conf_of, 0, N - 1, True, 10)
-print(f"first frame with logo from frame 0 (step 10, without rewind): {first_logo}  ({len(calls)} frame analyses)")
+print(f"first frame with logo from frame 0 (step 10): {first_logo}  ({len(calls)} frame analyses)")
 calls.clear()
 gone = where_logo(conf_of, FRAME, N - 1, False, 10)
 print(f"first frame WITHOUT logo from frame {FRAME}: {gone}  ({len(calls)} frame analyses)")

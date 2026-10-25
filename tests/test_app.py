@@ -940,15 +940,14 @@ def test_segments(tmp, videos):
     win.mnuNext_Click()
     check("neither a cropping value" in win.messages[-1], "also when seeking the next commercial")
 
-    # --- search with the station logo (simulated detection: logo from frame 90, scene change at frame 60)
+    # --- search with the station logo (simulated detection: logo from frame 90; the picture changes at frame 60, but there is no rewinding)
     elysium = parse_batch_header(open(os.path.join(HERE, "sample_Elysium.bat"), encoding="latin-1").read())
     conf = lambda path, n, fps, ref, opts: 0.9 if n >= 90 else 0.0
-    avg = lambda path, f, fps, opts: (10, 10, 10) if f >= 60 else (200, 10, 10)
-    win = seek_window(tmp, videos, workdir="logowin", conf_fn=conf, avg_fn=avg)
+    win = seek_window(tmp, videos, workdir="logowin", conf_fn=conf)
     win.settings.set_option("crop", 0)
     win.segments[0].mask = elysium.segments[0].mask
     win.mnuEnd_Click()
-    check(win.Slider1.value() == 60, f"logo: first frame with logo, then back to the scene change: {win.Slider1.value()}")
+    check(win.Slider1.value() == 90, f"logo: the first frame with logo, no rewinding: {win.Slider1.value()}")
     check(any("logo confidence 0.90" in t for t in win.dialogs[-1].texts), "logo search reports every probe")
     win._go(0)
     conf = lambda path, n, fps, ref, opts: 0.9 if n < 50 else 0.0
@@ -1440,17 +1439,17 @@ def test_option_changes(tmp, videos):
     """Rearrangement: pad in the profile, focus dropped, new search parameters, grouped dialog, step widths in seconds."""
     import logo
     import seek
-    from profiles import HIDDEN_OPTIONS, OPTION_GROUPS, ordered_profile, validate_options, validate_profile
+    from profiles import HIDDEN_OPTIONS, OPTION_GROUPS, REMOVED_OPTIONS, ordered_profile, validate_options, validate_profile
     from settings import DEFAULT_TOOLTIPS, default_options
     # --- defaults and checking
     d = default_options()
     check("pad" not in d and "focus" not in d and d["step_end"] == "40" and d["step_next"] == "240" and d["border_tol"] == "3"
-          and d["logo_rewind"] == "1.8" and d["logo_edge"] == "18" and d["logo_conf"] == "0.2", "defaults")
+          and "logo_rewind" not in d and d["logo_edge"] == "18" and d["logo_conf"] == "0.2", "defaults")
     check(validate_options(d) == [], "defaults are valid")
     check(len(validate_options({"step_end": "0"})) == 1 and len(validate_options({"border_tol": "-1"})) == 1
-          and len(validate_options({"logo_rewind": "abc"})) == 1 and validate_options({"logo_rewind": "2.5"}) == []
+          and validate_options({"logo_rewind": "abc"}) == []
           and len(validate_options({"logo_conf": "1.5"})) == 1 and len(validate_options({"logo_edge": "0"})) == 1, "checking of the new values")
-    check(all(k in DEFAULT_TOOLTIPS for k in ("pad", "step_end", "step_next", "border_tol", "logo_rewind", "logo_edge", "logo_conf")),
+    check(all(k in DEFAULT_TOOLTIPS for k in ("pad", "step_end", "step_next", "border_tol", "logo_edge", "logo_conf")),
           "explanations for new keys")
     grouped = [k for _, keys in OPTION_GROUPS for k in keys]
     check(sorted(grouped + sorted(HIDDEN_OPTIONS)) == sorted(d), f"every option belongs to a group or is hidden: {sorted(set(d) ^ set(grouped + sorted(HIDDEN_OPTIONS)))}")
@@ -1474,28 +1473,21 @@ def test_option_changes(tmp, videos):
     args = ("/x", Fraction(25), 300, 0, 72, True, 100)
     check(seek.seek_border(*args, {"border_tol": "3"}, near) == 130 and seek.seek_border(*args, {"border_tol": "1"}, near) == 300,
           "tolerance 3 finds the border 74 (target 72), tolerance 1 does not")
-    # --- logo: rewinding, edge threshold, minimum match
-    scene = lambda start: (lambda f: (10, 10, 10) if f >= start else (200, 10, 10))
-    calls = []
-    def avg_of(start):
-        base = scene(start)
-        return lambda f: (calls.append(f), base(f))[1]
-    check(logo.rewind(1000, scene(960)) == 960, "rewinding like VB6 (45 frames)")
-    check(logo.rewind(1000, scene(900)) == 1000 - 45 + 1, "no scene change within 45 frames: like VB6")
-    calls.clear()
-    check(logo.rewind(1000, avg_of(800), 250) == 800 and len(calls) < 60, f"long rewinding finds the start of the scene: {len(calls)} probes")
-    calls.clear()
-    check(logo.rewind(1000, avg_of(960), 250) == 960 and len(calls) < 25, "scene start near: few probes")
-    check(logo.rewind(1000, scene(0), 0) == 1000 and logo.rewind(1000, scene(0), 10) == 990, "no or short rewinding")
+    # --- logo: no rewinding any more (rewind(), diff(), average() of VB6 and the option logo_rewind were removed), edge threshold, minimum match
+    check(not hasattr(logo, "rewind") and not hasattr(logo, "bottom_line_average") and not hasattr(logo, "INITIAL_REWIND"), "rewind and its helpers are gone from logo.py")
+    check("logo_rewind" not in default_options() and "logo_rewind" not in DEFAULT_TOOLTIPS and "logo_rewind" in REMOVED_OPTIONS and "logo_rewind" not in dict(OPTION_GROUPS)["Seeking"], "the option logo_rewind is gone")
+    first_with = lambda start: (lambda n: 0.9 if n >= start else 0.0)
+    check(logo.where_logo(first_with(900), 0, 2000, True, 1000) == 900, "end of a commercial: the first frame WITH logo")
+    check(logo.where_logo(first_with(900), 0, 2000, True, 1000) == 900 and logo.where_logo(lambda n: 0.9 if n < 900 else 0.0, 0, 2000, False, 1000) == 900, "next commercial: the first frame WITHOUT logo")
+    check(logo.where_logo(lambda n: 0.0, 0, 2000, True, 1000) == 2000, "no logo at all: the end of the movie")
     import numpy as np
     grey = np.tile(np.arange(10, dtype=np.uint8) * 10, (4, 1))               # neighbouring pixels differ by 10
     check(logo.edge_map(grey, 5).sum() > 0 and logo.edge_map(grey, 18).sum() == 0, "edge threshold as parameter")
     seen = []
     conf = lambda path, n, fps, ref, opts: (seen.append(n), 0.3 if n >= 90 else 0.0)[1]
-    avg = lambda path, f, fps, opts: (10, 10, 10)
-    r1 = seek.seek_logo("/x", Fraction(25), 300, 0, None, True, 100, {"logo_conf": "0.2", "logo_rewind": "0"}, conf, avg)
-    r2 = seek.seek_logo("/x", Fraction(25), 300, 0, None, True, 100, {"logo_conf": "0.5", "logo_rewind": "0"}, conf, avg)
-    check(r1 == 90 and r2 == 300, f"minimum match, no rewinding: the first frame with logo (90), or the end of the movie (300) if there is none: {r1}, {r2}")
+    r1 = seek.seek_logo("/x", Fraction(25), 300, 0, None, True, 100, {"logo_conf": "0.2"}, conf)
+    r2 = seek.seek_logo("/x", Fraction(25), 300, 0, None, True, 100, {"logo_conf": "0.5"}, conf)
+    check(r1 == 90 and r2 == 300, f"minimum match: the first frame with logo (90), or the end of the movie (300) if there is none: {r1}, {r2}")
     # --- main window: migration, dialog
     work = os.path.join(tmp, "migrate")
     os.makedirs(work)
@@ -1646,7 +1638,7 @@ def test_tooltip_wrap(tmp, videos):
     """Long tooltip texts are wrapped into several lines (Qt does not do this by itself for plain text)."""
     import dialogs
     from settings import DEFAULT_TOOLTIPS
-    long_text = DEFAULT_TOOLTIPS["logo_rewind"]
+    long_text = DEFAULT_TOOLTIPS["cut_window"]
     wrapped = dialogs.wrap_tooltip(long_text)
     lines = wrapped.split("\n")
     check(len(lines) >= 2 and all(len(line) <= 70 for line in lines) and " ".join(lines) == long_text, f"wrapped: {lines}")
@@ -1658,7 +1650,7 @@ def test_tooltip_wrap(tmp, videos):
     # in the dialog
     from PySide6.QtWidgets import QDialog, QFormLayout
     QDialog.exec_result, QDialog.on_exec = 1, None
-    dialogs.edit_pairs(None, "Options", {"logo_rewind": "1.8"}, {"logo_rewind": long_text}, {})
+    dialogs.edit_pairs(None, "Options", {"cut_window": "5"}, {"cut_window": long_text}, {})
     label, editor = QFormLayout.instances[-1].rows[-1]
     tip = label.called("setToolTip")[-1][0]
     check(tip == wrapped and editor.called("setToolTip")[-1][0] == wrapped, "tooltips in the dialog are wrapped")
@@ -3978,6 +3970,16 @@ def test_ini_tooltips_and_tools(tmp, videos):
     check(dict(OPTION_GROUPS)["Tools"] == ("avidemux", "vlc") and default_options()["avidemux"] == "" and validate_options(default_options()) == [], "group Tools")
     from profiles import GROUP_TEXTS
     check("PATH" in GROUP_TEXTS["Tools"], "text of the group")
+    # --- an old INI file with the dropped option logo_rewind: option and help text are removed at the start
+    w3 = os.path.join(tmp, "tooltips_rewind")
+    os.makedirs(w3, exist_ok=True)
+    ini3 = os.path.join(w3, "MediaMaker.ini")
+    open(ini3, "w", encoding="utf-8").write('[settings]\noptions=crop="72" logo_rewind="1.8" step_end="40"\n[ToolTipText]\nlogo_rewind=old text\n')
+    win = make_window(w3)
+    win.showEvent(None)
+    gone = Settings(ini3)
+    check("logo_rewind" not in gone.options and gone.options["crop"] == "72" and gone.options["step_end"] == "40" and gone.get("ToolTipText", "logo_rewind") is None
+          and "logo_rewind" not in win.options, "old INI: logo_rewind is removed from options= and from [ToolTipText], the others stay")
     # --- the window completes the INI file at the start and keeps what is there
     w2 = os.path.join(tmp, "tooltips_window")
     os.makedirs(w2, exist_ok=True)

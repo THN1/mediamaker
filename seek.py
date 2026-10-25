@@ -13,7 +13,7 @@ import numpy as np
 
 from border import border_at, where_border
 from frames import grab_numbered
-from logo import bottom_line_average, confidence_at, rewind, where_logo
+from logo import confidence_at, where_logo
 from player import debug_log
 
 DEFAULT_STEP_END_S = 40              # step width for "Seek end of commercial" in seconds (VB6: 1000 frames at 25 FPS)
@@ -109,10 +109,11 @@ def seek_border(path, fps, total, pos, value, equal, stepping, opts, border_fn=b
     return result
 
 
-def seek_logo(path, fps, total, pos, ref, equal, stepping, opts, conf_fn=confidence_at, avg_fn=bottom_line_average,
+def seek_logo(path, fps, total, pos, ref, equal, stepping, opts, conf_fn=confidence_at,
               cancel=lambda: False, shown=lambda n: n, stats: Optional[dict] = None) -> int:
-    """Like seek_border, but with the station logo: equal=True looks for the next frame WITH logo and then goes back a bit
-        (the logo often appears only some seconds after the movie has started), equal=False for the next frame WITHOUT logo.
+    """Like seek_border, but with the station logo: equal=True looks for the next frame WITH logo (the end of a commercial), equal=False for the
+        next frame WITHOUT logo (the start of the next one). The result is that frame itself; the logo may appear a little after the movie has
+        started (there is no rewinding any more).
         stats (dict) receives "confidences" = [(frame, confidence)] of all frames that were examined, and "result"."""
     def check() -> None:
         if cancel():
@@ -132,15 +133,9 @@ def seek_logo(path, fps, total, pos, ref, equal, stepping, opts, conf_fn=confide
             note(text)
         return found
 
-    max_back = round(float(opts.get("logo_rewind", 1.8)) * float(fps))
     min_conf = float(opts.get("logo_conf", 0.2))
 
-    def rewind_fn(p: int) -> int:
-        if max_back <= 0:
-            return p + 1                                  # no rewinding (option logo_rewind = 0): the first frame WITH logo (p is the last one without)
-        return rewind(p, lambda f: (check(), avg_fn(path, f, fps, opts))[1], max_back)
-
-    result = where_logo(conf_of, pos, total, equal, stepping, rewind_fn, min_conf)
+    result = where_logo(conf_of, pos, total, equal, stepping, min_conf)
     debug_log(f"logo search: result frame {shown(result)}")
     if stats is not None:
         stats["result"] = result

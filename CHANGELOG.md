@@ -7,6 +7,12 @@
   made the preview jump to the start of the film first and play it briefly, with sound, before it went to the wanted frame. Kept from 0.3 are the
   watchdog (nothing reported by VLC for 8 s after a medium was started: new media player) and the report of an unsuccessful logo search. Known and
   open: on a slow network drive a jump in the open VLC medium can take seconds, and `stop()` can block the window for that time.
+- **Removed: the rewinding after a logo search** (VB6 `rewind()` with `diff()` and `average()`, option `logo_rewind`). It did not give satisfying results
+  in the tests (with a wipe between commercial and movie it went back the whole 1.8 s). "Seek end of commercial" with the logo now returns the first frame
+  WITH the logo, "Seek next commercial" the first frame WITHOUT it, and a search that finds nothing returns the end of the movie. In VB6 `rewind` was
+  called at one place only (the end of `where_logo`), and `diff` and `average` only by `rewind`; in Python `logo.rewind`, `logo.bottom_line_average`
+  and the constants are gone, `seek_logo` and the main window no longer have `avg_fn`. Old INI files lose `logo_rewind` from `options=` and its help text
+  at the start. A new approach for finding the start of the movie can be built later (a good example is needed).
 - **File => Delete (Ctrl+J)**: deletes the source files of all segments of the list from the disk, for good (no trash), and clears the list. The
   question names the files (the first 8, then "... and n more"); a file that several segments share counts and is deleted once; a missing file is no
   error. A file that cannot be deleted is reported with the reason, and its segments stay in the list (also in the saved one) for another try.
