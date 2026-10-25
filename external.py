@@ -28,3 +28,20 @@ class ExternalWorker(QtCore.QThread):
 
     def run(self) -> None:
         self.completed.emit(*self.run_fn(self.cmd))
+
+
+class BackgroundWorker(QtCore.QThread):
+    """Runs a function in a thread; `finished_with(result)` arrives in the Qt thread (the result is the exception if the function raised one)."""
+
+    finished_with = QtCore.Signal(object)
+
+    def __init__(self, fn: Callable[[], object]):
+        super().__init__()
+        self.fn = fn
+
+    def run(self) -> None:
+        try:
+            result = self.fn()
+        except Exception as e:                                       # reported to the caller, not lost in the thread
+            result = e
+        self.finished_with.emit(result)

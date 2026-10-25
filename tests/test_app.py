@@ -607,6 +607,14 @@ def test_memory_player():
         player.surface.image = "last picture"
         player.clear()
         check(player.surface.image is None and mp.stops == stops_before + 1, "clear(): stopped and the last picture is removed from the drawing area")
+        arrived = []
+        player.picture_shown.connect(lambda: arrived.append(1))
+        player._awaiting_position = 100
+        player._on_frame((b"\x00" * (720 * 576 * 4), 720, 576))
+        check(arrived == [], "picture_shown: not while VLC is still looking for the position")
+        player._awaiting_position = None
+        player._on_frame((b"\x00" * (720 * 576 * 4), 720, 576))
+        check(arrived == [1], "picture_shown: a picture was put into the preview")
         # pictures before reaching the start position are not shown (VLC shows the start of the file first)
         lock3, _, display3, _ = mp.cb_calls[-1]
         player.load("/x/three.ts", (1280, 720))
@@ -3910,6 +3918,102 @@ def test_debug_package(tmp, videos):
     print("Debug package: OK (menu, files, zip, clip around B, DeLogo, reference logo, last search, header of the search)")
 
 
+def test_vlc_sync(tmp, videos):
+    """VLC counts the start of a recording differently from ffmpeg: the shift is measured per file from the picture of the preview and applied to
+    every jump; two agreeing measurements make it final."""
+    import numpy as np
+    from PIL import Image
+    from mediaprobe import first_frame_number
+    import debugpack
+    rng = np.random.default_rng(3)
+    pictures = {n: rng.integers(0, 255, (48, 64, 3), dtype=np.uint8) for n in range(0, 400)}
+    calls = []
+    def thumbs(path, first, count, fps, size, on_start=None):
+        calls.append((path, first, count))
+        return {n: pictures[n] for n in range(max(first, 0), min(first + count, 400))}
+    def preview_of(n):
+        return np.asarray(Image.fromarray(pictures[n]).resize((720, 576), Image.BILINEAR))
+    win = seek_window(tmp, videos, ("sample2.ts", "sample3.ts"), workdir="vlcsync", first_fn=first_frame_number)
+    win._thumb_fn = thumbs
+    a, b = win.segments
+    win.lvwSegments.select_row(0)
+    win.lvwSegments_Click()
+    here = 100
+    win.Slider1.setValue(here)
+    # --- without a shift: the numbers are VLC's times
+    check(win.f2t(here) == 4000 and win.t2f(4000) == here and win.vlc_shift == {}, "no shift known: f2t and t2f as in VB6")
+    # --- a picture arrives: the measurement is started after a pause, only when the slider has stayed
+    win.player.preview = preview_of(here + 17)
+    win.picture_shown()
+    check(win._calib_timer.__dict__.get("starts_") == [500] and win._calib_frame == here, "a picture in the preview starts the timer (after 0.5 s of quiet)")
+    win.Slider1.setValue(here + 3)
+    win.calibrate_vlc()
+    check(win.vlc_shift == {} and not calls, "the slider moved meanwhile: no measurement")
+    win.Slider1.setValue(here)
+    win.player.log.clear()
+    win.calibrate_vlc()
+    check(calls == [(a.path, here - 60, 121)] and win.vlc_shift == {a.path: 17}, f"VLC shows frame number + 17: shift 17 (provisional): {win.vlc_shift}")
+    check(win.f2t(here) == (here - 17) * 40 and win.t2f(win.f2t(here)) == here and f"show_at {win.f2t(here)}" in win.player.log, f"jumps use the corrected time ({win.f2t(here)} ms), the picture is shown again: {win.player.log}")
+    check(a.path not in win._shift_final, "one measurement: not yet final")
+    # --- the second measurement (now the preview shows the right picture): final
+    win.player.preview = preview_of(here)
+    win.picture_shown()
+    win.calibrate_vlc()
+    check(win.vlc_shift == {a.path: 17} and a.path in win._shift_final and win._shift_samples[a.path] == [17, 17], f"agreeing: final: {win._shift_samples}")
+    n = len(calls)
+    win.picture_shown()
+    win.calibrate_vlc()
+    check(len(calls) == n, "final: no more measurements")
+    # --- playback follows the same numbers
+    win.player._state = "playing"
+    win._ignore_time_until = 0
+    win.VLC_MediaPlayerTimeChanged(win.f2t(120))
+    win.player._state = "stopped"
+    check(win.Slider1.value() == 120, "during playback the slider shows the frame number of VLC's time")
+    # --- another file has its own shift
+    win.lvwSegments.select_row(1)
+    win.lvwSegments_Click()
+    check(win.shift_of(b.path) == 0 and win.f2t(50) == 2000, "another file: no shift")
+    # --- a still picture cannot be measured: given up after some tries, the shift stays 0
+    still = np.full((48, 64, 3), 90, np.uint8)
+    pictures_still = {n: still.copy() for n in range(400)}
+    win._thumb_fn = lambda path, first, count, fps, size, on_start=None: (calls.append("still"), {n: pictures_still[n] for n in range(max(first, 0), min(first + count, 400))})[1]
+    win.Slider1.setValue(60)
+    win.player.preview = np.full((576, 720, 3), 90, np.uint8)
+    for _ in range(12):
+        win.picture_shown()
+        win.calibrate_vlc()
+    check(win.shift_of(b.path) == 0 and win._shift_attempts[b.path] == win.SHIFT_TRIES and calls.count("still") == win.SHIFT_TRIES, f"a still picture: {win._shift_attempts[b.path]} tries, then given up")
+    # --- implausible differences are not believed
+    c_path = b.path
+    win._shift_attempts[c_path] = 0
+    win.shift_measured(c_path, 60, 0, {"reliable": True, "best_offset_frames": 400})
+    win.shift_measured(c_path, 60, 0, RuntimeError("no frames"))
+    check(win.shift_of(c_path) == 0 and win._shift_attempts[c_path] == 2, "400 frames or an error: not used")
+    # --- negative shift (VLC is behind), the frame near the start does not give a negative time
+    win.shift_measured(c_path, 60, 0, {"reliable": True, "best_offset_frames": -8})
+    win.shift_measured(c_path, 60, -8, {"reliable": True, "best_offset_frames": 0})
+    check(win.shift_of(c_path) == -8 and c_path in win._shift_final and win.f2t(50) == 58 * 40 and win.t2f(58 * 40) == 50, "VLC behind by 8 frames: negative shift, confirmed")
+    check(win.f2t(0) == 8 * 40 and win.t2f(win.f2t(0)) == 0, "VLC behind by 8 frames: the time of frame 0 is 8 frames later")
+    win.vlc_shift[c_path] = 17
+    check(win.f2t(5) == 0 and win.t2f(0) == 17, "a time is never negative")
+    # --- the option
+    win.settings.set_option("vlc_sync", "off")
+    check(win.shift_of(c_path) == 0 and win.f2t(50) == 2000, "vlc_sync = off: no correction")
+    n = len(calls)
+    win.player.preview = preview_of(50)
+    win._shift_final.discard(c_path)
+    win.picture_shown()
+    win.calibrate_vlc()
+    check(len(calls) == n, "vlc_sync = off: no measurement")
+    win.settings.set_option("vlc_sync", "auto")
+    # --- the player says when a picture is shown; the debug package tells the shift
+    from profiles import validate_options
+    from settings import DEFAULT_TOOLTIPS, default_options
+    check(default_options()["vlc_sync"] == "auto" and "vlc_sync" in DEFAULT_TOOLTIPS and validate_options({"vlc_sync": "off"}) == [] and len(validate_options({"vlc_sync": "maybe"})) == 1, "option vlc_sync")
+    print("VLC sync: OK (measurement per file, provisional and final shift, f2t/t2f, give-up, limits, option)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -3960,6 +4064,7 @@ def main():
     test_make_test_clips(tmp, sys.argv[1])
     test_sessions(tmp, sys.argv[1])
     test_debug_package(tmp, sys.argv[1])
+    test_vlc_sync(tmp, sys.argv[1])
     test_timeline(tmp, sys.argv[1])
     test_segments(tmp, sys.argv[1])
     test_thumbnail_errors(tmp, sys.argv[1])
