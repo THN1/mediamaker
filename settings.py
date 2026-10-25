@@ -207,7 +207,7 @@ def default_options() -> dict:
             "pause": "160", "detect": "0", "aflags": "", "subtitle": "0", "multilanguage": "False",
             "step_end": "40", "step_next": "240", "border_tol": "3", "cut_window": "5", "logo_rewind": "1.8",
             "logo_edge": "18", "logo_conf": "0.2", "cut_diff": "30", "path_map": "",
-            "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "file_dialog": "qt", "sessions_dir": "", "vlc_sync": "auto"}
+            "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "file_dialog": "qt", "sessions_dir": ""}
 
 
 # explanations for keys that are still missing in the INI file (section [ToolTipText])
@@ -226,8 +226,6 @@ DEFAULT_TOOLTIPS = {
     "file_dialog": "File dialog of Save as MP4/AVI: qt = Qt's own dialog (a double click on an existing file saves it; the folders used "
                    "recently are among its places), native = the dialog of your desktop (in some KDE setups a double click on an existing "
                    "file did nothing there); applies at once",
-    "vlc_sync": "VLC preview: auto = the program finds out per file how many frames VLC is ahead of or behind the frame numbers of ffmpeg (VLC and "
-                "ffmpeg count the start of a recording differently) and corrects the jumps; off = no correction; applies at once",
     "sessions_dir": "Sessions (File => Backup session): folder with the saved sessions; a leading ~ is your home folder (empty: the folder "
                     "'sessions' next to the INI file); applies at once",
     "batch": "Batch: file the batch script is written to; a leading ~ is your home folder (empty: next to the INI file, "

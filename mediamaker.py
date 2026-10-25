@@ -32,7 +32,7 @@ _add_ui_paths()
 from PySide6 import QtCore, QtGui, QtWidgets                         # noqa: E402
 
 from cutlist import Job, Segment, resolve_source                          # noqa: E402
-from external import BackgroundWorker, ExternalWorker, run_external       # noqa: E402
+from external import ExternalWorker, run_external                         # noqa: E402
 import sessions                                                       # noqa: E402
 import debugpack                                                      # noqa: E402
 import ffmpeg_cmd                                                     # noqa: E402
@@ -127,16 +127,6 @@ class frmMain(frmMainBase):
         self._external: list = []                      # running helper programs (keeps the workers alive)
         self._last_search: dict = {}                   # what the last search for a commercial did (debug package)
         self.ref_origin: dict = {}                     # mask -> where the reference logo came from (frame, picture, preview), for the debug package
-        self.vlc_shift: dict = {}                      # path -> frames: at the time number/fps VLC shows the picture of ffmpeg's frame number + shift
-        self._shift_samples: dict = {}                 # path -> measurements of that shift (frames)
-        self._shift_attempts: dict = {}                # path -> measurements that could not be used
-        self._shift_final: set = set()                 # paths whose shift is confirmed
-        self._calib_busy = False
-        self._calib_frame = None                       # slider value when the last picture arrived
-        self._calib_workers: list = []
-        self._calib_timer = QtCore.QTimer(self)
-        self._calib_timer.setSingleShot(True)
-        self._calib_timer.timeout.connect(self.calibrate_vlc)
         self._verify_first: set = set()                # files opened just now: the first picture of the thumbnails confirms the first frame
         self.verify_first_frame = True                 # False: take the first frame from the stream data as it is (tests)
         self._frame_fn = frame_fn
@@ -182,7 +172,6 @@ class frmMain(frmMainBase):
         player.stopped.connect(self.VLC_MediaPlayerStopped)
         player.ended.connect(self.VLC_MediaPlayerEndReached)
         player.time_changed.connect(self.VLC_MediaPlayerTimeChanged)
-        player.picture_shown.connect(self.picture_shown)
 
     # ------------------------------------------------------------------ Messages (replaceable for tests)
     def msg(self, text: str) -> None:
@@ -303,78 +292,13 @@ class frmMain(frmMainBase):
     def segment(self) -> Optional[Segment]:
         return self.segments[self.current] if 0 <= self.current < len(self.segments) else None
 
-    def shift_of(self, path: str) -> int:
-        """Frames by which VLC is ahead of the frame numbers (ffmpeg) for this file; 0 if unknown or the option vlc_sync is off."""
-        return self.vlc_shift.get(path, 0) if self.options.get("vlc_sync", "auto") == "auto" else 0
-
     def t2f(self, ms: int) -> int:
-        """VLC time (ms) -> frame number, like t2f() in VB6 (plus the shift of VLC against the frame numbers)."""
-        return int(ms * self.segment.fps / 1000 + Fraction(1, 2)) + self.shift_of(self.segment.path)
+        """Time (ms) -> frame number, like t2f() in VB6."""
+        return int(ms * self.segment.fps / 1000 + Fraction(1, 2))
 
     def f2t(self, frame: int) -> int:
-        """Frame number -> VLC time (ms), like f2t() in VB6 (minus the shift of VLC against the frame numbers)."""
-        return max(0, int((frame - self.shift_of(self.segment.path)) * 1000 / self.segment.fps + Fraction(1, 2)))
-
-    # ------------------------------------------------------------------ VLC against ffmpeg: how many frames is the preview ahead?
-    # VLC and ffmpeg can count the start of a recording differently (VLC from the first PCR, ffmpeg from the first time stamp of any stream); in a
-    # TV recording the difference is often a few tenths of a second. All frame numbers of the program are those of ffmpeg (thumbnails, searches, the
-    # cut), so VLC is asked for another time. The shift is measured per file: the picture of the preview is compared with the frames of ffmpeg
-    # around the same number (debugpack.preview_offset); two measurements that agree make it final.
-    SHIFT_LIMIT = 150                                                # frames: larger differences are not believed
-    SHIFT_TRIES = 8                                                  # unusable measurements (e.g. a still picture) before giving up
-
-    def picture_shown(self) -> None:
-        """A picture arrived in the preview: when it stays for a moment, the shift may be measured."""
-        seg = self.segment
-        if seg is None or self.options.get("vlc_sync", "auto") != "auto" or seg.path in self._shift_final:
-            return
-        self._calib_frame = self.Slider1.value()
-        self._calib_timer.start(500)
-
-    def calibrate_vlc(self) -> None:
-        seg = self.segment
-        if (seg is None or self._calib_busy or self.options.get("vlc_sync", "auto") != "auto" or seg.path in self._shift_final
-                or self._shift_attempts.get(seg.path, 0) >= self.SHIFT_TRIES or self.player.is_playing or self.Slider1.value() != self._calib_frame):
-            return
-        picture = debugpack.image_array(self.player.preview_image())
-        if picture is None:
-            return
-        path, fps, first, frame, applied = seg.path, seg.fps, seg.first_frame, self.Slider1.value(), self.shift_of(seg.path)
-
-        def measure():
-            frames = self._thumb_fn(path, max(first, frame - 60), 121, fps, (64, 48))
-            return debugpack.preview_offset(picture, frames, frame, 60)
-        worker = BackgroundWorker(measure)
-        self._calib_busy = True
-
-        def done(result, w=worker):
-            self._calib_workers = [x for x in self._calib_workers if x is not w]
-            self._calib_busy = False
-            self.shift_measured(path, frame, applied, result)
-        worker.finished_with.connect(done)
-        self._calib_workers.append(worker)
-        worker.start()
-
-    def shift_measured(self, path: str, frame: int, applied: int, result) -> None:
-        """Takes up a measurement: the picture showed ffmpeg's frame `frame` + best_offset_frames after VLC had been asked for the time of
-        `frame` with the shift `applied`; so the shift of VLC is that offset plus the applied one."""
-        usable = isinstance(result, dict) and result.get("reliable") and abs(result["best_offset_frames"] + applied) <= self.SHIFT_LIMIT
-        if not usable:
-            self._shift_attempts[path] = self._shift_attempts.get(path, 0) + 1
-            debug_log(f"VLC shift: measurement at frame {frame} not usable ({result if not isinstance(result, Exception) else repr(result)})")
-            return
-        sample = result["best_offset_frames"] + applied
-        samples = self._shift_samples.setdefault(path, [])
-        samples.append(sample)
-        agree = sorted(x for x in samples if abs(x - sample) <= 1)
-        new = agree[len(agree) // 2] if len(agree) >= 2 else sample
-        if len(agree) >= 2:
-            self._shift_final.add(path)
-        debug_log(f"VLC shift for {path}: {sample} frames measured at frame {frame}; now {new}{' (confirmed)' if path in self._shift_final else ''}")
-        if new != self.vlc_shift.get(path, 0):
-            self.vlc_shift[path] = new
-            if self.segment is not None and self.segment.path == path and self.Slider1.value() == frame:
-                self.player.show_at(self.f2t(frame))                  # show the picture of the right frame number
+        """Frame number -> time (ms), like f2t() in VB6."""
+        return int(frame * 1000 / self.segment.fps + Fraction(1, 2))
 
     def _save(self) -> None:
         save_segments(self.project_path, self.segments)
@@ -1351,8 +1275,7 @@ class frmMain(frmMainBase):
         index, slider = self.current, self.Slider1.value()
         data = {"seg": dataclasses.replace(seg), "segments": [dataclasses.replace(s) for s in self.segments], "options": self.options, "profile": dict(self.profile),
                 "ref": self.logo_reference(seg), "last_search": dict(self._last_search), "project": self.project_path, "ini": self.settings.path,
-                "origin": self.ref_origin.get(seg.mask), "preview": self.player.preview_image(),
-                "vlc_shift": {"frames": self.shift_of(seg.path), "confirmed": seg.path in self._shift_final, "samples": list(self._shift_samples.get(seg.path, []))}}
+                "origin": self.ref_origin.get(seg.mask), "preview": self.player.preview_image()}
         result = {"folder": folder, "zip": os.path.join(base, stamp + ".zip"), "problems": []}
 
         def work(cancel):
@@ -1378,11 +1301,7 @@ class frmMain(frmMainBase):
             return float(Fraction(frame) / seg.fps)
         with open(join("README.txt"), "w", encoding="utf-8") as f:
             f.write(debugpack.README.format(stamp=stamp, before=debugpack.CLIP_BEFORE, after=debugpack.CLIP_AFTER))
-        def segment_json():
-            report = debugpack.segment_report(segments, index, slider, to_time)
-            report["vlc_shift"] = data["vlc_shift"]            # frames by which VLC is ahead of the frame numbers of ffmpeg (applied to every jump)
-            debugpack.write_json(join("segment.json"), report)
-        attempt("segment.json", segment_json)
+        attempt("segment.json", lambda: debugpack.write_json(join("segment.json"), debugpack.segment_report(segments, index, slider, to_time)))
         attempt("list.json", lambda: shutil.copy(data["project"], join("list.json")))
         attempt("options.txt", lambda: open(join("options.txt"), "w", encoding="utf-8").write(
             "options: " + format_kv(data["options"]) + "\nprofile: " + format_kv(data["profile"]) + "\n"))

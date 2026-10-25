@@ -7,13 +7,6 @@
   made the preview jump to the start of the film first and play it briefly, with sound, before it went to the wanted frame. Kept from 0.3 are the
   watchdog (nothing reported by VLC for 8 s after a medium was started: new media player) and the report of an unsuccessful logo search. Known and
   open: on a slow network drive a jump in the open VLC medium can take seconds, and `stop()` can block the window for that time.
-- **VLC against ffmpeg: automatic shift per file** (option `vlc_sync`, `auto` or `off`). With a debug package of the RTL recording on the NAS the preview
-  showed, for the same frame number, the picture 17 frames (0.68 s) later than ffmpeg does (`vlc_preview.png` against `frame_at_slider.png`: the preview
-  picture is found in the recording at 50.40 s, ffmpeg's frame at 49.72 s): VLC and ffmpeg count the start of such a recording differently. All frame
-  numbers of the program are ffmpeg's (thumbnails, searches, the cut itself), so what was picked in the preview was cut 0.68 s too early. Now the
-  program compares the picture of the preview with the frames of ffmpeg around the same number (once the picture has stayed for half a second),
-  takes the shift per file, applies it to every jump of the preview and to the slider during playback, and confirms it with a second
-  measurement. Still pictures cannot be measured (8 tries, then the shift stays 0). `segment.json` of the debug package tells the shift.
 - **Debug package: the piece of the recording is centred on the SLIDER** (= `frame_at_slider.png`, where the search stopped): 50 s before to 10 s after
   it, not around marker B. `clip_info.txt` tells where the slider, marker A and B and the place where the reference logo was created are inside the
   piece ("outside" if not).

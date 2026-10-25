@@ -24,7 +24,6 @@ class Player(QtCore.QObject):
     stopped = QtCore.Signal()
     ended = QtCore.Signal()
     time_changed = QtCore.Signal(int)          # milliseconds
-    picture_shown = QtCore.Signal()            # a new picture was put into the preview (not while the position is still being searched)
 
     def attach(self, widget) -> None:
         """Set the video area (a control of the user interface)."""
@@ -596,7 +595,6 @@ class MemoryVlcPlayer(VlcPlayer):
             image = QtGui.QImage(data, width, height, width * 4, QtGui.QImage.Format.Format_RGB32).copy()
             self.surface.set_image(image)
             self._frames_shown += 1
-            self.picture_shown.emit()
 
     SEEK_CHECK_MS = 600                                          # how long to wait for the picture after a jump
     MAX_RELOADS = 2                                              # reloads of the medium in a row before the media player is replaced
