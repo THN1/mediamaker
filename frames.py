@@ -72,23 +72,18 @@ def grab_window(path: str, first: int, count: int, fps: Fraction, size: tuple[in
     return first, np.frombuffer(res.stdout[: n * w * h * 3], np.uint8).reshape(n, h, w, 3)
 
 
-def grab_numbered(path: str, first: int, count: int, fps: Fraction, size: tuple, preroll: int = 2,
-                  ffmpeg: str = "ffmpeg", on_start=None) -> dict:
-    """Fetches up to `count` consecutive frames starting at frame `first` (numbers counted from the container start) in one call.
-
-        Returns: {frame number: array height x width x 3}, reduced to `size` = (width, height). The number of each frame is determined
-        from its timestamp, not from the order. If `first` lies before the first frame of the file (recordings in which the
-        sound starts earlier than the video) or behind the end, the corresponding numbers are missing from the result.
-        on_start(process) receives the ffmpeg process so that the caller can cancel it.
-    """
+def _decode_numbered(path: str, first: int, count: int, fps: Fraction, tail: str, shape: tuple, preroll: int = 2,
+                     ffmpeg: str = "ffmpeg", on_start=None) -> dict:
+    """The common part of grab_numbered and grab_scanlines: decodes up to `count` consecutive frames from frame `first` on, applies the
+    filters `tail` (they must give pictures of `shape` = (height, width) in rgb24) and numbers the frames by their time stamps."""
     times = stream_times_of(path)
     first = max(0, first)
     t = frame_time(first, fps, times, "container", preroll)
     d = seek_before(t, times[0], preroll)
-    w, h = size
+    h, w = shape
     cmd = [ffmpeg, "-v", "info", "-hide_banner", "-nostats", "-copyts"] + (["-ss", str(d)] if d > 0 else []) + [
         "-i", path, "-filter_complex",
-        f"[0:v]trim=start={fmt_seconds(t)},showinfo,setpts=PTS-STARTPTS,scale={w}:{h}:flags=area[v]",
+        f"[0:v]trim=start={fmt_seconds(t)},showinfo,setpts=PTS-STARTPTS,{tail}[v]",
         "-frames:v", str(count), "-map", "[v]", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
     proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if on_start:
@@ -101,3 +96,27 @@ def grab_numbered(path: str, first: int, count: int, fps: Fraction, size: tuple,
     frames = np.frombuffer(out[: n * w * h * 3], np.uint8).reshape(n, h, w, 3)
     container, rate = float(times[0]), float(fps)
     return {floor((pts[i] - container) * rate + 1e-3): frames[i] for i in range(min(n, len(pts)))}
+
+
+def grab_numbered(path: str, first: int, count: int, fps: Fraction, size: tuple, preroll: int = 2,
+                  ffmpeg: str = "ffmpeg", on_start=None) -> dict:
+    """Fetches up to `count` consecutive frames starting at frame `first` (numbers counted from the container start) in one call.
+
+        Returns: {frame number: array height x width x 3}, reduced to `size` = (width, height). The number of each frame is determined
+        from its timestamp, not from the order. If `first` lies before the first frame of the file (recordings in which the
+        sound starts earlier than the video) or behind the end, the corresponding numbers are missing from the result.
+        on_start(process) receives the ffmpeg process so that the caller can cancel it.
+    """
+    w, h = size
+    return _decode_numbered(path, first, count, fps, f"scale={w}:{h}:flags=area", (h, w), preroll, ffmpeg, on_start)
+
+
+def grab_scanlines(path: str, first: int, count: int, fps: Fraction, x_from: int, x_to: int, y: int, preroll: int = 2,
+                   ffmpeg: str = "ffmpeg", on_start=None) -> dict:
+    """Like grab_numbered, but only ONE horizontal line of each frame at full resolution: the pixels x_from..x_to (both included) of the line y.
+
+        Returns {frame number: array 1 x (x_to - x_from + 1) x 3}. The values are exactly those of the same line of the whole frame (the
+        conversion to RGB happens before cutting out the line), but for hundreds of frames only a few kilobytes are transferred.
+    """
+    width = x_to - x_from + 1
+    return _decode_numbered(path, first, count, fps, f"format=rgb24,crop={width}:1:{x_from}:{y}", (1, width), preroll, ffmpeg, on_start)

@@ -4204,6 +4204,141 @@ def test_delete_sidecars(tmp, videos):
     print("Delete with additional files: OK (what is meant, check box, not ticked at first, errors, several recordings)")
 
 
+def test_overlap(tmp, videos):
+    """Edit => Overlap segments: if a recording repeats the end of one segment at the start of the next, the markers B and A are moved towards each
+    other until the same picture is found; the repeated part is cut in the middle."""
+    import numpy as np
+    import overlap
+    from frames import grab_frame, grab_scanlines
+    from mediaprobe import first_frame_number
+    from project import load_segments, segment_row
+    # --- the pieces of the test
+    check(overlap.far(10, 33) is False and overlap.far(10, 34) is True and overlap.far(34, 10) is True and overlap.far(0, 0) is False, "far(): a difference of 24 or more (VB6: (a - b) \\ 24 > 0)")
+    check(overlap.scan_range(720) == (144, 576) and overlap.scan_range(704) == (141, 563) and overlap.scan_range(1280) == (256, 1024) and overlap.scan_row(576) == 288 and overlap.scan_row(577) == 288,
+          "the compared line: 20 % to 80 % of the width in the middle (as the VB6 loop)")
+    base = np.full((1, 433, 3), 100, np.uint8)
+    near, farther = base.copy(), base.copy()
+    near[0, 5, 0] = 123
+    farther[0, 5, 0] = 124
+    check(overlap.lines_match(base, base) and overlap.lines_match(base, near) and not overlap.lines_match(base, farther) and not overlap.lines_match(base, base[:, :400]),
+          "lines: equal if no colour value is far (23 passes, 24 does not); lines of different length never")
+    check(overlap.frames_needed(1000, 50, 400) == ((800, 1000), (50, 249)) and overlap.frames_needed(1000, 50, 7) == ((997, 1000), (50, 53)), "frames the search can look at")
+    visited = []
+    overlap.search(lambda n: (visited.append(("B", n)), None)[1], lambda n: (visited.append(("A", n)), None)[1], 100, 10, 6)
+    pairs = [(visited[i][1], visited[i + 1][1]) for i in range(0, len(visited), 2)]
+    check(pairs == [(100, 10), (99, 10), (99, 11), (98, 11), (98, 12), (97, 12)], f"the markers move alternately, B back first: {pairs}")
+    rand_line = lambda n: np.random.default_rng(n).integers(0, 256, (1, 433, 3), dtype=np.uint8)      # every picture another line, the same picture the same line
+    r = overlap.search(rand_line, lambda n: rand_line(n + 70), 300, 5, 400)
+    check(r == (187, 117, 226), f"search on made-up lines (segment 2 is 70 frames ahead): found at step 226 = 225 + 1, B back 113, A forward 112: {r}")
+    steps = []
+    check(overlap.search(lambda n: None, lambda n: None, 100, 10, 50, steps.append) is None and steps == list(range(1, 51)), "no pictures: no match, the progress counts every step")
+    check(overlap.search(rand_line, lambda n: rand_line(n + 5), 100, 10, 400, None, b_min=99) is None, "the first marker may not reach the start of its segment")
+    check(overlap.search(rand_line, lambda n: rand_line(n + 5), 100, 10, 400, None, a_max=11) is None, "the second marker may not reach the end of its segment")
+    check(overlap.search(rand_line, lambda n: rand_line(n + 5), 100, 10, 400) == (57, 52, 86), "without the limits the same lines are found (step 86: B back 43, A forward 42)")
+    # --- one line of the frames is exactly that of the whole frame
+    sample = os.path.join(videos, "sample2.ts")
+    first = first_frame_number(sample, Fraction(25))
+    got = grab_scanlines(sample, first + 20, 6, Fraction(25), 144, 576, 288)
+    whole = {first + 20 + k: grab_frame(sample, first + 20 + k, Fraction(25)) for k in (0, 3, 5)}
+    check(sorted(got) == list(range(first + 20, first + 26)) and all(np.array_equal(got[n][0], whole[n][288, 144:577]) for n in whole), "grab_scanlines: the same values as the line of the whole frame")
+    # --- two made-up recordings with a repeat: content frame c of the first at 0..219 and a few commercial frames; the second begins with commercial
+    work = os.path.join(tmp, "overlap")
+    os.makedirs(work, exist_ok=True)
+    W, H = 720, 576
+    yy, xx = np.mgrid[0:H, 0:W]
+    def content(c):
+        r = 128 + 100 * np.sin((xx + 10 * c) / 20.0)
+        g = 128 + 100 * np.sin((yy * 0.5 + 7 * c) / 15.0)
+        b = 128 + 100 * np.sin((xx + yy + 13 * c) / 30.0)
+        return np.stack([r, g, b], axis=2).astype(np.uint8)
+    rng = np.random.default_rng(5)
+    def commercial():
+        return np.clip(60 + rng.normal(0, 25, (H, W, 3)), 0, 255).astype(np.uint8)
+    def encode(frames, name, quality):
+        out = os.path.join(work, name)
+        raw = b"".join(f.tobytes() for f in frames)
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", "25", "-i", "-",
+                        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=30", "-map", "0:v", "-map", "1:a", "-shortest",      # the program wants a sound track
+                        "-c:v", "mpeg2video", "-q:v", str(quality), "-g", "12", "-c:a", "mp2", "-f", "mpegts", out], input=raw, check=True)
+        return out
+    def make(repeat, tag):
+        n1 = 220
+        seg1 = encode([content(c) for c in range(n1)] + [commercial() for _ in range(20)], f"o1_{tag}.ts", 3)
+        seg2 = encode([commercial() for _ in range(25)] + [content(c) for c in range(n1 - repeat, n1 - repeat + 90)], f"o2_{tag}.ts", 7)      # another quality: other noise
+        return seg1, seg2
+    def window(tag, repeat, limit=400):
+        s1, s2 = make(repeat, tag)
+        win = seek_window(tmp, work, (os.path.basename(s1), os.path.basename(s2)), workdir=f"overlapwin{tag}", first_fn=first_frame_number)
+        win.settings.set_option("overlap", str(limit))
+        a, b = win.segments
+        a.end = a.first_frame + 220                                  # marker B: the first commercial picture
+        b.start = b.first_frame + 25                                 # marker A: the first picture after the commercial
+        win.ask = lambda text: (win.asked.append(text), True)[1]
+        win.asked = []
+        win.lvwSegments.select_row(0)
+        win.lvwSegments_Click()
+        return win, a, b
+    # a) a repeat of 60 frames: found at step 61, B back by 30, A forward by 30
+    win, a, b = window("a", 60)
+    win.cmdOverlap_Click()
+    shown = (a.end - a.first_frame, b.start - b.first_frame)
+    check(shown == (190, 55), f"repeat of 60 frames: Marker B {shown[0]} (220 - 30), Marker A {shown[1]} (25 + 30)")
+    check("successfully done" in win.messages[-1] and "The repeated part of 60 frame(s) was cut in the middle: Marker B moved 30 frame(s) back, Marker A 30 frame(s) forward" in win.messages[-1]
+          and 'verify using menu option "Analyze cut point"' in win.messages[-1], f"message: {win.messages[-1][:120]}")
+    check(win.asked and win.asked[0].startswith("Overlap the end of segment 1 with the start of segment 2?") and "Attention: this may take some time" in win.asked[0], "the question")
+    saved = load_segments(win.project_path)
+    check((saved[0].end, saved[1].start) == (a.end, b.start), "saved in the list")
+    check(win.lvwSegments.topLevelItem(1).text(3) == segment_row(b, 2)[3] and win.lvwSegments.topLevelItem(0).text(4) == segment_row(a, 1)[4], "the rows of both segments show the new markers")
+    check(win.Slider1.value() == a.end and win.timeline_mode == "B", "the slider is at the new marker B (as cmdPos_Click 10 in VB6)")
+    # the cut is clean: the picture at marker B of the first segment is the picture at marker A of the second one
+    p1 = grab_frame(a.path, a.end, Fraction(25))[288, 144:577].astype(int)
+    p2 = grab_frame(b.path, b.start, Fraction(25))[288, 144:577].astype(int)
+    prev = grab_frame(b.path, b.start - 1, Fraction(25))[288, 144:577].astype(int)
+    check(np.abs(p1 - p2).mean() < 6 and np.abs(p1 - prev).mean() > 15, "clean cut: the same picture at B and A, and a clearly different one before A")
+    # b) a repeat of 61 frames (odd)
+    win, a, b = window("b", 61)
+    win.cmdOverlap_Click()
+    check((a.end - a.first_frame, b.start - b.first_frame) == (189, 55) and "The repeated part of 61 frame(s)" in win.messages[-1], f"odd repeat of 61: B 189, A 55: {(a.end - a.first_frame, b.start - b.first_frame)}")
+    # c) the range is too small
+    win, a, b = window("c", 60, limit=40)
+    before = (a.end, b.start)
+    win.cmdOverlap_Click()
+    check(win.messages[-1] == "Overlapping failed: no matching frames found in a range of 40 frame(s)." and (a.end, b.start) == before, "range too small (40 steps): message, the markers stay")
+    # d) No, no selection, last segment, other picture size
+    win, a, b = window("d", 60)
+    win.ask = lambda text: False
+    win.cmdOverlap_Click()
+    check((a.end - a.first_frame, b.start - b.first_frame) == (220, 25), "answer No: nothing")
+    win.current = -1
+    win.cmdOverlap_Click()
+    check(win.messages[-1] == "Please select a segment, but not the last one.", "no selection: message")
+    win.lvwSegments.select_row(1)
+    win.lvwSegments_Click()
+    win.cmdOverlap_Click()
+    check(win.messages[-1] == "Please select a segment, but not the last one.", "last segment: message")
+    b.width = 704
+    win.lvwSegments.select_row(0)
+    win.lvwSegments_Click()
+    win.cmdOverlap_Click()
+    check("different picture sizes (720x576 and 704x576)" in win.messages[-1], "other picture size: message")
+    # e) the markers may not run through their segments
+    win, a, b = window("e", 60)
+    a.start = a.first_frame + 215                                    # only 5 frames of the first segment are used
+    win.cmdOverlap_Click()
+    check(win.messages[-1].startswith("Overlapping failed") and a.end - a.first_frame == 220, "the first segment would become empty: no match")
+    # f) cancel: no exception, no change
+    win, a, b = window("f", 60)
+    win._scan_fn = lambda *args, **kw: (_ for _ in ()).throw(seek.SeekCancelled())
+    win.cmdOverlap_Click()
+    check((a.end - a.first_frame, b.start - b.first_frame) == (220, 25), "cancelled: nothing changed")
+    # g) a recording that does not repeat anything
+    win, a, b = window("g", 0)
+    win.cmdOverlap_Click()
+    check(win.messages[-1] == "Overlapping failed: no matching frames found in a range of 400 frame(s)." and (a.end - a.first_frame, b.start - b.first_frame) == (220, 25),
+          "a recording without a repeat: no match, the markers stay")
+    print("Overlap: OK (far, line, search order, scanlines, two made-up recordings with a repeat, messages, limits)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -4257,6 +4392,7 @@ def main():
     test_ini_tooltips_and_tools(tmp, sys.argv[1])
     test_delete_files(tmp, sys.argv[1])
     test_delete_sidecars(tmp, sys.argv[1])
+    test_overlap(tmp, sys.argv[1])
     test_timeline(tmp, sys.argv[1])
     test_segments(tmp, sys.argv[1])
     test_thumbnail_errors(tmp, sys.argv[1])

@@ -7,6 +7,16 @@
   made the preview jump to the start of the film first and play it briefly, with sound, before it went to the wanted frame. Kept from 0.3 are the
   watchdog (nothing reported by VLC for 8 s after a medium was started: new media player) and the report of an unsuccessful logo search. Known and
   open: on a slow network drive a jump in the open VLC medium can take seconds, and `stop()` can block the window for that time.
+- **Edit => Overlap segments (Ctrl+F8)**, VB6 `cmdOverlap_Click` with `match()` and `far()` (new module `overlap.py`). If a recording repeats the end of one
+  segment at the start of the next, marker B of the selected segment and marker A of the next one are moved towards each other, alternately (B back, A
+  forward) up to `overlap` steps (option, default 400) until the picture at B equals the picture at A: the repeated part is cut in the middle and the cut
+  is clean (verify with Analyze cut point). The pictures are compared by one line in the middle, from 20 % to 80 % of the width; equal if no R, G or B
+  value differs by 24 or more (`far`, unchanged from VB6). Measured with a real example (two segments, 8.8 s repeated, MPEG-2 SD): 219 of the 222
+  matching pairs pass the test, pairs one frame apart pass in only 2.5 %, and for 6156 starting positions of the markers the right pair was found
+  every time (B 9.2 s -> 4.76 s, A 3.4 s -> 7.8 s); the seam of the cut is as smooth as the pictures around it (difference 2.98 against 2.91). The
+  markers cannot run through their segments. Instead of one ffmpeg call per picture (VB6: `oneframe`), one call per segment fetches only the middle
+  line of all frames needed (`frames.grab_scanlines`, the same values as the line of the whole frame): about 1 s for the example. The cut-in-the-middle
+  is reported with the number of repeated frames and how far each marker moved. Not available for the last segment; different picture sizes are refused.
 - **Removed: the rewinding after a logo search** (VB6 `rewind()` with `diff()` and `average()`, option `logo_rewind`). It did not give satisfying results
   in the tests (with a wipe between commercial and movie it went back the whole 1.8 s). "Seek end of commercial" with the logo now returns the first frame
   WITH the logo, "Seek next commercial" the first frame WITHOUT it, and a search that finds nothing returns the end of the movie. In VB6 `rewind` was
