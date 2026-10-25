@@ -7,6 +7,9 @@
   made the preview jump to the start of the film first and play it briefly, with sound, before it went to the wanted frame. Kept from 0.3 are the
   watchdog (nothing reported by VLC for 8 s after a medium was started: new media player) and the report of an unsuccessful logo search. Known and
   open: on a slow network drive a jump in the open VLC medium can take seconds, and `stop()` can block the window for that time.
+- **Tried and dropped: automatic VLC shift** (commit 45a86a1, reverted). Finding: on the RTL recording on the NAS the VLC preview showed, for the same
+  frame number, the picture 17 frames (0.68 s) later than ffmpeg does (see `preview_check.json` of the debug package, which stays). With the option
+  `logo_rewind = 0` the search "Seek end of commercial" was precise to within a few frames; the preview offset is therefore only noted, not corrected.
 - **Debug package: the piece of the recording is centred on the SLIDER** (= `frame_at_slider.png`, where the search stopped): 50 s before to 10 s after
   it, not around marker B. `clip_info.txt` tells where the slider, marker A and B and the place where the reference logo was created are inside the
   piece ("outside" if not).
