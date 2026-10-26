@@ -1,5 +1,9 @@
 # Changes
 
+## 0.5 (in progress)
+
+- Version number set to 0.5-dev.
+
 ## 0.4
 
 Fourth frozen state: Dedup scene (removes a duplicate scene at a cut), Analyze cut point with the filters of Save As, sessions as zip files, Delete with
