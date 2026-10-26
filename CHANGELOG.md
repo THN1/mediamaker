@@ -1,8 +1,11 @@
 # Changes
 
-## 0.4 (in progress)
+## 0.4
 
-- Version number set to 0.4-dev.
+Fourth frozen state: Dedup scene (removes a duplicate scene at a cut), Analyze cut point with the filters of Save As, sessions as zip files, Delete with
+the additional files of a recording, the reference logo with its debug package, tools and help texts in the INI file, and many smaller things below.
+Still to do: copy mode, DVD mode, chapters, and more tests with several audio and subtitle tracks.
+
 - **Preview player taken back to the state before "slow medium" mode** (0.3 had it): there every jump reopened the medium with a new media player, which
   made the preview jump to the start of the film first and play it briefly, with sound, before it went to the wanted frame. Kept from 0.3 are the
   watchdog (nothing reported by VLC for 8 s after a medium was started: new media player) and the report of an unsuccessful logo search. Known and
