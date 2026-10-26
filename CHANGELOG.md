@@ -7,6 +7,12 @@
   made the preview jump to the start of the film first and play it briefly, with sound, before it went to the wanted frame. Kept from 0.3 are the
   watchdog (nothing reported by VLC for 8 s after a medium was started: new media player) and the report of an unsuccessful logo search. Known and
   open: on a slow network drive a jump in the open VLC medium can take seconds, and `stop()` can block the window for that time.
+- **Media info**: the text of a tab no longer begins with the title of the tab again ("General", "Video #1", "Audio #1 (deu)"); the tab already says it.
+  The first line of the MediaMaker tab is now just "Values used for the frame numbers". "Copy all" still has the names as headings, so that the copied
+  text can be read.
+- **Analyze cut point keeps the aspect ratio of the source**: `setsar=1` is only set when the two segments come from DIFFERENT files (it is needed for the
+  concatenation then), like in Save As. Before, it was always set, which replaced the sample aspect ratio of the source by 1:1. The parameter
+  `setsar_always` of `build_command` is gone.
 - **Analyze cut point: new option `cutpoint_filters` (on|off, group Technical)**. With `on`, the new default, the clip is made with all the filters that
   Save As applies (cropping, scaling, DeLogo, RemoveLogo; the masks of RemoveLogo are written to a temporary folder for the run, as in Save As), without
   the note in the picture. With `off` as before (VB6): without cropping and logo filters, only scaled to the profile, with the note "cropping, delogo and

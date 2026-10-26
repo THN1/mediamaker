@@ -8,6 +8,7 @@ from __future__ import annotations
 from PySide6 import QtCore, QtGui, QtWidgets
 
 import dialogs
+import mediainfo
 from ui_frmMediaInfo import frmMediaInfoBase
 
 QWIDGETSIZE_MAX = 16777215
@@ -63,4 +64,4 @@ class frmMediaInfo(frmMediaInfoBase):
         self.close()
 
     def copy_all(self) -> None:
-        QtWidgets.QApplication.clipboard().setText("\n\n".join(text for _, text in self.sections))
+        QtWidgets.QApplication.clipboard().setText(mediainfo.full_text(self.sections))

@@ -1316,6 +1316,14 @@ def test_media_info(tmp, videos):
     check("Marker A (start)" in mm and f": {first}" in mm and "Frames in the segment" in mm and "1/2/3/4" in mm and "Logo mask / area           : none" in mm.replace("  ", " ").replace(" :", "  :") or "Logo mask" in mm,
           "section with segment")
     check(mediainfo.full_text(sections).count("\n\n") >= 3, "full text")
+    # the text of a tab does not repeat the title of the tab as its first line
+    firsts = {name: body.splitlines()[0] for name, body in sections}
+    check(all(first.split(" : ")[0].strip() not in (name, name.split(" (")[0]) for name, first in firsts.items())
+          and firsts["General"].startswith("Complete name") and firsts["Video #1"].startswith("Stream index") and firsts["Audio #1 (deu)"].startswith("Stream index")
+          and firsts["MediaMaker"] == "Values used for the frame numbers", f"no title line at the top of the tabs: {firsts}")
+    everything = mediainfo.full_text(sections)
+    check(everything.startswith("General\nComplete name") and "\n\nVideo #1\nStream index" in everything and "\n\nAudio #1 (deu)\nStream index" in everything
+          and "\n\nMediaMaker\nValues used for the frame numbers" in everything, "the text for the clipboard has the names as headings")
     # --- menu
     work = os.path.join(tmp, "infowin")
     os.makedirs(work, exist_ok=True)
@@ -3253,7 +3261,39 @@ def test_cutpoint(tmp, videos):
     check(os.path.exists(out) and 148 <= info.video.frames <= 152 and (info.video.width, info.video.height) == (720, 576), f"filters on, with ffmpeg: {info.video.frames} frames, {info.video.width}x{info.video.height}")
     check(not [f for f in os.listdir(tempfile.gettempdir()) if f.startswith("mediamaker_cutpoint_")], "no folder with masks is left behind")
     os.remove(out)
-    print("Analyze cut point: OK (job, command, fallback, errors, VLC, Avidemux, real clip)")
+    # --- the aspect ratio of the source stays: setsar=1 only if the two segments come from different files
+    def sar_of(path):
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=sample_aspect_ratio", "-of", "csv=p=0", path],
+                             capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout
+        return out.split(",")[0].strip()
+    same = seek_window(tmp, videos, ("sample2.ts", "sample2.ts"), workdir="cutpoint_same", first_fn=first_frame_number)
+    same.settings.set_option("cutpoint_filters", "on")
+    same.settings.set_option("crop", "0")                        # (a cropped picture that is scaled back gets another sample aspect ratio, that is right)
+    same.lvwSegments.select_row(0)
+    same.lvwSegments_Click()
+    same.ask3 = lambda text: "no"
+    same._external_fn = lambda cmd: (0, "")
+    seen_cmds = []
+    same._render_fn = lambda cmd, total, on_progress, cwd=None, cancel=None: (seen_cmds.append(cmd), RunResult(0, False, 0.1, ""))[1]
+    same.mnuCutPoints_Click()
+    graph_same = seen_cmds[0][seen_cmds[0].index("-filter_complex") + 1]
+    check("setsar" not in graph_same and "concat=n=2" in graph_same, f"two segments of ONE file: no setsar=1: {graph_same[:90]}")
+    source_sar = sar_of(os.path.join(videos, "sample2.ts"))
+    from runner import run_ffmpeg
+    same._render_fn = run_ffmpeg
+    same.mnuCutPoints_Click()
+    check(sar_of(same.cutpoint_path()) == source_sar != "1:1", f"the clip keeps the aspect ratio of the source ({source_sar}): {sar_of(same.cutpoint_path())}")
+    os.remove(same.cutpoint_path())
+    different = seek_window(tmp, videos, ("sample2.ts", "sample3.ts"), workdir="cutpoint_diff", first_fn=first_frame_number)
+    different.lvwSegments.select_row(0)
+    different.lvwSegments_Click()
+    different.ask3 = lambda text: "no"
+    different._external_fn = lambda cmd: (0, "")
+    different._render_fn = run_ffmpeg
+    different.mnuCutPoints_Click()
+    check(sar_of(different.cutpoint_path()) == "1:1", f"two DIFFERENT files: setsar=1 (needed for concat): {sar_of(different.cutpoint_path())}")
+    os.remove(different.cutpoint_path())
+    print("Analyze cut point: OK (job, command, fallback, errors, VLC, Avidemux, real clip, aspect ratio)")
 
 
 def test_save_dialog(tmp, videos):

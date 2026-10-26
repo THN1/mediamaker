@@ -64,8 +64,7 @@ def build_sections(path: str, segment: Optional[Segment] = None, ffprobe: str = 
     sections = []
 
     size = os.path.getsize(path) if os.path.exists(path) else _num(fmt.get("size")) or 0
-    general = ["General",
-               _kv("Complete name", path),
+    general = [_kv("Complete name", path),
                _kv("Format", f"{fmt.get('format_long_name', '?')} ({fmt.get('format_name', '?')})"),
                _kv("File size", _size(int(size))),
                _kv("Duration", _hms(_num(fmt.get("duration")))),
@@ -84,8 +83,7 @@ def build_sections(path: str, segment: Optional[Segment] = None, ffprobe: str = 
         if kind == "video":
             avg, rfr = _rate(s.get("avg_frame_rate")), _rate(s.get("r_frame_rate"))
             fps_main = fps_main or avg or rfr
-            lines = [f"Video #{n}",
-                     _kv("Stream index", s.get("index")),
+            lines = [_kv("Stream index", s.get("index")),
                      _kv("Format", f"{s.get('codec_long_name', s.get('codec_name', '?'))} ({s.get('codec_name', '?')})"),
                      _kv("Profile / level", f"{s.get('profile', '?')} / {s.get('level', '?')}"),
                      _kv("Width x height", f"{s.get('width')} x {s.get('height')}"),
@@ -101,8 +99,7 @@ def build_sections(path: str, segment: Optional[Segment] = None, ffprobe: str = 
                      _kv("Frames (from header)", s.get("nb_frames", "unknown"))]
             sections.append((f"Video #{n}", "\n".join(lines)))
         elif kind == "audio":
-            lines = [f"Audio #{n}",
-                     _kv("Stream index", s.get("index")),
+            lines = [_kv("Stream index", s.get("index")),
                      _kv("Format", f"{s.get('codec_long_name', s.get('codec_name', '?'))} ({s.get('codec_name', '?')})"),
                      _kv("Channels", f"{s.get('channels', '?')} ({s.get('channel_layout', '?')})"),
                      _kv("Sampling rate", f"{s.get('sample_rate', '?')} Hz"),
@@ -112,8 +109,7 @@ def build_sections(path: str, segment: Optional[Segment] = None, ffprobe: str = 
                      _kv("Duration", _hms(_num(s.get("duration"))))]
             sections.append((f"Audio #{n}" + (f" ({_lang(s)})" if _lang(s) else ""), "\n".join(lines)))
         else:
-            lines = [f"{kind.capitalize()} #{n}",
-                     _kv("Stream index", s.get("index")),
+            lines = [_kv("Stream index", s.get("index")),
                      _kv("Format", s.get("codec_name", "unknown")),
                      _kv("Language", _lang(s) or "unknown")]
             sections.append((f"{kind.capitalize()} #{n}", "\n".join(lines)))
@@ -123,7 +119,7 @@ def build_sections(path: str, segment: Optional[Segment] = None, ffprobe: str = 
 
 
 def _mediamaker_section(path: str, streams: list, fps: Optional[Fraction], seg: Optional[Segment], first_fn) -> str:
-    lines = ["MediaMaker: values used for the frame numbers", "",
+    lines = ["Values used for the frame numbers", "",
              "Frame numbers are counted from the first decodable video frame (number 0).",
              "Internally a frame is the picture at (container start + (first frame offset + n) / frame rate)."]
     try:
@@ -162,4 +158,5 @@ def _mediamaker_section(path: str, streams: list, fps: Optional[Fraction], seg: 
 
 
 def full_text(sections: list) -> str:
-    return "\n\n".join(text for _, text in sections)
+    """All sections as one text for the clipboard. The tabs do not repeat their names in the text, here the names are the headings."""
+    return "\n\n".join(f"{name}\n{text}" for name, text in sections)

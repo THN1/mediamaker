@@ -1760,7 +1760,7 @@ class frmMain(frmMainBase):
                 # the note in the picture only when the filters are switched off; without it if drawtext fails
                 notes = ([self.CUTPOINT_NOTE] if not self.cutpoint_filters_on() and ffmpeg_cmd.has_filter("drawtext") else []) + [""]
                 for note in notes:
-                    cmd = build_command(job, video_extra=note, setsar_always=True)
+                    cmd = build_command(job, video_extra=note)
                     res = self._render_fn(cmd, total_seconds(job), lambda p: None, cwd=folder, cancel=cancel)
                     if res.cancelled:
                         raise seek.SeekCancelled()

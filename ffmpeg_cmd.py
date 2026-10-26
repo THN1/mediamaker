@@ -190,8 +190,7 @@ def write_masks(segments: list[Segment], directory: str) -> list[str]:
 
 def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str] = None,
                   path_map: Callable[[str], str] = lambda p: p, unify: bool = False,
-                  stream_times: Union[dict, str, None] = "auto", origin: str = "container", video_extra: str = "",
-                  setsar_always: bool = False) -> list[str]:
+                  stream_times: Union[dict, str, None] = "auto", origin: str = "container", video_extra: str = "") -> list[str]:
     """Returns the ffmpeg argument list.
 
         setsar=1 is only set for SEVERAL source files (needed for concat). With a single
@@ -208,7 +207,6 @@ def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str]
         unify=True:  sets codec, sample rate and minrate/maxrate also for only one source file
                      (SAR behaviour stays unchanged).
         video_extra: filter text (with a trailing comma) inserted into the video chain of every segment, after trim and logo filters.
-        setsar_always: setsar=1 also for one source file (the cut point preview sets it as VB6 did).
     """
     prof, opts, segs = job.profile, job.options, job.segments
     if not segs:
@@ -244,7 +242,7 @@ def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str]
             if seek > 0:
                 args += ["-ss", str(seek)]
         args += ["-i", path_map(seg.path)]
-        filtr += video_filter(seg, pos, prof, opts, trim, setsar=multiple or setsar_always, extra=video_extra)
+        filtr += video_filter(seg, pos, prof, opts, trim, setsar=multiple, extra=video_extra)
         filtr += audio_filter(seg, pos, trim)
 
     if chapters_file:
