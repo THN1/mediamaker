@@ -4377,7 +4377,7 @@ def test_dedup(tmp, videos):
     check(shown == (190, 55), f"repeat of 60 frames: Marker B {shown[0]} (220 - 30), Marker A {shown[1]} (25 + 30)")
     check(len(win.asked) == 2 and "successfully removed" in win.asked[1] and "The duplicate scene of 60 frame(s) was cut in the middle: Marker B moved 30 frame(s) back, Marker A 30 frame(s) forward" in win.asked[1]
           and win.asked[1].endswith('Do you want to check the cut now with "Analyze cut point"?'), f"after the overlap the cut check is offered: {win.asked[1][:110]}")
-    check(win.asked[0].startswith("Remove the duplicate scene at the end of segment 1 and the start of segment 2?") and "Attention: this may take some time" in win.asked[0], "the question")
+    check(win.asked[0].startswith("Remove the duplicate scene at the end of segment 1 and the start of segment 2?") and "Attention" not in win.asked[0] and "some time" not in win.asked[0], "the question: no warning about the time (the search takes under a second)")
     check(win.cut_calls == [], "answer No: Analyze cut point is not started")
     saved = load_segments(win.project_path)
     check((saved[0].end, saved[1].start) == (a.end, b.start), "saved in the list")

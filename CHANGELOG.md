@@ -7,6 +7,8 @@
   made the preview jump to the start of the film first and play it briefly, with sound, before it went to the wanted frame. Kept from 0.3 are the
   watchdog (nothing reported by VLC for 8 s after a medium was started: new media player) and the report of an unsuccessful logo search. Known and
   open: on a slow network drive a jump in the open VLC medium can take seconds, and `stop()` can block the window for that time.
+- **Dedup scene**: the warning "Attention: this may take some time" is gone from the question; since only the middle line of the frames needed is read, in
+  one call per segment, the search takes less than a second.
 - **Restore session**: a double click on the wanted session is the same as OK (not in the dialog for deleting, where several sessions can be selected).
 - **Overlap segments**: when it is done, the program now asks whether to check the cut with "Analyze cut point" at once (Yes starts it for the same two
   segments) instead of only naming the menu item in the text.

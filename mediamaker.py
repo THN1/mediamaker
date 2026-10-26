@@ -1673,7 +1673,7 @@ class frmMain(frmMainBase):
         limit = max(int(self.options.get("dedup", 400)), 1)
         if not self.ask(f"Remove the duplicate scene at the end of segment {number} and the start of segment {number + 1}?\n\nThe pictures before marker B of segment {number} are "
                         f"compared with the pictures after marker A of segment {number + 1} (at most {limit} steps); both markers are moved until the same "
-                        f"picture is found, so that the duplicate scene is cut out cleanly.\n\nAttention: this may take some time."):
+                        f"picture is found, so that the duplicate scene is cut out cleanly."):
             return
         b, a = t1.end, t2.start
         started = time.monotonic()
