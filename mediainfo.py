@@ -119,7 +119,7 @@ def build_sections(path: str, segment: Optional[Segment] = None, ffprobe: str = 
 
 
 def _mediamaker_section(path: str, streams: list, fps: Optional[Fraction], seg: Optional[Segment], first_fn) -> str:
-    lines = ["Values used for the frame numbers", "",
+    lines = ["MediaMaker: values used for the frame numbers", "",
              "Frame numbers are counted from the first decodable video frame (number 0).",
              "Internally a frame is the picture at (container start + (first frame offset + n) / frame rate)."]
     try:

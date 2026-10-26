@@ -1320,10 +1320,10 @@ def test_media_info(tmp, videos):
     firsts = {name: body.splitlines()[0] for name, body in sections}
     check(all(first.split(" : ")[0].strip() not in (name, name.split(" (")[0]) for name, first in firsts.items())
           and firsts["General"].startswith("Complete name") and firsts["Video #1"].startswith("Stream index") and firsts["Audio #1 (deu)"].startswith("Stream index")
-          and firsts["MediaMaker"] == "Values used for the frame numbers", f"no title line at the top of the tabs: {firsts}")
+          and firsts["MediaMaker"] == "MediaMaker: values used for the frame numbers", f"no title line at the top of the tabs, the MediaMaker tab keeps its text: {firsts}")
     everything = mediainfo.full_text(sections)
     check(everything.startswith("General\nComplete name") and "\n\nVideo #1\nStream index" in everything and "\n\nAudio #1 (deu)\nStream index" in everything
-          and "\n\nMediaMaker\nValues used for the frame numbers" in everything, "the text for the clipboard has the names as headings")
+          and "\n\nMediaMaker\nMediaMaker: values used for the frame numbers" in everything, "the text for the clipboard has the names as headings")
     # --- menu
     work = os.path.join(tmp, "infowin")
     os.makedirs(work, exist_ok=True)
@@ -3782,6 +3782,13 @@ def test_sessions(tmp, videos):
     W.QDialog.on_exec = pick([0])
     check(sessions_dialog.choose_sessions(None, "Delete", "prompt", infos3, multi=True) is None, "cancel: None")
     W.QDialog.exec_result, W.QDialog.on_exec = 1, None
+    # a double click on a session: OK (when restoring one session), not when deleting several
+    one = sessions_dialog.SessionDialog(None, "Restore", "prompt", infos3, False, True)
+    one.list.itemDoubleClicked.emit(None)
+    check(len(one.called("accept")) == 1, "restoring: a double click on the session is OK")
+    many = sessions_dialog.SessionDialog(None, "Delete", "prompt", infos3, True, False)
+    many.list.itemDoubleClicked.emit(None)
+    check(many.called("accept") == [], "deleting several sessions: a double click does not accept")
     print("Sessions: OK (zip per session, backup with note, restore in parts, automatic backup, delete, dialog)")
 
 
@@ -4353,8 +4360,10 @@ def test_overlap(tmp, videos):
         a, b = win.segments
         a.end = a.first_frame + 220                                  # marker B: the first commercial picture
         b.start = b.first_frame + 25                                 # marker A: the first picture after the commercial
-        win.ask = lambda text: (win.asked.append(text), True)[1]
-        win.asked = []
+        win.asked, win.cut_calls = [], []
+        win.ask_answers = [True, False]                              # 1st question: overlap? Yes. 2nd (after it): check the cut now? No.
+        win.ask = lambda text: (win.asked.append(text), win.ask_answers.pop(0) if win.ask_answers else False)[1]
+        win.mnuCutPoints_Click = lambda: win.cut_calls.append(win.current)
         win.lvwSegments.select_row(0)
         win.lvwSegments_Click()
         return win, a, b
@@ -4363,9 +4372,10 @@ def test_overlap(tmp, videos):
     win.cmdOverlap_Click()
     shown = (a.end - a.first_frame, b.start - b.first_frame)
     check(shown == (190, 55), f"repeat of 60 frames: Marker B {shown[0]} (220 - 30), Marker A {shown[1]} (25 + 30)")
-    check("successfully done" in win.messages[-1] and "The repeated part of 60 frame(s) was cut in the middle: Marker B moved 30 frame(s) back, Marker A 30 frame(s) forward" in win.messages[-1]
-          and 'verify using menu option "Analyze cut point"' in win.messages[-1], f"message: {win.messages[-1][:120]}")
-    check(win.asked and win.asked[0].startswith("Overlap the end of segment 1 with the start of segment 2?") and "Attention: this may take some time" in win.asked[0], "the question")
+    check(len(win.asked) == 2 and "successfully done" in win.asked[1] and "The repeated part of 60 frame(s) was cut in the middle: Marker B moved 30 frame(s) back, Marker A 30 frame(s) forward" in win.asked[1]
+          and win.asked[1].endswith('Do you want to check the cut now with "Analyze cut point"?'), f"after the overlap the cut check is offered: {win.asked[1][:110]}")
+    check(win.asked[0].startswith("Overlap the end of segment 1 with the start of segment 2?") and "Attention: this may take some time" in win.asked[0], "the question")
+    check(win.cut_calls == [], "answer No: Analyze cut point is not started")
     saved = load_segments(win.project_path)
     check((saved[0].end, saved[1].start) == (a.end, b.start), "saved in the list")
     check(win.lvwSegments.topLevelItem(1).text(3) == segment_row(b, 2)[3] and win.lvwSegments.topLevelItem(0).text(4) == segment_row(a, 1)[4], "the rows of both segments show the new markers")
@@ -4378,7 +4388,12 @@ def test_overlap(tmp, videos):
     # b) a repeat of 61 frames (odd)
     win, a, b = window("b", 61)
     win.cmdOverlap_Click()
-    check((a.end - a.first_frame, b.start - b.first_frame) == (189, 55) and "The repeated part of 61 frame(s)" in win.messages[-1], f"odd repeat of 61: B 189, A 55: {(a.end - a.first_frame, b.start - b.first_frame)}")
+    check((a.end - a.first_frame, b.start - b.first_frame) == (189, 55) and "The repeated part of 61 frame(s)" in win.asked[1], f"odd repeat of 61: B 189, A 55: {(a.end - a.first_frame, b.start - b.first_frame)}")
+    # b2) answer Yes: Analyze cut point is started for the same segment
+    win, a, b = window("b2", 60)
+    win.ask_answers = [True, True]
+    win.cmdOverlap_Click()
+    check(win.cut_calls == [0] and (a.end - a.first_frame, b.start - b.first_frame) == (190, 55), "answer Yes: Analyze cut point is started (for segment 1 and its successor)")
     # c) the range is too small
     win, a, b = window("c", 60, limit=40)
     before = (a.end, b.start)

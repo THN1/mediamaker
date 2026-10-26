@@ -7,9 +7,12 @@
   made the preview jump to the start of the film first and play it briefly, with sound, before it went to the wanted frame. Kept from 0.3 are the
   watchdog (nothing reported by VLC for 8 s after a medium was started: new media player) and the report of an unsuccessful logo search. Known and
   open: on a slow network drive a jump in the open VLC medium can take seconds, and `stop()` can block the window for that time.
+- **Restore session**: a double click on the wanted session is the same as OK (not in the dialog for deleting, where several sessions can be selected).
+- **Overlap segments**: when it is done, the program now asks whether to check the cut with "Analyze cut point" at once (Yes starts it for the same two
+  segments) instead of only naming the menu item in the text.
 - **Media info**: the text of a tab no longer begins with the title of the tab again ("General", "Video #1", "Audio #1 (deu)"); the tab already says it.
-  The first line of the MediaMaker tab is now just "Values used for the frame numbers". "Copy all" still has the names as headings, so that the copied
-  text can be read.
+  The MediaMaker tab keeps its first line "MediaMaker: values used for the frame numbers" (it is a description, not just the title). "Copy all"
+  still has the names as headings, so that the copied text can be read.
 - **Analyze cut point keeps the aspect ratio of the source**: `setsar=1` is only set when the two segments come from DIFFERENT files (it is needed for the
   concatenation then), like in Save As. Before, it was always set, which replaced the sample aspect ratio of the source by 1:1. The parameter
   `setsar_always` of `build_command` is gone.

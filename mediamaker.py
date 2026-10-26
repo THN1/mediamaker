@@ -1706,9 +1706,11 @@ class frmMain(frmMainBase):
         self.lblSegment_Upd()
         self.cmdPos_Click(10)
         elapsed = int(time.monotonic() - started)
-        self.msg(f"Overlapping Marker B of segment {number} and Marker A of segment {number + 1} successfully done and saved in "
-                 f"{elapsed // 3600}:{elapsed // 60 % 60:02d}:{elapsed % 60:02d}; please verify using menu option \"Analyze cut point\".\n\n"
-                 f"The repeated part of {step - 1} frame(s) was cut in the middle: Marker B moved {b - i1} frame(s) back, Marker A {i2 - a} frame(s) forward.")
+        if self.ask(f"Overlapping Marker B of segment {number} and Marker A of segment {number + 1} successfully done and saved in "
+                    f"{elapsed // 3600}:{elapsed // 60 % 60:02d}:{elapsed % 60:02d}.\n\n"
+                    f"The repeated part of {step - 1} frame(s) was cut in the middle: Marker B moved {b - i1} frame(s) back, Marker A {i2 - a} frame(s) forward.\n\n"
+                    f"Do you want to check the cut now with \"Analyze cut point\"?"):
+            self.mnuCutPoints_Click()
 
     # ------------------------------------------------------------------ Analyze cut point (Ctrl+Y)
     CUTPOINT_SECONDS = 3                       # length of the pieces before and behind the cut (VB6: 3 * 25 frames)

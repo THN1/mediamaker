@@ -313,7 +313,7 @@ class QAbstractItemView(QWidget):
 
 
 class QListWidget(QAbstractItemView):
-    signals = {"currentRowChanged"}
+    signals = {"currentRowChanged", "itemDoubleClicked"}
     methods = {"setFixedWidth", "setSelectionMode", "setMinimumWidth", "setMinimumHeight"}
 
     def selectedIndexes(self):

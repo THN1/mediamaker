@@ -1,5 +1,5 @@
 """Dialog for choosing sessions: the list of the saved sessions (newest first), one or several can be selected; when restoring, the parts
-to be restored (segment list, settings) can be chosen."""
+to be restored (segment list, settings) can be chosen. When one session is chosen (restoring), a double click on it is the same as OK."""
 from __future__ import annotations
 
 from typing import Optional
@@ -24,6 +24,8 @@ class SessionDialog(QtWidgets.QDialog):
         self.list.setMinimumWidth(560)
         self.list.setMinimumHeight(220)
         layout.addWidget(self.list, 1)
+        if not multi:
+            self.list.itemDoubleClicked.connect(lambda item: self.accept())       # a double click on the wanted session is OK (not for deleting)
         self.chkList = self.chkIni = None
         if with_parts:
             self.chkList = QtWidgets.QCheckBox("Segment list")
