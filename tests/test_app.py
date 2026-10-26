@@ -1925,7 +1925,8 @@ def test_save_video(tmp, videos):
     enabled = lambda action: [a[0] for a in action.called("setEnabled")]
     check(enabled(win.mnuCancel)[-2:] == [True, False] and enabled(win.mnuSaveMP4)[-2:] == [False, True] and enabled(win.mnuSaveAVI)[-2:] == [False, True]
           and enabled(win.mnuBatch)[-2:] == [False, True], "menus: Cancel save only while saving, Save and Batch blocked meanwhile")
-    check(not [d for d in os.listdir(tempfile.gettempdir()) if d.startswith("mediamaker_") and os.listdir(os.path.join(tempfile.gettempdir(), d))] , "no temporary files left")
+    check(not [d for d in os.listdir(tempfile.gettempdir()) if d.startswith("mediamaker_") and os.path.isdir(os.path.join(tempfile.gettempdir(), d))
+                and os.listdir(os.path.join(tempfile.gettempdir(), d))], "no temporary files left")
     # --- overwriting: the file dialog itself asks about an existing file (also on a double click on it); MediaMaker only asks when it
     #     had to add the extension, because then the dialog could not know the name that is really written
     win.messages.clear()
@@ -3114,10 +3115,15 @@ def test_cutpoint(tmp, videos):
     win.lvwSegments_Click()
     win.mnuCutPoints_Click()
     check(win.messages[-1] == "Please select a segment, but not the last one." and len(win.dialogs) == 0, "last segment: message, nothing is made")
-    # --- the job: last 75 frames of the first, first 75 frames of the next segment, no masks
+    # --- the job: last 75 frames of the first, first 75 frames of the next segment
     a.mask = "0.1 0.2 0.3 0.4"
     b.mask = logo.mask_to_png_b64(np.ones((576, 720), bool))
     win.settings.set_option("crop", "72")
+    check(win.options["cutpoint_filters"] == "on", "the default: the filters are on, as in Save As")
+    job_on = win.cutpoint_job(0)
+    check((job_on.segments[0].start, job_on.segments[0].end) == (a.end - 75, a.end) and job_on.segments[0].mask == a.mask and job_on.segments[1].mask == b.mask
+          and job_on.options["crop"] == "72", "filters on: masks and cropping stay as in the list")
+    win.settings.set_option("cutpoint_filters", "off")
     job = win.cutpoint_job(0)
     x, y = job.segments
     check((x.start, x.end, x.mask) == (a.end - 75, a.end, "") and (y.start, y.end, y.mask) == (b.start, b.start + 75, ""), f"job: {(x.start, x.end)} and {(y.start, y.end)}, masks removed")
@@ -3150,6 +3156,27 @@ def test_cutpoint(tmp, videos):
           f"command: two sources, concat, setsar=1, the profile's scale, the note, no crop or logo filter: {graph[:150]}")
     check(external == [["/opt/vlc/vlc", win.cutpoint_path()], ["/opt/avidemux/avidemux_2.8.1.appImage", win.cutpoint_path()]] and asked == ["Open cut point video clip with AVIDEMUX now?"],
           f"VLC first (from the options), then, after Yes, Avidemux: {external}")
+    # --- the same with the filters on (the default): crop and both logo filters in the command, no note, the masks in a folder that is removed afterwards
+    win.settings.set_option("cutpoint_filters", "on")
+    commands.clear(), external.clear(), asked.clear()
+    seen_folders = []
+    def render_on(cmd, total, on_progress, cwd=None, cancel=None):
+        seen_folders.append((cwd, sorted(os.listdir(cwd)) if cwd and os.path.isdir(cwd) else None))
+        commands.append(cmd)
+        return RunResult(0, False, 0.1, "")
+    win._render_fn = render_on
+    answers[:] = ["no"]
+    win.mnuCutPoints_Click()
+    graph_on = commands[0][commands[0].index("-filter_complex") + 1]
+    check("crop=" in graph_on and "delogo=" in graph_on and "removelogo" in graph_on and "drawtext" not in graph_on and graph_on.count("setsar=1") == 2 and "scale=720:576" in graph_on
+          and "concat=n=2" in graph_on, f"filters on: crop, DeLogo and RemoveLogo are in the command, no note: {graph_on[:120]}")
+    folder_used, files_used = seen_folders[0]
+    check(folder_used and os.path.basename(folder_used).startswith("mediamaker_cutpoint_") and files_used and all(f.startswith("removelogo") and f.endswith(".png") for f in files_used)
+          and any(f in graph_on for f in files_used), f"the mask of the RemoveLogo filter was written for the run: {files_used}")
+    check(not os.path.exists(folder_used), "the folder with the masks is removed afterwards")
+    win._render_fn = fake_render
+    win.settings.set_option("cutpoint_filters", "off")
+    commands.clear(), external.clear(), asked.clear()
     # without drawtext when the first run fails
     commands.clear(), external.clear(), asked.clear()
     results[:] = [RunResult(1, False, 0.1, "No such filter: drawtext")]
@@ -3212,6 +3239,19 @@ def test_cutpoint(tmp, videos):
     info = probe(out)
     check(os.path.exists(out) and 148 <= info.video.frames <= 152 and (info.video.width, info.video.height) == (720, 576), f"the clip: {info.video.frames} frames (2 x 75), {info.video.width}x{info.video.height}")
     check(external and external[-1][-1] == out, "VLC was started with the clip")
+    os.remove(out)
+    # --- really with the filters on (the default): cropping, DeLogo and the RemoveLogo mask (written to a folder for the run) work in ffmpeg;
+    # small masks (removelogo with a mask over the whole picture is extremely slow)
+    small = np.zeros((576, 720), bool)
+    small[100:130, 600:640] = True
+    a.mask = "0.8 0.1 0.05 0.05"
+    b.mask = logo.mask_to_png_b64(small)
+    win.settings.set_option("cutpoint_filters", "on")
+    answers[:] = ["no"]
+    win.mnuCutPoints_Click()
+    info = probe(out)
+    check(os.path.exists(out) and 148 <= info.video.frames <= 152 and (info.video.width, info.video.height) == (720, 576), f"filters on, with ffmpeg: {info.video.frames} frames, {info.video.width}x{info.video.height}")
+    check(not [f for f in os.listdir(tempfile.gettempdir()) if f.startswith("mediamaker_cutpoint_")], "no folder with masks is left behind")
     os.remove(out)
     print("Analyze cut point: OK (job, command, fallback, errors, VLC, Avidemux, real clip)")
 
@@ -4339,6 +4379,26 @@ def test_overlap(tmp, videos):
     print("Overlap: OK (far, line, search order, scanlines, two made-up recordings with a repeat, messages, limits)")
 
 
+def test_wait_dialog(tmp, videos):
+    """The wait window has room for several lines (before, the second line was cut off) and wraps long lines."""
+    import dialogs
+    cancelled = []
+    d = dialogs.WaitDialog(None, "Performing segment overlap search", lambda: cancelled.append(1))
+    label = d.label
+    check(label.called("setWordWrap")[-1][0] is True and label.called("setMinimumWidth")[-1][0] == 420, "long lines are wrapped; the window is wide enough")
+    check(label.called("setMinimumHeight")[-1][0] >= 3 * 16 + 12, f"room for three lines from the start: {label.called('setMinimumHeight')[-1][0]} pixels")
+    d.set_text("Performing segment overlap search, please wait...\nreading the pictures...")
+    check(label.called("setText")[-1][0] == "Performing segment overlap search, please wait...\nreading the pictures...", "the text with its two lines")
+    from PySide6 import QtWidgets as W
+    W.QDialog.reject = lambda self: None                          # the replacement for Qt has no real reject() for super() to find
+    try:
+        d.reject()
+    finally:
+        del W.QDialog.reject
+    check(cancelled == [1], "Cancel calls the cancel function")
+    print("Wait window: OK (room for three lines, word wrap, cancel)")
+
+
 def test_shutdown(tmp, videos):
     """When the window is closed, playback is ended, even in the middle of playing."""
     win = make_window(tmp)
@@ -4393,6 +4453,7 @@ def main():
     test_delete_files(tmp, sys.argv[1])
     test_delete_sidecars(tmp, sys.argv[1])
     test_overlap(tmp, sys.argv[1])
+    test_wait_dialog(tmp, sys.argv[1])
     test_timeline(tmp, sys.argv[1])
     test_segments(tmp, sys.argv[1])
     test_thumbnail_errors(tmp, sys.argv[1])

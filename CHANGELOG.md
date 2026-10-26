@@ -7,6 +7,12 @@
   made the preview jump to the start of the film first and play it briefly, with sound, before it went to the wanted frame. Kept from 0.3 are the
   watchdog (nothing reported by VLC for 8 s after a medium was started: new media player) and the report of an unsuccessful logo search. Known and
   open: on a slow network drive a jump in the open VLC medium can take seconds, and `stop()` can block the window for that time.
+- **Analyze cut point: new option `cutpoint_filters` (on|off, group Technical)**. With `on`, the new default, the clip is made with all the filters that
+  Save As applies (cropping, scaling, DeLogo, RemoveLogo; the masks of RemoveLogo are written to a temporary folder for the run, as in Save As), without
+  the note in the picture. With `off` as before (VB6): without cropping and logo filters, only scaled to the profile, with the note "cropping, delogo and
+  resizing functions disabled".
+- **Wait window** ("..., please wait..."): it has room for three lines from the start and wraps long lines. Before, the second line ("reading the
+  pictures...", "frame 135: border 72 ...") was cut off because the window kept the height of the first text.
 - **Edit => Overlap segments (Ctrl+F8)**, VB6 `cmdOverlap_Click` with `match()` and `far()` (new module `overlap.py`). If a recording repeats the end of one
   segment at the start of the next, marker B of the selected segment and marker A of the next one are moved towards each other, alternately (B back, A
   forward) up to `overlap` steps (option, default 400) until the picture at B equals the picture at A: the repeated part is cut in the middle and the cut
@@ -17,6 +23,9 @@
   markers cannot run through their segments. Instead of one ffmpeg call per picture (VB6: `oneframe`), one call per segment fetches only the middle
   line of all frames needed (`frames.grab_scanlines`, the same values as the line of the whole frame): about 1 s for the example. The cut-in-the-middle
   is reported with the number of repeated frames and how far each marker moved. Not available for the last segment; different picture sizes are refused.
+  The threshold of `far` (24) was tested against 13 other values on the same example: below 24 true pairs fail (at 20: no result for 7.6 % of the
+  starting positions, at 16: for 24 %), from 36 on the search stops one frame too early (101 of 6156 starting positions at 36 and 40, 541 at 48, most at
+  64); 24 to 33 are all right, so 24 stays.
 - **Removed: the rewinding after a logo search** (VB6 `rewind()` with `diff()` and `average()`, option `logo_rewind`). It did not give satisfying results
   in the tests (with a wipe between commercial and movie it went back the whole 1.8 s). "Seek end of commercial" with the logo now returns the first frame
   WITH the logo, "Seek next commercial" the first frame WITHOUT it, and a search that finds nothing returns the end of the movie. In VB6 `rewind` was

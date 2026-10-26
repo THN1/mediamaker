@@ -51,7 +51,7 @@ class FontMetrics:
 
 
 class QWidget(QObject):
-    methods = {"deleteLater", "underMouse", "setAttribute", "setCursor", "unsetCursor", "raise_", "fontMetrics", "setMinimumSize", "setMaximumSize", "setSizePolicy", "setGeometry", "geometry", "resize", "setFixedSize", "setMinimumSize", "move", "hide", "show", "setVisible",
+    methods = {"setMinimumHeight", "setMinimumWidth", "deleteLater", "underMouse", "setAttribute", "setCursor", "unsetCursor", "raise_", "fontMetrics", "setMinimumSize", "setMaximumSize", "setSizePolicy", "setGeometry", "geometry", "resize", "setFixedSize", "setMinimumSize", "move", "hide", "show", "setVisible",
                "setEnabled", "isEnabled", "setToolTip", "setFont", "setStyleSheet", "setAutoFillBackground",
                "setMouseTracking", "setAcceptDrops", "setWindowTitle", "setWindowFlag", "setWindowIcon", "winId", "rect",
                "frameGeometry", "screen", "isActiveWindow", "update", "contentsRect", "width", "height", "setFocusPolicy",
@@ -470,7 +470,7 @@ class QMainWindow(QWidget):
 
 
 class QDialog(QWidget):
-    methods = {"accept", "reject"}
+    methods = {"accept", "reject", "setModal"}
     exec_result = 1                      # adjustable in the test: 1 = accepted, 0 = cancelled
     on_exec = None                       # adjustable in the test: function(dialog), e.g. to change inputs
 

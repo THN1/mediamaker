@@ -1719,14 +1719,22 @@ class frmMain(frmMainBase):
     def cutpoint_path() -> str:
         return os.path.join(tempfile.gettempdir(), "mediamaker_cutpoint.mp4")
 
+    def cutpoint_filters_on(self) -> bool:
+        return self.options.get("cutpoint_filters", "on") != "off"
+
     def cutpoint_job(self, index: int) -> Job:
         """Job for the clip around the cut between the segments `index` and `index + 1` (0-based): the last 3 seconds of the first and the first
-        3 seconds of the next segment, without cropping and logo filters (the profile's scale applies), written to cutpoint_path()."""
+        3 seconds of the next segment, written to cutpoint_path(). With the option cutpoint_filters = on (the default) with all the filters
+        that Save As applies; with off without cropping and logo filters (the profile's scale applies in both cases)."""
         a, b = self.segments[index], self.segments[index + 1]
         frames = round(self.CUTPOINT_SECONDS * float(a.fps))
-        first = dataclasses.replace(a, start=max(a.first_frame, a.end - frames), mask="")
-        second = dataclasses.replace(b, end=min(b.start + frames, b.total_frames), mask="")
-        return Job(output=self.cutpoint_path(), profile=dict(self.profile), options={**self.options, "crop": "0"}, segments=[first, second])
+        first = dataclasses.replace(a, start=max(a.first_frame, a.end - frames))
+        second = dataclasses.replace(b, end=min(b.start + frames, b.total_frames))
+        options = dict(self.options)
+        if not self.cutpoint_filters_on():
+            first, second = dataclasses.replace(first, mask=""), dataclasses.replace(second, mask="")
+            options["crop"] = "0"
+        return Job(output=self.cutpoint_path(), profile=dict(self.profile), options=options, segments=[first, second])
 
     def mnuCutPoints_Click(self):
         """Makes a short clip around the cut between the selected segment and the next one and plays it in VLC (outside of the program); after
@@ -1746,13 +1754,20 @@ class frmMain(frmMainBase):
 
         def work(cancel):
             res = None
-            for note in ([self.CUTPOINT_NOTE] if ffmpeg_cmd.has_filter("drawtext") else []) + [""]:       # without the text if drawtext fails
-                cmd = build_command(job, video_extra=note, setsar_always=True)
-                res = self._render_fn(cmd, total_seconds(job), lambda p: None, cwd=None, cancel=cancel)
-                if res.cancelled:
-                    raise seek.SeekCancelled()
-                if res.returncode == 0:
-                    return 0
+            folder = tempfile.mkdtemp(prefix="mediamaker_cutpoint_")        # the masks of the RemoveLogo filter (removelogoNN.png), as in Save As
+            try:
+                write_masks(job.segments, folder)
+                # the note in the picture only when the filters are switched off; without it if drawtext fails
+                notes = ([self.CUTPOINT_NOTE] if not self.cutpoint_filters_on() and ffmpeg_cmd.has_filter("drawtext") else []) + [""]
+                for note in notes:
+                    cmd = build_command(job, video_extra=note, setsar_always=True)
+                    res = self._render_fn(cmd, total_seconds(job), lambda p: None, cwd=folder, cancel=cancel)
+                    if res.cancelled:
+                        raise seek.SeekCancelled()
+                    if res.returncode == 0:
+                        return 0
+            finally:
+                shutil.rmtree(folder, ignore_errors=True)
             raise RuntimeError(f"ffmpeg reported an error (code {res.returncode}):\n{res.errors}")
         self._run_job(work, "Creating preview", lambda rc: self.cutpoint_ready(out))
         self.lvwSegments.setFocus()

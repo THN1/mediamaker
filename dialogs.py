@@ -233,7 +233,11 @@ class WaitDialog(QtWidgets.QDialog):
         layout.setContentsMargins(24, 24, 24, 24)
         label = QtWidgets.QLabel(f"{message}, please wait...")
         label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        label.setMinimumWidth(360)
+        label.setWordWrap(True)                                  # a long line is wrapped instead of making the window wider
+        label.setMinimumWidth(420)
+        # Room for three lines from the start: the texts that come later ("..., please wait...", then one or two lines of what is going on) must fit
+        # without the window changing its size all the time (before, the second line was cut off).
+        label.setMinimumHeight(3 * label.fontMetrics().lineSpacing() + 2 * 6 + 2 * 1 + 4)
         self.label = label
         cancel = QtWidgets.QPushButton("Cancel")
         cancel.clicked.connect(lambda *args: self.reject())

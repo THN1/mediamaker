@@ -25,6 +25,7 @@ PRESETS = {
     "player": ["memory", "embed"],
     "dialog_style": ["tabs", "list"],
     "file_dialog": ["qt", "native"],
+    "cutpoint_filters": ["on", "off"],
 }
 
 
@@ -80,7 +81,7 @@ OPTION_GROUPS = (
     ("Logo", ("overlay_opacity",)),
     ("Audio/Subtitles", ("audio", "multilanguage", "subtitle", "aflags")),
     ("Batch", ("path_map", "batch")),
-    ("Technical", ("floor", "detect", "player", "vlc_args", "hide_messages", "dialog_style", "file_dialog", "sessions_dir")),
+    ("Technical", ("floor", "detect", "player", "vlc_args", "hide_messages", "dialog_style", "file_dialog", "sessions_dir", "cutpoint_filters")),
     ("Tools", ("avidemux", "vlc")),
 )
 
@@ -123,6 +124,8 @@ def validate_options(o: dict) -> list[str]:
             errors.append(f'"{key}" must not contain double quotes.')
     if "player" in o and o["player"] not in ("memory", "embed"):
         errors.append('"player" must be memory or embed.')
+    if "cutpoint_filters" in o and o["cutpoint_filters"] not in ("on", "off"):
+        errors.append('"cutpoint_filters" must be on or off.')
     if "file_dialog" in o and o["file_dialog"] not in ("qt", "native"):
         errors.append('"file_dialog" must be qt or native.')
     if "dialog_style" in o and o["dialog_style"] not in ("tabs", "list"):
