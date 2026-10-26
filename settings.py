@@ -253,7 +253,7 @@ class Settings:
 def default_options() -> dict:
     """Defaults in case the INI file contains no options yet (as in VB6). The step widths of the search are given in seconds
         (40 s = 1000 frames and 240 s = 6000 frames at 25 FPS, the values from VB6)."""
-    return {"crop": "0", "floor": "2", "blackness": "12", "allowance": "1000", "overlap": "400", "audio": "1",
+    return {"crop": "0", "floor": "2", "blackness": "12", "allowance": "1000", "dedup": "400", "audio": "1",
             "pause": "160", "detect": "0", "aflags": "", "subtitle": "0", "multilanguage": "False",
             "step_end": "40", "step_next": "240", "border_tol": "3", "cut_window": "5",
             "logo_edge": "18", "logo_conf": "0.2", "cut_diff": "30", "path_map": "",
@@ -277,7 +277,7 @@ DEFAULT_TOOLTIPS = {
     'floor': 'Seek next earlier keyframe in this many seconds; should be 1 (or maybe 2)',
     'blackness': 'RGB-related value below which non-black pixels will be considered black (RGB=0) during auto-cropping',
     'allowance': 'During auto-cropping, max. number of non-black pixels allowed in one scanline to be still considered black',
-    'overlap': 'Max. number of frames tried during segment overlap search (menu Edit => Overlap segments)',
+    'dedup': 'Max. number of frames examined during duplicate scene removal search (menu Edit => Dedup scene)',
     'audio': 'Use nth detected audio stream (language); should be 1 unless (optionally) for multilanguage DVD',
     'pause': 'Min. length (in seconds) of pause caused by commercials in between movie segments (for TV recordings)',
     'detect': 'Detect audio streams after moving n milliseconds into the source file; useful for streamed recordings (.ts)',

@@ -22,9 +22,12 @@
   resizing functions disabled".
 - **Wait window** ("..., please wait..."): it has room for three lines from the start and wraps long lines. Before, the second line ("reading the
   pictures...", "frame 135: border 72 ...") was cut off because the window kept the height of the first text.
-- **Edit => Overlap segments (Ctrl+F8)**, VB6 `cmdOverlap_Click` with `match()` and `far()` (new module `overlap.py`). If a recording repeats the end of one
+- **Edit => Dedup scene (Ctrl+F8)** (first "Overlap segments"), VB6 `mnuDeDup_Click` with `match()` and `far()` (new module `dedup.py`). The names and texts follow the
+  changed VB6 form (`mnuDeDup`, "Dedup scene", "Duplicate scene removal failed: ..."); the generated user interface was made again from it (only the menu
+  item changed). The option `overlap` is now `dedup` (like in the VB6 program): old INI files are taken over at the start (the value moves, the old help
+  text goes; if both exist, `dedup` wins), the VB6 INI file with `dedup` is read as it is (`tests/sample_MediaMaker_dedup.ini`). If a recording repeats the end of one
   segment at the start of the next, marker B of the selected segment and marker A of the next one are moved towards each other, alternately (B back, A
-  forward) up to `overlap` steps (option, default 400) until the picture at B equals the picture at A: the repeated part is cut in the middle and the cut
+  forward) up to `dedup` steps (option, default 400) until the picture at B equals the picture at A: the repeated part is cut in the middle and the cut
   is clean (verify with Analyze cut point). The pictures are compared by one line in the middle, from 20 % to 80 % of the width; equal if no R, G or B
   value differs by 24 or more (`far`, unchanged from VB6). Measured with a real example (two segments, 8.8 s repeated, MPEG-2 SD): 219 of the 222
   matching pairs pass the test, pairs one frame apart pass in only 2.5 %, and for 6156 starting positions of the markers the right pair was found

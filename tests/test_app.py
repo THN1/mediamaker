@@ -4291,37 +4291,40 @@ def test_delete_sidecars(tmp, videos):
     print("Delete with additional files: OK (what is meant, check box, not ticked at first, errors, several recordings)")
 
 
-def test_overlap(tmp, videos):
-    """Edit => Overlap segments: if a recording repeats the end of one segment at the start of the next, the markers B and A are moved towards each
+def test_dedup(tmp, videos):
+    """Edit => Dedup scene: if a recording repeats the end of one segment at the start of the next, the markers B and A are moved towards each
     other until the same picture is found; the repeated part is cut in the middle."""
     import numpy as np
-    import overlap
+    import dedup
     from frames import grab_frame, grab_scanlines
     from mediaprobe import first_frame_number
     from project import load_segments, segment_row
+    # --- the menu item: its name and caption come from the VB6 form (mnuDeDup, "Dedup scene", Ctrl+F8)
+    probe_win = seek_window(tmp, videos, ("sample2.ts",), workdir="dedupmenu")
+    check(hasattr(probe_win, "mnuDeDup") and not hasattr(probe_win, "cmdOverlap") and hasattr(probe_win, "mnuDeDup_Click"), "the menu item is called mnuDeDup (VB6), its handler mnuDeDup_Click")
     # --- the pieces of the test
-    check(overlap.far(10, 33) is False and overlap.far(10, 34) is True and overlap.far(34, 10) is True and overlap.far(0, 0) is False, "far(): a difference of 24 or more (VB6: (a - b) \\ 24 > 0)")
-    check(overlap.scan_range(720) == (144, 576) and overlap.scan_range(704) == (141, 563) and overlap.scan_range(1280) == (256, 1024) and overlap.scan_row(576) == 288 and overlap.scan_row(577) == 288,
+    check(dedup.far(10, 33) is False and dedup.far(10, 34) is True and dedup.far(34, 10) is True and dedup.far(0, 0) is False, "far(): a difference of 24 or more (VB6: (a - b) \\ 24 > 0)")
+    check(dedup.scan_range(720) == (144, 576) and dedup.scan_range(704) == (141, 563) and dedup.scan_range(1280) == (256, 1024) and dedup.scan_row(576) == 288 and dedup.scan_row(577) == 288,
           "the compared line: 20 % to 80 % of the width in the middle (as the VB6 loop)")
     base = np.full((1, 433, 3), 100, np.uint8)
     near, farther = base.copy(), base.copy()
     near[0, 5, 0] = 123
     farther[0, 5, 0] = 124
-    check(overlap.lines_match(base, base) and overlap.lines_match(base, near) and not overlap.lines_match(base, farther) and not overlap.lines_match(base, base[:, :400]),
+    check(dedup.lines_match(base, base) and dedup.lines_match(base, near) and not dedup.lines_match(base, farther) and not dedup.lines_match(base, base[:, :400]),
           "lines: equal if no colour value is far (23 passes, 24 does not); lines of different length never")
-    check(overlap.frames_needed(1000, 50, 400) == ((800, 1000), (50, 249)) and overlap.frames_needed(1000, 50, 7) == ((997, 1000), (50, 53)), "frames the search can look at")
+    check(dedup.frames_needed(1000, 50, 400) == ((800, 1000), (50, 249)) and dedup.frames_needed(1000, 50, 7) == ((997, 1000), (50, 53)), "frames the search can look at")
     visited = []
-    overlap.search(lambda n: (visited.append(("B", n)), None)[1], lambda n: (visited.append(("A", n)), None)[1], 100, 10, 6)
+    dedup.search(lambda n: (visited.append(("B", n)), None)[1], lambda n: (visited.append(("A", n)), None)[1], 100, 10, 6)
     pairs = [(visited[i][1], visited[i + 1][1]) for i in range(0, len(visited), 2)]
     check(pairs == [(100, 10), (99, 10), (99, 11), (98, 11), (98, 12), (97, 12)], f"the markers move alternately, B back first: {pairs}")
     rand_line = lambda n: np.random.default_rng(n).integers(0, 256, (1, 433, 3), dtype=np.uint8)      # every picture another line, the same picture the same line
-    r = overlap.search(rand_line, lambda n: rand_line(n + 70), 300, 5, 400)
+    r = dedup.search(rand_line, lambda n: rand_line(n + 70), 300, 5, 400)
     check(r == (187, 117, 226), f"search on made-up lines (segment 2 is 70 frames ahead): found at step 226 = 225 + 1, B back 113, A forward 112: {r}")
     steps = []
-    check(overlap.search(lambda n: None, lambda n: None, 100, 10, 50, steps.append) is None and steps == list(range(1, 51)), "no pictures: no match, the progress counts every step")
-    check(overlap.search(rand_line, lambda n: rand_line(n + 5), 100, 10, 400, None, b_min=99) is None, "the first marker may not reach the start of its segment")
-    check(overlap.search(rand_line, lambda n: rand_line(n + 5), 100, 10, 400, None, a_max=11) is None, "the second marker may not reach the end of its segment")
-    check(overlap.search(rand_line, lambda n: rand_line(n + 5), 100, 10, 400) == (57, 52, 86), "without the limits the same lines are found (step 86: B back 43, A forward 42)")
+    check(dedup.search(lambda n: None, lambda n: None, 100, 10, 50, steps.append) is None and steps == list(range(1, 51)), "no pictures: no match, the progress counts every step")
+    check(dedup.search(rand_line, lambda n: rand_line(n + 5), 100, 10, 400, None, b_min=99) is None, "the first marker may not reach the start of its segment")
+    check(dedup.search(rand_line, lambda n: rand_line(n + 5), 100, 10, 400, None, a_max=11) is None, "the second marker may not reach the end of its segment")
+    check(dedup.search(rand_line, lambda n: rand_line(n + 5), 100, 10, 400) == (57, 52, 86), "without the limits the same lines are found (step 86: B back 43, A forward 42)")
     # --- one line of the frames is exactly that of the whole frame
     sample = os.path.join(videos, "sample2.ts")
     first = first_frame_number(sample, Fraction(25))
@@ -4329,7 +4332,7 @@ def test_overlap(tmp, videos):
     whole = {first + 20 + k: grab_frame(sample, first + 20 + k, Fraction(25)) for k in (0, 3, 5)}
     check(sorted(got) == list(range(first + 20, first + 26)) and all(np.array_equal(got[n][0], whole[n][288, 144:577]) for n in whole), "grab_scanlines: the same values as the line of the whole frame")
     # --- two made-up recordings with a repeat: content frame c of the first at 0..219 and a few commercial frames; the second begins with commercial
-    work = os.path.join(tmp, "overlap")
+    work = os.path.join(tmp, "dedup")
     os.makedirs(work, exist_ok=True)
     W, H = 720, 576
     yy, xx = np.mgrid[0:H, 0:W]
@@ -4356,7 +4359,7 @@ def test_overlap(tmp, videos):
     def window(tag, repeat, limit=400):
         s1, s2 = make(repeat, tag)
         win = seek_window(tmp, work, (os.path.basename(s1), os.path.basename(s2)), workdir=f"overlapwin{tag}", first_fn=first_frame_number)
-        win.settings.set_option("overlap", str(limit))
+        win.settings.set_option("dedup", str(limit))
         a, b = win.segments
         a.end = a.first_frame + 220                                  # marker B: the first commercial picture
         b.start = b.first_frame + 25                                 # marker A: the first picture after the commercial
@@ -4369,12 +4372,12 @@ def test_overlap(tmp, videos):
         return win, a, b
     # a) a repeat of 60 frames: found at step 61, B back by 30, A forward by 30
     win, a, b = window("a", 60)
-    win.cmdOverlap_Click()
+    win.mnuDeDup_Click()
     shown = (a.end - a.first_frame, b.start - b.first_frame)
     check(shown == (190, 55), f"repeat of 60 frames: Marker B {shown[0]} (220 - 30), Marker A {shown[1]} (25 + 30)")
-    check(len(win.asked) == 2 and "successfully done" in win.asked[1] and "The repeated part of 60 frame(s) was cut in the middle: Marker B moved 30 frame(s) back, Marker A 30 frame(s) forward" in win.asked[1]
+    check(len(win.asked) == 2 and "successfully removed" in win.asked[1] and "The duplicate scene of 60 frame(s) was cut in the middle: Marker B moved 30 frame(s) back, Marker A 30 frame(s) forward" in win.asked[1]
           and win.asked[1].endswith('Do you want to check the cut now with "Analyze cut point"?'), f"after the overlap the cut check is offered: {win.asked[1][:110]}")
-    check(win.asked[0].startswith("Overlap the end of segment 1 with the start of segment 2?") and "Attention: this may take some time" in win.asked[0], "the question")
+    check(win.asked[0].startswith("Remove the duplicate scene at the end of segment 1 and the start of segment 2?") and "Attention: this may take some time" in win.asked[0], "the question")
     check(win.cut_calls == [], "answer No: Analyze cut point is not started")
     saved = load_segments(win.project_path)
     check((saved[0].end, saved[1].start) == (a.end, b.start), "saved in the list")
@@ -4387,63 +4390,110 @@ def test_overlap(tmp, videos):
     check(np.abs(p1 - p2).mean() < 6 and np.abs(p1 - prev).mean() > 15, "clean cut: the same picture at B and A, and a clearly different one before A")
     # b) a repeat of 61 frames (odd)
     win, a, b = window("b", 61)
-    win.cmdOverlap_Click()
-    check((a.end - a.first_frame, b.start - b.first_frame) == (189, 55) and "The repeated part of 61 frame(s)" in win.asked[1], f"odd repeat of 61: B 189, A 55: {(a.end - a.first_frame, b.start - b.first_frame)}")
+    win.mnuDeDup_Click()
+    check((a.end - a.first_frame, b.start - b.first_frame) == (189, 55) and "The duplicate scene of 61 frame(s)" in win.asked[1], f"odd repeat of 61: B 189, A 55: {(a.end - a.first_frame, b.start - b.first_frame)}")
     # b2) answer Yes: Analyze cut point is started for the same segment
     win, a, b = window("b2", 60)
     win.ask_answers = [True, True]
-    win.cmdOverlap_Click()
+    win.mnuDeDup_Click()
     check(win.cut_calls == [0] and (a.end - a.first_frame, b.start - b.first_frame) == (190, 55), "answer Yes: Analyze cut point is started (for segment 1 and its successor)")
     # c) the range is too small
     win, a, b = window("c", 60, limit=40)
     before = (a.end, b.start)
-    win.cmdOverlap_Click()
-    check(win.messages[-1] == "Overlapping failed: no matching frames found in a range of 40 frame(s)." and (a.end, b.start) == before, "range too small (40 steps): message, the markers stay")
+    win.mnuDeDup_Click()
+    check(win.messages[-1] == "Duplicate scene removal failed: no matching frames found in a range of 40 frame(s)." and (a.end, b.start) == before, "range too small (40 steps): message, the markers stay")
     # d) No, no selection, last segment, other picture size
     win, a, b = window("d", 60)
     win.ask = lambda text: False
-    win.cmdOverlap_Click()
+    win.mnuDeDup_Click()
     check((a.end - a.first_frame, b.start - b.first_frame) == (220, 25), "answer No: nothing")
     win.current = -1
-    win.cmdOverlap_Click()
+    win.mnuDeDup_Click()
     check(win.messages[-1] == "Please select a segment, but not the last one.", "no selection: message")
     win.lvwSegments.select_row(1)
     win.lvwSegments_Click()
-    win.cmdOverlap_Click()
+    win.mnuDeDup_Click()
     check(win.messages[-1] == "Please select a segment, but not the last one.", "last segment: message")
     b.width = 704
     win.lvwSegments.select_row(0)
     win.lvwSegments_Click()
-    win.cmdOverlap_Click()
+    win.mnuDeDup_Click()
     check("different picture sizes (720x576 and 704x576)" in win.messages[-1], "other picture size: message")
     # e) the markers may not run through their segments
     win, a, b = window("e", 60)
     a.start = a.first_frame + 215                                    # only 5 frames of the first segment are used
-    win.cmdOverlap_Click()
-    check(win.messages[-1].startswith("Overlapping failed") and a.end - a.first_frame == 220, "the first segment would become empty: no match")
+    win.mnuDeDup_Click()
+    check(win.messages[-1].startswith("Duplicate scene removal failed") and a.end - a.first_frame == 220, "the first segment would become empty: no match")
     # f) cancel: no exception, no change
     win, a, b = window("f", 60)
     win._scan_fn = lambda *args, **kw: (_ for _ in ()).throw(seek.SeekCancelled())
-    win.cmdOverlap_Click()
+    win.mnuDeDup_Click()
     check((a.end - a.first_frame, b.start - b.first_frame) == (220, 25), "cancelled: nothing changed")
     # g) a recording that does not repeat anything
     win, a, b = window("g", 0)
-    win.cmdOverlap_Click()
-    check(win.messages[-1] == "Overlapping failed: no matching frames found in a range of 400 frame(s)." and (a.end - a.first_frame, b.start - b.first_frame) == (220, 25),
+    win.mnuDeDup_Click()
+    check(win.messages[-1] == "Duplicate scene removal failed: no matching frames found in a range of 400 frame(s)." and (a.end - a.first_frame, b.start - b.first_frame) == (220, 25),
           "a recording without a repeat: no match, the markers stay")
-    print("Overlap: OK (far, line, search order, scanlines, two made-up recordings with a repeat, messages, limits)")
+    print("Dedup scene: OK (far, line, search order, scanlines, two made-up recordings with a repeat, messages, limits)")
+
+
+def test_renamed_option(tmp, videos):
+    """The option overlap is called dedup now: old INI files are taken over, the VB6 INI file with dedup is read as it is."""
+    from profiles import OPTION_GROUPS, RENAMED_OPTIONS, validate_options
+    from settings import DEFAULT_TOOLTIPS, Settings, default_options
+    check(RENAMED_OPTIONS == {"overlap": "dedup"} and default_options()["dedup"] == "400" and "overlap" not in default_options() and "overlap" not in DEFAULT_TOOLTIPS, "dedup replaces overlap")
+    check(dict(OPTION_GROUPS)["Seeking"].count("dedup") == 1 and "overlap" not in dict(OPTION_GROUPS)["Seeking"], "in the group Seeking")
+    check(DEFAULT_TOOLTIPS["dedup"] == "Max. number of frames examined during duplicate scene removal search (menu Edit => Dedup scene)", "the help text as in the VB6 INI file")
+    check(len(validate_options({"dedup": "abc"})) == 1 and len(validate_options({"dedup": "-1"})) == 1 and validate_options({"dedup": "250"}) == [], "checking of the value")
+    # --- an old INI file with overlap
+    work = os.path.join(tmp, "renamed1")
+    os.makedirs(work, exist_ok=True)
+    ini = os.path.join(work, "MediaMaker.ini")
+    open(ini, "w", encoding="utf-8").write('[settings]\noptions=crop="72" overlap="300" step_end="40"\n[ToolTipText]\noverlap=Max. number of frames tried during segment overlap search\n')
+    win = make_window(work)
+    win.showEvent(None)
+    st = Settings(ini)
+    check(st.options.get("dedup") == "300" and "overlap" not in st.options and st.options["crop"] == "72" and st.options["step_end"] == "40" and win.options["dedup"] == "300",
+          "old INI: the value of overlap moves to dedup, the other options stay")
+    check(st.get("ToolTipText", "overlap") is None and st.get("ToolTipText", "dedup") == DEFAULT_TOOLTIPS["dedup"], "the old help text is gone, the new one is there")
+    first_version = open(ini, "rb").read()
+    make_window(work).showEvent(None)
+    check(open(ini, "rb").read() == first_version, "the next start does not change the file")
+    # --- both names: the new one wins
+    work2 = os.path.join(tmp, "renamed2")
+    os.makedirs(work2, exist_ok=True)
+    ini2 = os.path.join(work2, "MediaMaker.ini")
+    open(ini2, "w", encoding="utf-8").write('[settings]\noptions=overlap="300" dedup="500"\n')
+    make_window(work2).showEvent(None)
+    check(Settings(ini2).options.get("dedup") == "500" and "overlap" not in Settings(ini2).options, "overlap and dedup: dedup stays, overlap goes")
+    # --- the VB6 INI file with dedup (sample from the VB6 program after the renaming), read as it is
+    work3 = os.path.join(tmp, "renamed3")
+    os.makedirs(work3, exist_ok=True)
+    ini3 = os.path.join(work3, "MediaMaker.ini")
+    shutil.copy(os.path.join(HERE, "sample_MediaMaker_dedup.ini"), ini3)
+    raw_before = open(ini3, "rb").read().decode("latin-1")
+    win3 = make_window(work3)
+    win3.showEvent(None)
+    st3 = Settings(ini3)
+    raw_after = open(ini3, "rb").read().decode("latin-1")
+    check(win3.options["dedup"] == "400" and "overlap" not in st3.options and st3.get("ToolTipText", "dedup") == "Max. number of frames examined during duplicate scene removal search (menu Edit => Dedup scene)",
+          "VB6 INI with dedup: value and help text are kept")
+    check(all(line in raw_after for line in ("[tools.64]", "[tools.32]", "[tools.wine]", 'avi="odmlType=1"', "ffmpeg=D:\\USERDATA\\VB\\ffmpeg64\\ffmpeg.exe")),
+          "the sections and keys of the VB6 program (tools, avi, mp4) are left alone")
+    check(len(st3.profiles) == 11 and "pad" not in st3.options and "focus" not in st3.options, "the profiles are there, pad and focus left the options")
+    print("Renamed option dedup: OK (default, group, help text, old INI, both names, VB6 INI)")
 
 
 def test_wait_dialog(tmp, videos):
     """The wait window has room for several lines (before, the second line was cut off) and wraps long lines."""
     import dialogs
     cancelled = []
-    d = dialogs.WaitDialog(None, "Performing segment overlap search", lambda: cancelled.append(1))
+    d = dialogs.WaitDialog(None, "Performing duplicate scene removal search", lambda: cancelled.append(1))
     label = d.label
     check(label.called("setWordWrap")[-1][0] is True and label.called("setMinimumWidth")[-1][0] == 420, "long lines are wrapped; the window is wide enough")
     check(label.called("setMinimumHeight")[-1][0] >= 3 * 16 + 12, f"room for three lines from the start: {label.called('setMinimumHeight')[-1][0]} pixels")
-    d.set_text("Performing segment overlap search, please wait...\nreading the pictures...")
-    check(label.called("setText")[-1][0] == "Performing segment overlap search, please wait...\nreading the pictures...", "the text with its two lines")
+    d.set_text("Performing duplicate scene removal search, please wait...\nreading the pictures...")
+    check(label.called("setText")[-1][0] == "Performing duplicate scene removal search, please wait...\nreading the pictures...", "the text with its two lines")
     from PySide6 import QtWidgets as W
     W.QDialog.reject = lambda self: None                          # the replacement for Qt has no real reject() for super() to find
     try:
@@ -4507,7 +4557,8 @@ def main():
     test_ini_tooltips_and_tools(tmp, sys.argv[1])
     test_delete_files(tmp, sys.argv[1])
     test_delete_sidecars(tmp, sys.argv[1])
-    test_overlap(tmp, sys.argv[1])
+    test_dedup(tmp, sys.argv[1])
+    test_renamed_option(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])
     test_timeline(tmp, sys.argv[1])
     test_segments(tmp, sys.argv[1])

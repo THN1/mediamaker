@@ -153,10 +153,10 @@ class frmMainBase(QtWidgets.QMainWindow):
         w_mnuCutPoints.setShortcut(QtGui.QKeySequence('Ctrl+Y'))
         w_mnuEdit.addAction(w_mnuCutPoints)
         self.mnuCutPoints = w_mnuCutPoints
-        w_cmdOverlap = QtGui.QAction('Overlap segments', self)
-        w_cmdOverlap.setShortcut(QtGui.QKeySequence('Ctrl+F8'))
-        w_mnuEdit.addAction(w_cmdOverlap)
-        self.cmdOverlap = w_cmdOverlap
+        w_mnuDeDup = QtGui.QAction('Dedup scene', self)
+        w_mnuDeDup.setShortcut(QtGui.QKeySequence('Ctrl+F8'))
+        w_mnuEdit.addAction(w_mnuDeDup)
+        self.mnuDeDup = w_mnuDeDup
         w_mnuChapters = QtGui.QAction('C&hapters...', self)
         w_mnuChapters.setShortcut(QtGui.QKeySequence('Ctrl+H'))
         w_mnuEdit.addAction(w_mnuChapters)
@@ -681,7 +681,7 @@ class frmMainBase(QtWidgets.QMainWindow):
         vbqt.on_mouse(self.cmdCommand[5], down=self._callv('cmdCommand_MouseDown', 5))
         vbqt.on_mouse(self.cmdCommand[6], down=self._callv('cmdCommand_MouseDown', 6))
         self.cmdLogo.clicked.connect(self._call('cmdLogo_Click'))
-        self.cmdOverlap.triggered.connect(self._call('cmdOverlap_Click'))
+        self.mnuDeDup.triggered.connect(self._call('mnuDeDup_Click'))
         self.cmdPos[0].clicked.connect(self._call('cmdPos_Click', 0))
         self.cmdPos[1].clicked.connect(self._call('cmdPos_Click', 1))
         self.cmdPos[2].clicked.connect(self._call('cmdPos_Click', 2))

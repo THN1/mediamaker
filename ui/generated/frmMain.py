@@ -23,8 +23,8 @@ class frmMain(frmMainBase):
         # VB6: Sub cmdLogo_Click()
         pass
 
-    def cmdOverlap_Click(self):
-        # VB6: Sub cmdOverlap_Click()
+    def mnuDeDup_Click(self):
+        # VB6: Sub mnuDeDup_Click()
         pass
 
     def cmdPos_Click(self, index):

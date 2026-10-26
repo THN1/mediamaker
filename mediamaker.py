@@ -38,7 +38,7 @@ from sidecars import sidecar_files                                    # noqa: E4
 import debugpack                                                      # noqa: E402
 import ffmpeg_cmd                                                     # noqa: E402
 from frames import grab_frame, grab_numbered, grab_scanlines        # noqa: E402
-import overlap                                                        # noqa: E402
+import dedup                                                          # noqa: E402
 import timeline as tl                                                # noqa: E402
 import dialogs                                                       # noqa: E402
 import mediainfo                                                     # noqa: E402
@@ -55,7 +55,7 @@ from player import debug_log                                         # noqa: E40
 from border import border_at                                         # noqa: E402
 from logo import confidence_at                                       # noqa: E402
 from mediaprobe import display_aspect, MediaInfo, ProbeError, count_video_packets, first_frame_number, probe as full_probe  # noqa: E402
-from profiles import (GROUP_TEXTS, HIDDEN_OPTIONS, OPTION_GROUPS, PRESETS, PROFILE_KEYS, REMOVED_OPTIONS, default_name, normalize_bitrate,  # noqa: E402
+from profiles import (GROUP_TEXTS, HIDDEN_OPTIONS, OPTION_GROUPS, PRESETS, PROFILE_KEYS, REMOVED_OPTIONS, RENAMED_OPTIONS, default_name, normalize_bitrate,  # noqa: E402
                       ordered_profile, profile_from_segment, valid_profile_name, validate_options, validate_profile,
                       weighted_bitrate)
 from project import format_hms, load_segments, save_segments, segment_row, timeof  # noqa: E402
@@ -125,7 +125,7 @@ class frmMain(frmMainBase):
         self._count_fn = count_fn
         self._counters: list[FrameCounter] = []
         self._thumb_fn = thumb_fn
-        self._scan_fn = scan_fn                         # one line of many frames (overlapping segments)
+        self._scan_fn = scan_fn                         # one line of many frames (duplicate scene)
         self._external_fn = run_external               # starts VLC / Avidemux (replaced in the tests)
         self._external: list = []                      # running helper programs (keeps the workers alive)
         self._last_search: dict = {}                   # what the last search for a commercial did (debug package)
@@ -287,8 +287,13 @@ class frmMain(frmMainBase):
             if key in raw:
                 del raw[key]
                 changed = True
+        for old, new in RENAMED_OPTIONS.items():                      # renamed options: the value moves (unless the new name is already set)
+            if old in raw:
+                raw.setdefault(new, raw[old])
+                del raw[old]
+                changed = True
         wanted = {key: DEFAULT_TOOLTIPS[key] for key in tooltip_keys() if key in DEFAULT_TOOLTIPS}
-        changed = self.settings.sync_tooltips(wanted, tuple(REMOVED_OPTIONS - set(PROFILE_KEYS))) or changed     # [ToolTipText]: every parameter
+        changed = self.settings.sync_tooltips(wanted, tuple(REMOVED_OPTIONS - set(PROFILE_KEYS)) + tuple(RENAMED_OPTIONS)) or changed     # [ToolTipText]: every parameter
         if changed:
             self.settings.set_options(raw)
             self.settings.save()
@@ -1653,10 +1658,10 @@ class frmMain(frmMainBase):
         import dialogs
         dialogs.reference_logo_box(self, text, rgb, ref.rect, ref.edges)
 
-    # ------------------------------------------------------------------ Overlap segments (Ctrl+F8)
-    def cmdOverlap_Click(self):
-        """Edit => Overlap segments: if the recording repeats the last pictures of the selected segment at the start of the next one, marker B
-        of the first and marker A of the second segment are moved towards each other until the same picture is found (see overlap.py)."""
+    # ------------------------------------------------------------------ Dedup scene (Ctrl+F8; formerly "Overlap segments")
+    def mnuDeDup_Click(self):
+        """Edit => Dedup scene: if the recording repeats the last pictures of the selected segment at the start of the next one (a duplicate scene),
+        marker B of the first and marker A of the second segment are moved towards each other until the same picture is found (see dedup.py)."""
         if self.segment is None or self.current >= len(self.segments) - 1:
             self.msg("Please select a segment, but not the last one.")
             return
@@ -1665,10 +1670,10 @@ class frmMain(frmMainBase):
         if (t1.width, t1.height) != (t2.width, t2.height):
             self.msg(f"The segments have different picture sizes ({t1.width}x{t1.height} and {t2.width}x{t2.height}): they cannot be compared.")
             return
-        limit = max(int(self.options.get("overlap", 400)), 1)
-        if not self.ask(f"Overlap the end of segment {number} with the start of segment {number + 1}?\n\nThe pictures before marker B of segment {number} are "
+        limit = max(int(self.options.get("dedup", 400)), 1)
+        if not self.ask(f"Remove the duplicate scene at the end of segment {number} and the start of segment {number + 1}?\n\nThe pictures before marker B of segment {number} are "
                         f"compared with the pictures after marker A of segment {number + 1} (at most {limit} steps); both markers are moved until the same "
-                        f"picture is found, so that the repeated part is cut out cleanly.\n\nAttention: this may take some time."):
+                        f"picture is found, so that the duplicate scene is cut out cleanly.\n\nAttention: this may take some time."):
             return
         b, a = t1.end, t2.start
         started = time.monotonic()
@@ -1676,12 +1681,12 @@ class frmMain(frmMainBase):
 
         def work(cancel):
             note = getattr(cancel, "note", None)
-            (r1a, r1b), (r2a, r2b) = overlap.frames_needed(b, a, limit)
+            (r1a, r1b), (r2a, r2b) = dedup.frames_needed(b, a, limit)
             r1a, r2a = max(r1a, t1.first_frame), max(r2a, t2.first_frame)
             r1b, r2b = min(r1b, t1.total_frames - 1), min(r2b, t2.total_frames - 1)
             if note:
                 note("reading the pictures...")
-            x1, y1 = overlap.scan_range(t1.width), overlap.scan_row(t1.height)
+            x1, y1 = dedup.scan_range(t1.width), dedup.scan_row(t1.height)
             lines1 = self._scan_fn(t1.path, r1a, max(r1b - r1a + 1, 0), t1.fps, x1[0], x1[1], y1)
             if cancel():
                 raise seek.SeekCancelled()
@@ -1691,14 +1696,14 @@ class frmMain(frmMainBase):
                 if cancel():
                     raise seek.SeekCancelled()
                 if note and (step % 10 == 1 or step == limit):
-                    note(f"Performing segment overlap search ({100.0 * step / limit:.1f}%)...")
-            found["result"] = overlap.search(lines1.get, lines2.get, b, a, limit, progress, t1.start, t2.end)
+                    note(f"Performing duplicate scene removal search ({100.0 * step / limit:.1f}%)...")
+            found["result"] = dedup.search(lines1.get, lines2.get, b, a, limit, progress, t1.start, t2.end)
             return found["result"][2] if found["result"] else 0
-        self._run_job(work, "Performing segment overlap search", lambda step: self.overlap_done(number, t1, t2, b, a, found.get("result"), limit, started))
+        self._run_job(work, "Performing duplicate scene removal search", lambda step: self.dedup_done(number, t1, t2, b, a, found.get("result"), limit, started))
 
-    def overlap_done(self, number: int, t1: Segment, t2: Segment, b: int, a: int, result: Optional[tuple], limit: int, started: float) -> None:
+    def dedup_done(self, number: int, t1: Segment, t2: Segment, b: int, a: int, result: Optional[tuple], limit: int, started: float) -> None:
         if result is None:
-            self.msg(f"Overlapping failed: no matching frames found in a range of {limit} frame(s).")
+            self.msg(f"Duplicate scene removal failed: no matching frames found in a range of {limit} frame(s).")
             return
         i1, i2, step = result
         t1.end, t2.start = i1, i2
@@ -1706,9 +1711,9 @@ class frmMain(frmMainBase):
         self.lblSegment_Upd()
         self.cmdPos_Click(10)
         elapsed = int(time.monotonic() - started)
-        if self.ask(f"Overlapping Marker B of segment {number} and Marker A of segment {number + 1} successfully done and saved in "
+        if self.ask(f"Duplicate scene around Marker B of segment {number} and Marker A of segment {number + 1} successfully removed and saved in "
                     f"{elapsed // 3600}:{elapsed // 60 % 60:02d}:{elapsed % 60:02d}.\n\n"
-                    f"The repeated part of {step - 1} frame(s) was cut in the middle: Marker B moved {b - i1} frame(s) back, Marker A {i2 - a} frame(s) forward.\n\n"
+                    f"The duplicate scene of {step - 1} frame(s) was cut in the middle: Marker B moved {b - i1} frame(s) back, Marker A {i2 - a} frame(s) forward.\n\n"
                     f"Do you want to check the cut now with \"Analyze cut point\"?"):
             self.mnuCutPoints_Click()
 

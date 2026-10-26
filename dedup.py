@@ -1,4 +1,5 @@
-"""Overlapping two segments (Edit => Overlap segments; VB6: cmdOverlap_Click with match() and far()).
+"""Removing a duplicate scene at the cut between two segments (Edit => Dedup scene, Ctrl+F8; VB6: mnuDeDup_Click with match() and far(); it was
+called "Overlap segments" at first; the option was `overlap` and is `dedup` now).
 
 If a broadcaster repeats the last seconds of the movie after the commercials, the end of one segment and the start of the next show the same
 pictures. Marker B (end) of the first and marker A (start) of the second segment are then moved towards each other, one frame at a time,

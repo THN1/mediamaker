@@ -72,12 +72,14 @@ def _float(value: str) -> Optional[float]:
 # options that no longer appear in the dialog:
 REMOVED_OPTIONS = {"focus", "pad", "logo_fill", "fill_sigma", "mask_fill", "mask_grow", "logo_rewind"}   # focus: no effect; pad: now belongs to the profile;
                                                                                          # logo_fill ... mask_grow: tried for the logo mask and dropped again; logo_rewind: the rewinding after a logo search was removed
+# options that were renamed (old name -> new name); the value moves at the start (old INI files):
+RENAMED_OPTIONS = {"overlap": "dedup"}      # "Overlap segments" is "Dedup scene" now
 HIDDEN_OPTIONS = {"logo_edge", "logo_conf", "cut_diff"}   # for advanced users only, they are only in the INI file
 
 # grouping of the options dialog: (tab, keys)
 OPTION_GROUPS = (
     ("Borders", ("crop", "blackness", "allowance", "border_tol")),
-    ("Seeking", ("pause", "overlap", "step_end", "step_next", "cut_window")),
+    ("Seeking", ("pause", "dedup", "step_end", "step_next", "cut_window")),
     ("Logo", ("overlay_opacity",)),
     ("Audio/Subtitles", ("audio", "multilanguage", "subtitle", "aflags")),
     ("Batch", ("path_map", "batch")),
@@ -101,7 +103,7 @@ GROUP_TEXTS = {
 
 def validate_options(o: dict) -> list[str]:
     errors = []
-    ranges = {"crop": (0, 288), "floor": (0, 60), "blackness": (0, 255), "allowance": (0, 10 ** 7), "overlap": (0, 10 ** 6),
+    ranges = {"crop": (0, 288), "floor": (0, 60), "blackness": (0, 255), "allowance": (0, 10 ** 7), "dedup": (0, 10 ** 6),
               "audio": (1, 99), "pause": (0, 10 ** 5), "detect": (0, 10 ** 8), "step_end": (1, 3600), "step_next": (1, 36000),
               "border_tol": (0, 50), "logo_edge": (1, 255), "cut_window": (0, 50), "cut_diff": (1, 255), "overlay_opacity": (0, 100)}
     for key, (lo, hi) in ranges.items():
