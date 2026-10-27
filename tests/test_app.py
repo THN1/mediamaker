@@ -858,7 +858,9 @@ def test_segments(tmp, videos):
           and len(load_segments(os.path.join(tmp, "seekwin", "MediaMaker.json"))) == 1,
           "delete: the successor is selected and loaded")
     win.cmdCommand_Click(5)
-    check(not any("ported" in m for m in win.messages) and not any(win.fraCrop[i].isVisible() for i in range(4)), "crop: the window opens (not confirmed here), no note, the bands are hidden again")
+    check(win._modal_child is not None and not any("ported" in m for m in win.messages) and all(win.fraCrop[i].isVisible() for i in range(4)), "crop: the window opens, no note, the bands are shown")
+    win._modal_child.cmdCancel_Click()
+    check(win._modal_child is None and not any(win.fraCrop[i].isVisible() for i in range(4)), "cancelled: the bands are hidden again")
     win.answer = False
     win.cmdCommand_Click(3)
     check(len(win.segments) == 1, "remove all: no")
@@ -4580,34 +4582,36 @@ def test_crop_segment(tmp, videos):
     d2 = crop_dialog.frmCrop(None, 720, 576, 1)
     d2.cmdCancel_Click()
     check(d2.status == -1 and len(d2.called("reject")) == 1, "X: status -1")
-    # --- in the main window
+    # --- in the main window: the window is a part of it (not a window of its own: under Wayland the position of such a window cannot be set)
+    from PySide6 import QtCore
     work = os.path.join(tmp, "cropwin")
     win = seek_window(tmp, videos, ("sample2.ts", "sample3.ts"), workdir="cropwin", first_fn=first_frame_number)
     win._aspect_fn = lambda path: 16 / 9
     seg = win.segments[0]
     win.VLC.setGeometry(10, 20, 400, 300)
     win.current = -1
-    W.QDialog.on_exec = lambda dlg: (_ for _ in ()).throw(AssertionError("no dialog without a selected segment"))
     win.cmdCommand_Click(5)
+    check(win._modal_child is None, "no segment selected: no window")
     win.lvwSegments.select_row(0)
     win.lvwSegments_Click()
-    seen = {}
-    def on_exec(dlg):
-        seen["start"] = dlg.values()
-        seen["source"] = dlg.source
-        seen["move"] = (dlg.called("move")[-1][0].x(), dlg.called("move")[-1][0].y(), dlg.width(), dlg.height())
-        dlg.set_values(60, 30, 40, 20)
-        dlg.HScroll_Change(0)                                       # the window tells the main window
-        seen["areas"] = [(win.fraCrop[i].geometry().x(), win.fraCrop[i].geometry().y(), win.fraCrop[i].geometry().width(), win.fraCrop[i].geometry().height()) for i in range(4)]
-        seen["visible"] = [win.fraCrop[i].isVisible() for i in range(4)]
-        dlg.cmdOK_Click()
-    W.QDialog.on_exec = on_exec
+    enabled = lambda widget: widget.called("setEnabled")[-1][0] if widget.called("setEnabled") else True
     win.cmdCommand_Click(5)
-    check(seen["start"] == (0, 0, 0, 0) and seen["source"] == (720, 576, F(64, 45)), f"the window gets the size and the sample aspect ratio of the picture: {seen['source']}")
-    mx, my, dw, dh = seen["move"]
-    check((mx, my) == ((400 - dw) // 2, (300 - dh) // 2) and dw == 281 and dh == 161, f"the window is centred in the preview (400x300): {seen['move']}")
-    check(seen["areas"] == [(10, 20, 400, 31), (10, 304, 400, 16), (10, 20, 22, 300), (399, 20, 11, 300)], f"red bands over the preview, in proportion: {seen['areas']}")
-    check(all(seen["visible"]) and not any(win.fraCrop[i].isVisible() for i in range(4)), "the bands are shown while the window is open and hidden afterwards")
+    dlg = win._modal_child
+    check(dlg is not None and dlg.values() == (0, 0, 0, 0) and dlg.source == (720, 576, F(64, 45)), f"the window gets the size and the sample aspect ratio of the picture: {dlg.source}")
+    check(dlg.called("setWindowFlags")[-1][0] == QtCore.Qt.WindowType.Widget, "it is a part of the main window, not a window of its own")
+    point = dlg.called("move")[-1][0]
+    check((point.x(), point.y()) == ((400 - dlg.width()) // 2, (300 - dlg.height()) // 2) and dlg.width() == 281 and dlg.height() == 161,
+          f"it is centred in the preview (400x300): {(point.x(), point.y())}")
+    check(enabled(win.centralWidget()) is False and enabled(win.menuBar()) is False, "while it is open the rest of the main window cannot be used")
+    dlg.set_values(60, 30, 40, 20)
+    dlg.HScroll_Change(0)                                           # the window tells the main window
+    areas = [(win.fraCrop[i].geometry().x(), win.fraCrop[i].geometry().y(), win.fraCrop[i].geometry().width(), win.fraCrop[i].geometry().height()) for i in range(4)]
+    check(areas == [(10, 20, 400, 31), (10, 304, 400, 16), (10, 20, 22, 300), (399, 20, 11, 300)], f"red bands over the preview, in proportion: {areas}")
+    check(all(win.fraCrop[i].isVisible() for i in range(4)), "the bands are shown while the window is open")
+    check((seg.crop_top, seg.crop_left) == (0, 0), "nothing is taken over before OK")
+    dlg.cmdOK_Click()
+    check(win._modal_child is None and enabled(win.centralWidget()) is True and enabled(win.menuBar()) is True and not any(win.fraCrop[i].isVisible() for i in range(4)),
+          "OK: the window is gone, the main window usable again, the bands hidden")
     check((seg.crop_top, seg.crop_bottom, seg.crop_left, seg.crop_right) == (60, 30, 40, 20), "OK: the values are in the segment")
     saved = load_segments(win.project_path)[0]
     check((saved.crop_top, saved.crop_bottom, saved.crop_left, saved.crop_right) == (60, 30, 40, 20), "and in the saved list")
@@ -4615,34 +4619,51 @@ def test_crop_segment(tmp, videos):
     graph = graph[graph.index("-filter_complex") + 1]
     check("crop=iw-60:ih-90:40:60" in graph, f"ffmpeg crops this segment: {graph[:80]}")
     # the window starts with the values of the segment; Cancel changes nothing
-    seen.clear()
-    W.QDialog.on_exec = lambda dlg: (seen.update(start=dlg.values()), dlg.set_values(1, 2, 3, 4), dlg.cmdCancel_Click())
     win.cmdCommand_Click(5)
-    check(seen["start"] == (60, 30, 40, 20) and (seg.crop_top, seg.crop_left) == (60, 40) and not any(win.fraCrop[i].isVisible() for i in range(4)), "Cancel: the segment keeps its values")
+    dlg = win._modal_child
+    start = dlg.values()
+    dlg.set_values(1, 2, 3, 4)
+    dlg.cmdCancel_Click()
+    check(start == (60, 30, 40, 20) and (seg.crop_top, seg.crop_left) == (60, 40) and win._modal_child is None and enabled(win.centralWidget()) is True
+          and not any(win.fraCrop[i].isVisible() for i in range(4)), "Cancel: the segment keeps its values, everything is back as it was")
+    # the Escape key (the window is closed without OK) counts as cancel
+    win.cmdCommand_Click(5)
+    dlg = win._modal_child
+    dlg.set_values(9, 9, 9, 9)
+    dlg.reject()
+    check((seg.crop_top, seg.crop_left) == (60, 40) and win._modal_child is None, "closed without OK: nothing is taken over")
+    # closing the main window while the window is open
+    win.cmdCommand_Click(5)
+    dlg = win._modal_child
+    win.Form_Unload()
+    check(win._modal_child is None and enabled(win.centralWidget()) is True, "closing the main window cancels the crop window")
     # 16:9
-    def ratio(dlg):
-        dlg.set_values(60, 30, 0, 0)
-        dlg.chkAutoRatio.setChecked(True)
-        dlg.chkAutoRatio_Click()
-        dlg.cmdOK_Click()
-    W.QDialog.on_exec = ratio
     win.cmdCommand_Click(5)
+    dlg = win._modal_child
+    dlg.set_values(60, 30, 0, 0)
+    dlg.chkAutoRatio.setChecked(True)
+    dlg.chkAutoRatio_Click()
+    dlg.cmdOK_Click()
     check((seg.crop_top, seg.crop_bottom, seg.crop_left, seg.crop_right) == (60, 30, 56, 56), f"16:9: left and right {seg.crop_left}, {seg.crop_right}")
     # --- a global cropping value prevails: the question
     asked = []
     win.ask = lambda text: (asked.append(text), False)[1]
     win.settings.set_option("crop", "72")
-    W.QDialog.on_exec = lambda dlg: (dlg.set_values(5, 5, 0, 0), dlg.cmdOK_Click())
     win.cmdCommand_Click(5)
+    win._modal_child.set_values(5, 5, 0, 0)
+    win._modal_child.cmdOK_Click()
     check(len(asked) == 1 and asked[0].startswith("Attention: the global cropping value was (also) set, and will prevail over individual (per segment) cropping.")
           and asked[0].endswith("Do you want to set the global cropping value to zero?") and win.options["crop"] == "72" and seg.crop_top == 5, "global crop > 0: the question; No: it stays")
     win.ask = lambda text: (asked.append(text), True)[1]
     win.cmdCommand_Click(5)
+    win._modal_child.set_values(5, 5, 0, 0)
+    win._modal_child.cmdOK_Click()
     check(win.options["crop"] == "0" and Settings(win.settings.path).options["crop"] == "0", "Yes: the global value is set to zero (and saved)")
     asked.clear()
     win.cmdCommand_Click(5)
-    check(asked == [], "global crop 0: no question")
-    W.QDialog.on_exec = None
+    win._modal_child.set_values(6, 6, 0, 0)
+    win._modal_child.cmdOK_Click()
+    check(asked == [] and seg.crop_top == 6, "global crop 0: no question")
     print("Cropping of a segment: OK (16:9, window, bands over the preview, taking over, global value)")
 
 

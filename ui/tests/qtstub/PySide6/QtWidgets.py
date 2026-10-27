@@ -51,7 +51,7 @@ class FontMetrics:
 
 
 class QWidget(QObject):
-    methods = {"mapToGlobal", "setMinimumHeight", "setMinimumWidth", "deleteLater", "underMouse", "setAttribute", "setCursor", "unsetCursor", "raise_", "fontMetrics", "setMinimumSize", "setMaximumSize", "setSizePolicy", "setGeometry", "geometry", "resize", "setFixedSize", "setMinimumSize", "move", "hide", "show", "setVisible",
+    methods = {"mapToGlobal", "mapTo", "setWindowFlags", "setMinimumHeight", "setMinimumWidth", "deleteLater", "underMouse", "setAttribute", "setCursor", "unsetCursor", "raise_", "fontMetrics", "setMinimumSize", "setMaximumSize", "setSizePolicy", "setGeometry", "geometry", "resize", "setFixedSize", "setMinimumSize", "move", "hide", "show", "setVisible",
                "setEnabled", "isEnabled", "setToolTip", "setFont", "setStyleSheet", "setAutoFillBackground",
                "setMouseTracking", "setAcceptDrops", "setWindowTitle", "setWindowFlag", "setWindowIcon", "winId", "rect",
                "frameGeometry", "screen", "isActiveWindow", "update", "contentsRect", "width", "height", "setFocusPolicy",
@@ -119,6 +119,9 @@ class QWidget(QObject):
         return FontMetrics()
 
     def _ret_mapToGlobal(self, point):
+        return point
+
+    def _ret_mapTo(self, parent, point):
         return point
 
     def _ret_screen(self):
@@ -458,7 +461,11 @@ class QLayout(Base):
 
 
 class QMainWindow(QWidget):
-    methods = {"menuBar", "setCentralWidget"}
+    methods = {"menuBar", "setCentralWidget", "centralWidget"}
+
+    def _ret_centralWidget(self):
+        done = self.called("setCentralWidget")
+        return done[-1][0] if done else None
 
     def layout(self):
         if not hasattr(self, "_layout"):
@@ -474,6 +481,14 @@ class QMainWindow(QWidget):
 
 class QDialog(QWidget):
     methods = {"accept", "reject", "setModal"}
+    signals = {"finished"}
+
+    def _ret_accept(self, *args):
+        self.finished.emit(1)
+
+    def _ret_reject(self, *args):
+        self.finished.emit(0)
+
     exec_result = 1                      # adjustable in the test: 1 = accepted, 0 = cancelled
     on_exec = None                       # adjustable in the test: function(dialog), e.g. to change inputs
 

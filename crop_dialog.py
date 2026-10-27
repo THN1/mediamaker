@@ -24,7 +24,6 @@ class frmCrop(frmCropBase):
         self.source = (int(width), int(height), Fraction(sar))
         self.status = 1                                              # running
         self.notify = lambda text: QtWidgets.QMessageBox.warning(self, "MediaMaker", text)
-        self.setModal(True)
         for i in range(4):
             self.txtCrop[i].editingFinished.connect(lambda i=i: self.typed(i))
 

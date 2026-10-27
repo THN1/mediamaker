@@ -130,6 +130,7 @@ class frmMain(frmMainBase):
         self._external_fn = run_external               # starts VLC / Avidemux (replaced in the tests)
         self._external: list = []                      # running helper programs (keeps the workers alive)
         self._last_search: dict = {}                   # what the last search for a commercial did (debug package)
+        self._modal_child = None                       # the crop window while it is open
         self.ref_origin: dict = {}                     # mask -> where the reference logo came from (frame, picture, preview), for the debug package
         self._verify_first: set = set()                # files opened just now: the first picture of the thumbnails confirms the first frame
         self.verify_first_frame = True                 # False: take the first frame from the stream data as it is (tests)
@@ -390,6 +391,8 @@ class frmMain(frmMainBase):
     def Form_Unload(self):
         """Window is being closed: cancel counting and end playback cleanly before Qt tears down the video area.
                 (A thread that is still running at exit would crash the program.)"""
+        if self._modal_child is not None:                            # the crop window is open: cancel it
+            self._modal_child.reject()
         workers = (self._counters + self._thumb_loaders + ([self._seek_worker] if self._seek_worker else [])
                    + ([self._render_worker] if self._render_worker else []))
         for worker in workers:
@@ -1143,26 +1146,39 @@ class frmMain(frmMainBase):
             frame.show()
             frame.raise_()
 
-    def run_crop_dialog(self, dialog) -> bool:
-        dialog.exec()
-        return dialog.status == 0
-
     def crop_segment(self) -> None:
         """The cropping of the selected segment: a small window with the four margins (and 16:9); OK stores them in the segment. A global
-        cropping value (option crop) would prevail over this one, so it is offered to set it to zero."""
+        cropping value (option crop) would prevail over this one, so it is offered to set it to zero.
+
+        The window is a PART of the main window, placed in the middle of the preview (as in VB6, where the form was shown over the preview and the
+        main form was disabled). A window of its own could not be placed there under Wayland: the compositor decides where such windows go."""
         from crop_dialog import frmCrop
         seg = self.segment
         sar = cropping.sample_aspect(seg.width, seg.height, self.aspect_of(seg.path))
         dialog = frmCrop(self, seg.width, seg.height, sar)
+        dialog.setWindowFlags(QtCore.Qt.WindowType.Widget)           # not a window of its own: a child of the main window
+        dialog.setAutoFillBackground(True)
         dialog.set_values(seg.crop_top, seg.crop_bottom, seg.crop_left, seg.crop_right)
         dialog.changed.connect(lambda: self.crop_overlay(dialog.values(), seg))
         self.crop_overlay(dialog.values(), seg)
-        dialog.move(self.VLC.mapToGlobal(QtCore.QPoint((self.VLC.width() - dialog.width()) // 2, (self.VLC.height() - dialog.height()) // 2)))   # centred in the preview
-        ok = self.run_crop_dialog(dialog)
+        dialog.move(self.VLC.mapTo(self, QtCore.QPoint((self.VLC.width() - dialog.width()) // 2, (self.VLC.height() - dialog.height()) // 2)))
+        self._modal_child = dialog
+        self.centralWidget().setEnabled(False)                       # as long as the window is open the rest cannot be used (VB6: Me.Enabled = False)
+        self.menuBar().setEnabled(False)
+        dialog.finished.connect(lambda code, d=dialog, g=seg: self.crop_finished(d, g))
+        dialog.show()
+        dialog.raise_()
+        dialog.setFocus()
+
+    def crop_finished(self, dialog, seg: Segment) -> None:
+        """OK or cancel in the crop window: the main window is usable again, the bands are gone; with OK the values go into the segment."""
+        self._modal_child = None
+        self.centralWidget().setEnabled(True)
+        self.menuBar().setEnabled(True)
         for i in range(4):
             self.fraCrop[i].hide()
         dialog.deleteLater()
-        if not ok:
+        if dialog.status != 0:
             return
         seg.crop_top, seg.crop_bottom, seg.crop_left, seg.crop_right = dialog.values()
         self.lblSegment_Upd()

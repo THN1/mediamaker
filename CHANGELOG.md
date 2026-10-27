@@ -4,7 +4,9 @@
 
 - Version number set to 0.5-dev.
 - After an **import** from the batch file or a **restore** of a session the first entry of the list is selected as a whole (all fields, as if it had been
-  clicked; before only the number field showed the focus); the crop window is centred in the preview (as in VB6, instead of one third from the corner);
+  clicked; before only the number field showed the focus); the crop window is centred in the preview. It is now a PART of the main window, not a window of its own: under Wayland the compositor decides where a
+  window goes, so the position could not be set (it came up in the middle of the main window). As in VB6 the rest of the main window cannot be used while it is
+  open; closing the main window cancels it;
   the window for **Restore session** has a check box "Save the current state as a session first", so that the number of automatic
   sessions stays manageable; the question and the message after the restore say which it was. The choice of this box is remembered between the runs of the
   program in the new option `restore_backup` (on|off, group Technical, default on; a restored INI file does not take it back); the other two boxes
