@@ -1157,7 +1157,7 @@ class frmMain(frmMainBase):
         dialog.set_values(seg.crop_top, seg.crop_bottom, seg.crop_left, seg.crop_right)
         dialog.changed.connect(lambda: self.crop_overlay(dialog.values(), seg))
         self.crop_overlay(dialog.values(), seg)
-        dialog.move(self.VLC.mapToGlobal(QtCore.QPoint(self.VLC.width() // 3, self.VLC.height() // 3)))       # as in VB6: over the preview
+        dialog.move(self.VLC.mapToGlobal(QtCore.QPoint((self.VLC.width() - dialog.width()) // 2, (self.VLC.height() - dialog.height()) // 2)))   # centred in the preview
         ok = self.run_crop_dialog(dialog)
         for i in range(4):
             self.fraCrop[i].hide()
@@ -1595,9 +1595,9 @@ class frmMain(frmMainBase):
         custom = (self.options.get("sessions_dir", "") or "").strip()
         return os.path.expanduser(custom) if custom else sessions.default_directory(self.settings.path)
 
-    def choose_session(self, title: str, prompt: str, infos: list, multi: bool = False, with_parts: bool = False):
+    def choose_session(self, title: str, prompt: str, infos: list, multi: bool = False, with_parts: bool = False, with_backup: bool = False):
         import sessions_dialog
-        return sessions_dialog.choose_sessions(self, title, prompt, infos, multi, with_parts)
+        return sessions_dialog.choose_sessions(self, title, prompt, infos, multi, with_parts, with_backup)
 
     def make_session(self, note: str) -> "sessions.SessionInfo":
         self._save()                                              # the list on disk is the current one
@@ -1616,29 +1616,31 @@ class frmMain(frmMainBase):
         self.msg(f"Session backup with timestamp {info.stamp} has been created.")
 
     def mnuRestoreSession_Click(self):
-        """Puts a saved session back: the segment list and/or the settings. The state before is saved as a session first."""
+        """Puts a saved session back: the segment list and/or the settings. The state before is saved as a session first, unless the check box in the
+        window for choosing is switched off (so that the number of sessions stays manageable)."""
         infos = sessions.list_sessions(self.sessions_directory())
         if not infos:
             self.msg("There are no saved sessions yet (menu File => Backup session).")
             return
-        choice = self.choose_session("Restore session", "Select the session to restore and what to restore from it:", infos, with_parts=True)
+        choice = self.choose_session("Restore session", "Select the session to restore and what to restore from it:", infos, with_parts=True, with_backup=True)
         if choice is None:
             return
-        (info,), parts = choice
+        (info,), parts, backup = choice
         if not info.ok:
             self.msg(f"The session {info.stamp} is damaged and cannot be restored.")
             return
         if not self.ask(f"The session {info.stamp} replaces the current " + " and ".join({"list": "segment list", "ini": "settings (INI file)"}[p] for p in parts)
-                        + ". The current state is saved as a session first, so that you can go back.\n\nRestore the session?"):
+                        + (". The current state is saved as a session first, so that you can go back." if backup else ". The current state is NOT saved first.")
+                        + "\n\nRestore the session?"):
             return
         try:
-            before = self.make_session(f"automatic backup before restoring {info.stamp}")
+            before = self.make_session(f"automatic backup before restoring {info.stamp}") if backup else None
             sessions.restore_session(info, self.settings.path, self.project_path, parts)
         except (sessions.SessionError, OSError) as e:
             self.msg(f"The session could not be restored: {e}")
             return
         self.reload_session()
-        self.msg(f"Session {info.stamp} has been restored. The state before is saved as session {before.stamp}.")
+        self.msg(f"Session {info.stamp} has been restored." + (f" The state before is saved as session {before.stamp}." if before else ""))
 
     def mnuDeleteSession_Click(self):
         """Deletes sessions (several can be selected)."""
@@ -1679,6 +1681,9 @@ class frmMain(frmMainBase):
         self.refresh_profile_menu()
         self.picTimeline.update()
         self.lblText_Upd()
+        if self.segments:                                            # the first entry is selected as a whole, as if it had been clicked
+            self.lvwSegments.select_row(0)
+            self.lvwSegments_Click()
 
     def duplicate_segment(self) -> None:
         """New segment behind the current one: starts at the end of the current one and takes over crop and logo. Then it jumps ahead by

@@ -8,7 +8,7 @@ from PySide6 import QtWidgets
 
 
 class SessionDialog(QtWidgets.QDialog):
-    def __init__(self, parent, title: str, prompt: str, infos: list, multi: bool, with_parts: bool):
+    def __init__(self, parent, title: str, prompt: str, infos: list, multi: bool, with_parts: bool, with_backup: bool = False):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.infos = infos
@@ -34,6 +34,11 @@ class SessionDialog(QtWidgets.QDialog):
             self.chkIni.setChecked(True)
             layout.addWidget(self.chkList)
             layout.addWidget(self.chkIni)
+        self.chkBackup = None
+        if with_backup:
+            self.chkBackup = QtWidgets.QCheckBox("Save the current state as a session first (so that you can go back)")
+            self.chkBackup.setChecked(True)
+            layout.addWidget(self.chkBackup)
         button = QtWidgets.QDialogButtonBox.StandardButton
         buttons = QtWidgets.QDialogButtonBox(button.Ok | button.Cancel)
         buttons.accepted.connect(self.accept)
@@ -46,19 +51,26 @@ class SessionDialog(QtWidgets.QDialog):
         rows = sorted({index.row() for index in self.list.selectedIndexes()})
         return [self.infos[r] for r in rows if 0 <= r < len(self.infos)]
 
+    def backup(self) -> bool:
+        """Save the current state first? (the check box is ticked at first; True if there is none)"""
+        return True if self.chkBackup is None else bool(self.chkBackup.isChecked())
+
     def parts(self) -> tuple:
         if self.chkList is None:
             return ("ini", "list")
         return tuple(name for name, box in (("list", self.chkList), ("ini", self.chkIni)) if box.isChecked())
 
 
-def choose_sessions(parent, title: str, prompt: str, infos: list, multi: bool = False, with_parts: bool = False) -> Optional[tuple]:
-    """Shows the dialog. Returns (selected sessions, parts) or None on cancel / nothing selected / no part chosen."""
-    dialog = SessionDialog(parent, title, prompt, infos, multi, with_parts)
+def choose_sessions(parent, title: str, prompt: str, infos: list, multi: bool = False, with_parts: bool = False, with_backup: bool = False) -> Optional[tuple]:
+    """Shows the dialog. Returns (selected sessions, parts), with `with_backup` (selected sessions, parts, save the current state first), or None on
+    cancel / nothing selected / no part chosen."""
+    dialog = SessionDialog(parent, title, prompt, infos, multi, with_parts, with_backup)
     try:
         if not dialog.exec():
             return None
         chosen, parts = dialog.selected(), dialog.parts()
-        return (chosen, parts) if chosen and parts else None
+        if not (chosen and parts):
+            return None
+        return (chosen, parts, dialog.backup()) if with_backup else (chosen, parts)
     finally:
         dialog.deleteLater()

@@ -3635,11 +3635,11 @@ def test_sessions(tmp, videos):
     win.settings.set_option("crop", "60")
     win.settings.save()
     chosen = {}
-    win.choose_session = lambda title, prompt, infos, multi=False, with_parts=False: chosen.get("answer")
+    win.choose_session = lambda title, prompt, infos, multi=False, with_parts=False, with_backup=False: chosen.get("answer")
     win.messages.clear()
     win.mnuRestoreSession_Click()
     check(len(win.segments) == 1 and not any(m.startswith("Session ") for m in win.messages), "cancelling the choice: nothing happens")
-    chosen["answer"] = ([first], ("list", "ini"))
+    chosen["answer"] = ([first], ("list", "ini"), True)
     answers[:] = [False]
     win.mnuRestoreSession_Click()
     check(len(win.segments) == 1 and len(sessions.list_sessions(directory)) == 3, "answer No: nothing is restored, no automatic session")
@@ -3651,24 +3651,33 @@ def test_sessions(tmp, videos):
     check(len(auto) == 1 and auto[0].segments == 1 and win.messages[-1] == f"Session {first.stamp} has been restored. The state before is saved as session {auto[0].stamp}.",
           f"the state before the restore is saved first: {win.messages[-1]}")
     check("segment list and settings" in asked[-1] and first.stamp in asked[-1], f"the question names what is replaced: {asked[-1][:90]}")
-    check(win.current == -1 and win.lvwSegments.rows_ if hasattr(win.lvwSegments, "rows_") else True, "no segment selected afterwards")
+    check(win.current == 0 and win.lvwSegments.current_row() == 0, "afterwards the first entry is selected (as a whole, as if it had been clicked)")
+    # the check box "save the current state first" is switched off: no automatic session
+    n_sessions = len(sessions.list_sessions(directory))
+    win.segments.pop()
+    win._save()
+    chosen["answer"] = ([first], ("list", "ini"), False)
+    answers[:] = [True]
+    win.mnuRestoreSession_Click()
+    check(len(sessions.list_sessions(directory)) == n_sessions and len(win.segments) == 2 and asked[-1].find("NOT saved first") > 0 and "saved as a session first" not in asked[-1]
+          and win.messages[-1] == f"Session {first.stamp} has been restored.", f"without the backup: no new session, the question says so: {win.messages[-1]}")
     # parts: only the list
     win.settings.set_option("crop", "55")
     win.settings.save()
     win.segments.pop()
     win._save()
-    chosen["answer"] = ([first], ("list",))
+    chosen["answer"] = ([first], ("list",), True)
     answers[:] = [True]
     win.mnuRestoreSession_Click()
     check(len(win.segments) == 2 and win.options["crop"] == "55" and "segment list." in asked[-1] or "the current segment list" in asked[-1], "only the list: the settings stay")
     # only the settings
-    chosen["answer"] = ([first], ("ini",))
+    chosen["answer"] = ([first], ("ini",), True)
     answers[:] = [True]
     win.mnuRestoreSession_Click()
     check(win.options["crop"] == "72" and len(win.segments) == 2, "only the settings")
     # damaged session / not restorable
     bad = listed[0]
-    chosen["answer"] = ([bad], ("list", "ini"))
+    chosen["answer"] = ([bad], ("list", "ini"), True)
     answers[:] = [True]
     n_infos = len(sessions.list_sessions(directory))
     win.mnuRestoreSession_Click()
@@ -3678,7 +3687,7 @@ def test_sessions(tmp, videos):
     with zipfile.ZipFile(only_ini, "w") as z:
         z.write(win.settings.path, "MediaMaker.ini")
     info_ini = sessions.read_info(only_ini)
-    chosen["answer"] = ([info_ini], ("list",))
+    chosen["answer"] = ([info_ini], ("list",), True)
     answers[:] = [True]
     win.mnuRestoreSession_Click()
     check("could not be restored" in win.messages[-1] and "no MediaMaker.json" in win.messages[-1] and len(win.segments) == 2, f"a part that is missing in the session: {win.messages[-1]}")
@@ -3686,7 +3695,7 @@ def test_sessions(tmp, videos):
     fake_list = os.path.join(directory, "2026.10.28_10-00-00.zip")
     with zipfile.ZipFile(fake_list, "w") as z:
         z.writestr("MediaMaker.json", json.dumps({"hello": 1}))
-    chosen["answer"] = ([sessions.read_info(fake_list)], ("list",))
+    chosen["answer"] = ([sessions.read_info(fake_list)], ("list",), True)
     answers[:] = [True]
     before_list = open(win.project_path, "rb").read()
     win.mnuRestoreSession_Click()
@@ -3781,6 +3790,15 @@ def test_sessions(tmp, videos):
     W.QDialog.exec_result = 0
     W.QDialog.on_exec = pick([0])
     check(sessions_dialog.choose_sessions(None, "Delete", "prompt", infos3, multi=True) is None, "cancel: None")
+    W.QDialog.exec_result = 1
+    W.QDialog.on_exec = lambda d: setattr(d.list, "sel_", [1])
+    got = sessions_dialog.choose_sessions(None, "Restore", "prompt", infos3, with_parts=True, with_backup=True)
+    check(got == ([infos3[1]], ("list", "ini"), True), f"the check box for the backup is ticked at first: {got}")
+    W.QDialog.on_exec = lambda d: (setattr(d.list, "sel_", [1]), d.chkBackup.setChecked(False))
+    got = sessions_dialog.choose_sessions(None, "Restore", "prompt", infos3, with_parts=True, with_backup=True)
+    check(got == ([infos3[1]], ("list", "ini"), False), "switched off")
+    W.QDialog.on_exec = lambda d: setattr(d.list, "sel_", [1])
+    check(sessions_dialog.choose_sessions(None, "Restore", "prompt", infos3, with_parts=True) == ([infos3[1]], ("list", "ini")), "without the option: as before (no third value)")
     W.QDialog.exec_result, W.QDialog.on_exec = 1, None
     # a double click on a session: OK (when restoring one session), not when deleting several
     one = sessions_dialog.SessionDialog(None, "Restore", "prompt", infos3, False, True)
@@ -4555,6 +4573,7 @@ def test_crop_segment(tmp, videos):
     def on_exec(dlg):
         seen["start"] = dlg.values()
         seen["source"] = dlg.source
+        seen["move"] = (dlg.called("move")[-1][0].x(), dlg.called("move")[-1][0].y(), dlg.width(), dlg.height())
         dlg.set_values(60, 30, 40, 20)
         dlg.HScroll_Change(0)                                       # the window tells the main window
         seen["areas"] = [(win.fraCrop[i].geometry().x(), win.fraCrop[i].geometry().y(), win.fraCrop[i].geometry().width(), win.fraCrop[i].geometry().height()) for i in range(4)]
@@ -4563,6 +4582,8 @@ def test_crop_segment(tmp, videos):
     W.QDialog.on_exec = on_exec
     win.cmdCommand_Click(5)
     check(seen["start"] == (0, 0, 0, 0) and seen["source"] == (720, 576, F(64, 45)), f"the window gets the size and the sample aspect ratio of the picture: {seen['source']}")
+    mx, my, dw, dh = seen["move"]
+    check((mx, my) == ((400 - dw) // 2, (300 - dh) // 2) and dw == 281 and dh == 161, f"the window is centred in the preview (400x300): {seen['move']}")
     check(seen["areas"] == [(10, 20, 400, 31), (10, 304, 400, 16), (10, 20, 22, 300), (399, 20, 11, 300)], f"red bands over the preview, in proportion: {seen['areas']}")
     check(all(seen["visible"]) and not any(win.fraCrop[i].isVisible() for i in range(4)), "the bands are shown while the window is open and hidden afterwards")
     check((seg.crop_top, seg.crop_bottom, seg.crop_left, seg.crop_right) == (60, 30, 40, 20), "OK: the values are in the segment")
@@ -4688,7 +4709,7 @@ def test_import_job(tmp, videos):
     check(len(now) == 2 and [(s.path, s.name, s.start, s.end, s.crop_top, s.crop_left, s.mask, s.fps, s.width, s.height) for s in now]
           == [(s.path, s.name, s.start, s.end, s.crop_top, s.crop_left, s.mask, s.fps, s.width, s.height) for s in original], "Yes: the segment list of the job is back, with crop and mask")
     check([s.first_frame for s in now] == [a.first_frame, b.first_frame] and [s.total_frames for s in now] == [a.total_frames, b.total_frames], "first frame and length found again")
-    check(win.lvwSegments.row_count() == 2 and win.current == -1, "the list shows them, nothing is selected")
+    check(win.lvwSegments.row_count() == 2 and win.current == 0 and win.lvwSegments.current_row() == 0, "the list shows them, the first entry is selected as a whole")
     check(win.options["crop"] == "0" and win.profile["scale"] == "720:404" and Settings(win.settings.path).profile["scale"] == "720:404", "options and profile of the job are taken over (and saved)")
     check(win.options["avidemux"] == "/local/avidemux" and win.options["batch"] == script_path, "the options of this computer (programs, batch file) stay")
     auto = sessions.list_sessions(win.sessions_directory())
