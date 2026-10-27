@@ -3,6 +3,19 @@
 ## 0.5 (in progress)
 
 - Version number set to 0.5-dev.
+- **Cropping of one segment** (the crop button, VB6 `cmdCommand(5)` with `frmCrop`; modules `crop_dialog.py` and `cropping.py`): a small window with the four margins
+  (top, bottom 0..400, left, right 0..250) as scroll bars and text boxes (a number typed into a box moves its scroll bar), R sets everything to zero,
+  OK takes the values over, X cancels. While it is open the margins are shown as red bands over the preview, in proportion to the picture. The check box
+  **16:9** sets left and right from top and bottom so that the picture that is left has the proportions 16:9 and keeps them when top or bottom change;
+  unlike VB6 (`(top + bottom) * 8 \ 9`, right for square pixels) it takes the sample aspect ratio into account, so it is right for 720x576 shown as 16:9 as well
+  (`(top + bottom) * 5/8`), and it never gives a negative margin. OK is refused when nothing would be left of the picture. A global cropping value (option
+  `crop`) prevails over the individual one, so after OK the question from VB6 is asked whether to set the global value to zero.
+- **Import** (File => Import, Ctrl+M; VB6 `mnuImport_Click`, `batch.parse_jobs`): reads the batch file (the script that File => Batch writes), lists all jobs in it
+  ("Job1:<output file>", also the ones that are switched off), and a double click or OK brings the chosen one back: profile, options and the segment list with
+  crop and the masks of the logo filters (the first frames are found again). Options of this computer (paths of programs, the batch file, player,
+  dialogs, path map ...) stay as they are; names of options from older versions are converted. If the list is not empty, the program asks first and saves the
+  state before as a session ("automatic backup before importing a job from the batch file"). Damaged jobs are marked and refused; messages when there is no
+  batch file or no job in it.
 
 ## 0.4
 

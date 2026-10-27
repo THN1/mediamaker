@@ -51,7 +51,7 @@ class FontMetrics:
 
 
 class QWidget(QObject):
-    methods = {"setMinimumHeight", "setMinimumWidth", "deleteLater", "underMouse", "setAttribute", "setCursor", "unsetCursor", "raise_", "fontMetrics", "setMinimumSize", "setMaximumSize", "setSizePolicy", "setGeometry", "geometry", "resize", "setFixedSize", "setMinimumSize", "move", "hide", "show", "setVisible",
+    methods = {"mapToGlobal", "setMinimumHeight", "setMinimumWidth", "deleteLater", "underMouse", "setAttribute", "setCursor", "unsetCursor", "raise_", "fontMetrics", "setMinimumSize", "setMaximumSize", "setSizePolicy", "setGeometry", "geometry", "resize", "setFixedSize", "setMinimumSize", "move", "hide", "show", "setVisible",
                "setEnabled", "isEnabled", "setToolTip", "setFont", "setStyleSheet", "setAutoFillBackground",
                "setMouseTracking", "setAcceptDrops", "setWindowTitle", "setWindowFlag", "setWindowIcon", "winId", "rect",
                "frameGeometry", "screen", "isActiveWindow", "update", "contentsRect", "width", "height", "setFocusPolicy",
@@ -117,6 +117,9 @@ class QWidget(QObject):
 
     def _ret_fontMetrics(self):
         return FontMetrics()
+
+    def _ret_mapToGlobal(self, point):
+        return point
 
     def _ret_screen(self):
         return Screen()
@@ -194,7 +197,7 @@ class QGroupBox(QWidget):
 
 class QLineEdit(QWidget):
     methods = {"setText", "text", "setMaxLength", "setReadOnly"}
-    signals = {"textChanged"}
+    signals = {"textChanged", "editingFinished"}
 
     def _ret_text(self):
         args = self.called("setText")

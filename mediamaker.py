@@ -31,7 +31,7 @@ _add_ui_paths()
 
 from PySide6 import QtCore, QtGui, QtWidgets                         # noqa: E402
 
-from cutlist import Job, Segment, resolve_source                          # noqa: E402
+from cutlist import Job, Segment, parse_kv, parse_segments, resolve_source   # noqa: E402
 from external import ExternalWorker, run_external                         # noqa: E402
 import sessions                                                       # noqa: E402
 from sidecars import sidecar_files                                    # noqa: E402
@@ -39,6 +39,7 @@ import debugpack                                                      # noqa: E4
 import ffmpeg_cmd                                                     # noqa: E402
 from frames import grab_frame, grab_numbered, grab_scanlines        # noqa: E402
 import dedup                                                          # noqa: E402
+import cropping                                                       # noqa: E402
 import timeline as tl                                                # noqa: E402
 import dialogs                                                       # noqa: E402
 import mediainfo                                                     # noqa: E402
@@ -973,6 +974,54 @@ class frmMain(frmMainBase):
         os.chmod(script, 0o755)
         self.inform(f"Batch file was updated and can be run from the command line:\n{script}")
 
+    # ------------------------------------------------------------------ Import of a job from the batch file (File => Import, Ctrl+M)
+    LOCAL_OPTIONS = {"batch", "player", "dialog_style", "vlc_args", "hide_messages", "overlay_opacity", "file_dialog", "sessions_dir", "avidemux", "vlc",
+                     "path_map", "cutpoint_filters"}          # of this computer and of this installation: not taken from a job
+
+    def choose_job(self, jobs: list):
+        import import_dialog
+        return import_dialog.choose_job(self, jobs)
+
+    def mnuImport_Click(self):
+        """Reads the batch file (the script that File => Batch writes), shows the jobs in it, and takes the chosen one back into the program:
+        profile, options and segment list, which the script carries in its comments (the masks are part of the list). Options of this computer
+        (paths of programs, batch file, player ...) stay as they are."""
+        script = self.batch_path()
+        if not os.path.exists(script):
+            self.msg("No batch file found.")
+            return
+        with open(script, encoding="utf-8", errors="replace") as f:
+            jobs = batch.parse_jobs(f.read())
+        if not jobs:
+            self.msg("The batch file contains no job that can be imported.")
+            return
+        job = self.choose_job(jobs)
+        if job is None:
+            return
+        if job.error:
+            self.msg(f"Job {job.number} cannot be imported: {job.error}.")
+            return
+        segments = parse_segments(job.csv)
+        if not segments:
+            self.msg(f"Job {job.number} has no segments.")
+            return
+        if self.segments:
+            plural = lambda n: f"{n} segment{'s' if n != 1 else ''}"
+            if not self.ask(f"The list ({plural(len(self.segments))}) is replaced by the {plural(len(segments))} of the job, and the profile and the options of the "
+                            f"job are taken over. The state before is saved as a session first, so that you can go back.\n\nImport the job?"):
+                return
+            self.make_session("automatic backup before importing a job from the batch file")
+        options = dict(self.options)
+        taken = {RENAMED_OPTIONS.get(k, k): v for k, v in parse_kv(job.options).items() if k not in REMOVED_OPTIONS}     # names from older versions
+        options.update({k: v for k, v in taken.items() if k not in self.LOCAL_OPTIONS})
+        self.settings.set_options(options)
+        profile = parse_kv(job.profile)
+        if profile:
+            self.settings.set_profile(profile)
+        self.settings.save()
+        save_segments(self.project_path, segments)
+        self.reload_session()                                       # reads the files again, brings old lists up to date, shows everything
+
     # ------------------------------------------------------------------ Information (overview of all segments)
     def mnuInfo_Click(self):
         """All segments with their position in the finished film, total length and expected size (VB6: File -> Information)."""
@@ -1037,8 +1086,9 @@ class frmMain(frmMainBase):
                 self.lvwSegments.setFocus()
                 return
             self.lblSegment_Upd()                                      # saves the list
+        elif index == 5:
+            self.crop_segment()
         else:
-            self.msg("This function (cropping) has not been ported yet.")
             return
         self.lvwSegments.setFocus()
 
@@ -1072,6 +1122,55 @@ class frmMain(frmMainBase):
             text += ("\n\nThe logo could not be isolated in this mask: the filter works, but the search for commercials with the "
                      "logo cannot use it.")
         self.msg(text)
+
+    # ------------------------------------------------------------------ Cropping of one segment (VB6: cmdCommand(5), frmCrop)
+    def crop_overlay(self, values: tuple, seg: Segment) -> None:
+        """The four margins as red bands over the preview (top, bottom, left, right: fraCrop(0) to fraCrop(3)); their size is the share of the
+        picture that is cropped."""
+        top, bottom, left, right = values
+        vx, vy, vw, vh = self.delogo_area()
+        share = lambda n, total, size: round(n * total / size) if size else 0
+        h_top, h_bottom = share(top, vh, seg.height), share(bottom, vh, seg.height)
+        w_left, w_right = share(left, vw, seg.width), share(right, vw, seg.width)
+        areas = ((vx, vy, vw, h_top), (vx, vy + vh - h_bottom, vw, h_bottom), (vx, vy, w_left, vh), (vx + vw - w_right, vy, w_right, vh))
+        alpha = round(255 * self.overlay_opacity() / 100)
+        for i, area in enumerate(areas):
+            frame = self.fraCrop[i]
+            frame.setAutoFillBackground(False)
+            frame.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+            frame.setStyleSheet(f"#fraCrop_{i} {{ background-color: rgba(255, 0, 0, {alpha}); }}")
+            frame.setGeometry(*area)
+            frame.show()
+            frame.raise_()
+
+    def run_crop_dialog(self, dialog) -> bool:
+        dialog.exec()
+        return dialog.status == 0
+
+    def crop_segment(self) -> None:
+        """The cropping of the selected segment: a small window with the four margins (and 16:9); OK stores them in the segment. A global
+        cropping value (option crop) would prevail over this one, so it is offered to set it to zero."""
+        from crop_dialog import frmCrop
+        seg = self.segment
+        sar = cropping.sample_aspect(seg.width, seg.height, self.aspect_of(seg.path))
+        dialog = frmCrop(self, seg.width, seg.height, sar)
+        dialog.set_values(seg.crop_top, seg.crop_bottom, seg.crop_left, seg.crop_right)
+        dialog.changed.connect(lambda: self.crop_overlay(dialog.values(), seg))
+        self.crop_overlay(dialog.values(), seg)
+        dialog.move(self.VLC.mapToGlobal(QtCore.QPoint(self.VLC.width() // 3, self.VLC.height() // 3)))       # as in VB6: over the preview
+        ok = self.run_crop_dialog(dialog)
+        for i in range(4):
+            self.fraCrop[i].hide()
+        dialog.deleteLater()
+        if not ok:
+            return
+        seg.crop_top, seg.crop_bottom, seg.crop_left, seg.crop_right = dialog.values()
+        self.lblSegment_Upd()
+        if int(self.options.get("crop", 0) or 0) > 0:
+            if self.ask("Attention: the global cropping value was (also) set, and will prevail over individual (per segment) cropping.\n\n"
+                        "Do you want to set the global cropping value to zero?"):
+                self.settings.set_option("crop", "0")
+                self.settings.save()
 
     # ------------------------------------------------------------------ DeLogo filter: red rectangle over the preview
     DELOGO_NEAR = 7                 # pixels: width of the inner border of the rectangle where its size can be changed (VB6: 100 twips)

@@ -858,7 +858,7 @@ def test_segments(tmp, videos):
           and len(load_segments(os.path.join(tmp, "seekwin", "MediaMaker.json"))) == 1,
           "delete: the successor is selected and loaded")
     win.cmdCommand_Click(5)
-    check("not been ported" in win.messages[-1], "crop/logo: note")
+    check(not any("ported" in m for m in win.messages) and not any(win.fraCrop[i].isVisible() for i in range(4)), "crop: the window opens (not confirmed here), no note, the bands are hidden again")
     win.answer = False
     win.cmdCommand_Click(3)
     check(len(win.segments) == 1, "remove all: no")
@@ -4484,6 +4484,231 @@ def test_renamed_option(tmp, videos):
     print("Renamed option dedup: OK (default, group, help text, old INI, both names, VB6 INI)")
 
 
+def test_crop_segment(tmp, videos):
+    """Cropping of one segment: calculation for 16:9, the small window, the red bands over the preview, taking over the values."""
+    from fractions import Fraction as F
+    from PySide6 import QtWidgets as W
+    import cropping
+    import crop_dialog
+    from ffmpeg_cmd import build_command
+    from mediaprobe import first_frame_number
+    # --- calculation
+    check(cropping.ratio_side(1280, 720, F(1), 36, 36) == 64 == 72 * 8 // 9, "16:9, square pixels: as VB6 ((top + bottom) * 8 \\ 9)")
+    check(cropping.ratio_side(720, 576, F(64, 45), 36, 36) == 45 and cropping.ratio_side(720, 576, F(64, 45), 60, 30) == 56, "720x576 shown as 16:9: (top + bottom) * 5/8")
+    check(cropping.ratio_side(720, 576, F(16, 15), 40, 40) == 0 and cropping.ratio_side(720, 576, F(16, 15), 72, 72) == 0 and cropping.ratio_side(720, 576, F(16, 15), 144, 144) == 120,
+          "a 4:3 picture: nothing at the sides while it is too high for 16:9, then positive")
+    check(cropping.sample_aspect(720, 576, 16 / 9) == F(64, 45) and cropping.sample_aspect(1280, 720, 16 / 9) == 1 and cropping.sample_aspect(720, 576, None) == 1, "sample aspect ratio from the display ratio")
+    check(cropping.valid(720, 576, 100, 100, 100, 100) and not cropping.valid(720, 576, 288, 288, 0, 0) and not cropping.valid(720, 576, 0, 0, 400, 320) and not cropping.valid(720, 576, -1, 0, 0, 0),
+          "something must be left of the picture")
+    # --- the window
+    d = crop_dialog.frmCrop(None, 720, 576, F(64, 45))
+    notes, changes = [], []
+    d.notify = notes.append
+    d.changed.connect(lambda: changes.append(d.values()))
+    check(d.status == 1 and d.values() == (0, 0, 0, 0), "open, all zero")
+    d.set_values(10, 20, 30, 40)
+    check(d.values() == (10, 20, 30, 40) and [d.txtCrop[i].text() for i in range(4)] == ["10", "20", "30", "40"], "values and text boxes")
+    d.HScroll[0].setValue(50)
+    d.HScroll_Change(0)
+    d.VScroll[1].setValue(7)
+    d.VScroll_Change(1)
+    check(d.txtCrop[0].text() == "50" and d.txtCrop[3].text() == "7" and changes[-1] == (50, 20, 30, 7) and len(changes) >= 2, "moving a scroll bar updates the text box and tells the main window")
+    d.txtCrop[1].setText("33")
+    d.typed(1)
+    check(d.values()[1] == 33 and d.txtCrop[1].text() == "33", "a number typed into a text box moves the scroll bar")
+    d.txtCrop[1].setText("abc")
+    d.typed(1)
+    check(d.values()[1] == 33 and d.txtCrop[1].text() == "33", "something else is replaced by the value of the scroll bar")
+    d.txtCrop[2].setText("100000")
+    d.typed(2)
+    check(d.values()[2] == d.VScroll[0].value() and d.txtCrop[2].text() == str(d.VScroll[0].value()), "typed values stay inside the range of the scroll bar")
+    d.set_values(36, 36, 0, 0)
+    d.chkAutoRatio.setChecked(True)
+    d.chkAutoRatio_Click()
+    check(d.values() == (36, 36, 45, 45), f"16:9 on: left and right are set from top and bottom: {d.values()}")
+    d.HScroll[0].setValue(60)
+    d.HScroll_Change(0)
+    check(d.values() == (60, 36, 60, 60) and d.txtCrop[2].text() == "60", f"and follow when top changes: {d.values()}")
+    d.cmdReset_Click()
+    check(d.values() == (0, 0, 0, 0) and not d.chkAutoRatio.isChecked(), "R: everything zero, 16:9 off")
+    d.set_values(300, 300, 0, 0)
+    d.cmdOK_Click()
+    check(d.status == 1 and notes and "Nothing would be left of the picture" in notes[0] and not d.called("accept"), "OK with nothing left of the picture: refused, the window stays open")
+    d.set_values(10, 20, 30, 40)
+    d.cmdOK_Click()
+    check(d.status == 0 and len(d.called("accept")) == 1, "OK: status 0")
+    d2 = crop_dialog.frmCrop(None, 720, 576, 1)
+    d2.cmdCancel_Click()
+    check(d2.status == -1 and len(d2.called("reject")) == 1, "X: status -1")
+    # --- in the main window
+    work = os.path.join(tmp, "cropwin")
+    win = seek_window(tmp, videos, ("sample2.ts", "sample3.ts"), workdir="cropwin", first_fn=first_frame_number)
+    win._aspect_fn = lambda path: 16 / 9
+    seg = win.segments[0]
+    win.VLC.setGeometry(10, 20, 400, 300)
+    win.current = -1
+    W.QDialog.on_exec = lambda dlg: (_ for _ in ()).throw(AssertionError("no dialog without a selected segment"))
+    win.cmdCommand_Click(5)
+    win.lvwSegments.select_row(0)
+    win.lvwSegments_Click()
+    seen = {}
+    def on_exec(dlg):
+        seen["start"] = dlg.values()
+        seen["source"] = dlg.source
+        dlg.set_values(60, 30, 40, 20)
+        dlg.HScroll_Change(0)                                       # the window tells the main window
+        seen["areas"] = [(win.fraCrop[i].geometry().x(), win.fraCrop[i].geometry().y(), win.fraCrop[i].geometry().width(), win.fraCrop[i].geometry().height()) for i in range(4)]
+        seen["visible"] = [win.fraCrop[i].isVisible() for i in range(4)]
+        dlg.cmdOK_Click()
+    W.QDialog.on_exec = on_exec
+    win.cmdCommand_Click(5)
+    check(seen["start"] == (0, 0, 0, 0) and seen["source"] == (720, 576, F(64, 45)), f"the window gets the size and the sample aspect ratio of the picture: {seen['source']}")
+    check(seen["areas"] == [(10, 20, 400, 31), (10, 304, 400, 16), (10, 20, 22, 300), (399, 20, 11, 300)], f"red bands over the preview, in proportion: {seen['areas']}")
+    check(all(seen["visible"]) and not any(win.fraCrop[i].isVisible() for i in range(4)), "the bands are shown while the window is open and hidden afterwards")
+    check((seg.crop_top, seg.crop_bottom, seg.crop_left, seg.crop_right) == (60, 30, 40, 20), "OK: the values are in the segment")
+    saved = load_segments(win.project_path)[0]
+    check((saved.crop_top, saved.crop_bottom, saved.crop_left, saved.crop_right) == (60, 30, 40, 20), "and in the saved list")
+    graph = build_command(win.make_job(os.path.join(work, "o.mp4")))
+    graph = graph[graph.index("-filter_complex") + 1]
+    check("crop=iw-60:ih-90:40:60" in graph, f"ffmpeg crops this segment: {graph[:80]}")
+    # the window starts with the values of the segment; Cancel changes nothing
+    seen.clear()
+    W.QDialog.on_exec = lambda dlg: (seen.update(start=dlg.values()), dlg.set_values(1, 2, 3, 4), dlg.cmdCancel_Click())
+    win.cmdCommand_Click(5)
+    check(seen["start"] == (60, 30, 40, 20) and (seg.crop_top, seg.crop_left) == (60, 40) and not any(win.fraCrop[i].isVisible() for i in range(4)), "Cancel: the segment keeps its values")
+    # 16:9
+    def ratio(dlg):
+        dlg.set_values(60, 30, 0, 0)
+        dlg.chkAutoRatio.setChecked(True)
+        dlg.chkAutoRatio_Click()
+        dlg.cmdOK_Click()
+    W.QDialog.on_exec = ratio
+    win.cmdCommand_Click(5)
+    check((seg.crop_top, seg.crop_bottom, seg.crop_left, seg.crop_right) == (60, 30, 56, 56), f"16:9: left and right {seg.crop_left}, {seg.crop_right}")
+    # --- a global cropping value prevails: the question
+    asked = []
+    win.ask = lambda text: (asked.append(text), False)[1]
+    win.settings.set_option("crop", "72")
+    W.QDialog.on_exec = lambda dlg: (dlg.set_values(5, 5, 0, 0), dlg.cmdOK_Click())
+    win.cmdCommand_Click(5)
+    check(len(asked) == 1 and asked[0].startswith("Attention: the global cropping value was (also) set, and will prevail over individual (per segment) cropping.")
+          and asked[0].endswith("Do you want to set the global cropping value to zero?") and win.options["crop"] == "72" and seg.crop_top == 5, "global crop > 0: the question; No: it stays")
+    win.ask = lambda text: (asked.append(text), True)[1]
+    win.cmdCommand_Click(5)
+    check(win.options["crop"] == "0" and Settings(win.settings.path).options["crop"] == "0", "Yes: the global value is set to zero (and saved)")
+    asked.clear()
+    win.cmdCommand_Click(5)
+    check(asked == [], "global crop 0: no question")
+    W.QDialog.on_exec = None
+    print("Cropping of a segment: OK (16:9, window, bands over the preview, taking over, global value)")
+
+
+def test_import_job(tmp, videos):
+    """File => Import: the jobs of a batch file are listed; the chosen one brings back profile, options and segment list."""
+    import batch
+    import sessions
+    import import_dialog
+    from PySide6 import QtWidgets as W
+    from cutlist import parse_kv
+    from mediaprobe import first_frame_number
+    from settings import format_kv
+    win = seek_window(tmp, videos, ("sample2.ts", "sample3.ts"), workdir="importwin", first_fn=first_frame_number)
+    a, b = win.segments
+    a.crop_top, a.mask, b.crop_left = 12, "0.1 0.2 0.3 0.4", 8
+    a.end = a.first_frame + 100
+    win.settings.set_option("crop", "0")
+    win.settings.set_profile({**win.profile, "scale": "720:404"})
+    job1 = win.make_job("/out/first.mp4")
+    original = [dataclasses.replace(s) for s in win.segments]
+    original_profile, original_options = dict(job1.profile), dict(job1.options)
+    # a second job with other values, written after the first one (which stays in the script as an old step)
+    b.start += 20
+    job2 = win.make_job("/out/second.mp4")
+    script = batch.build_script(job1, ["ffmpeg", "-i", "in.ts", "out1.mp4"])
+    script = batch.build_script(job2, ["ffmpeg", "-i", "in.ts", "out2.mp4"], script)
+    # --- reading the jobs
+    jobs = batch.parse_jobs(script)
+    check([(j.number, j.output, j.error) for j in jobs] == [(1, "/out/first.mp4", ""), (2, "/out/second.mp4", "")], f"both jobs are found, also the one that is switched off: {[(j.number, j.output) for j in jobs]}")
+    check(jobs[0].describe() == "Job1: /out/first.mp4" and jobs[1].describe() == "Job2: /out/second.mp4", "the line in the list")
+    check(parse_kv(jobs[0].profile) == original_profile and parse_kv(jobs[0].options) == original_options, "profile and options of the job, exactly")
+    check(batch.parse_jobs(script.replace("\n", "\r\n"))[0].csv == jobs[0].csv, "a script with Windows line ends")
+    check(batch.parse_jobs("") == [] and batch.parse_jobs("#!/bin/bash\necho hello\n# just a comment\n") == [], "no job in an empty file or a file without jobs")
+    broken = script.replace("# P=", "# P=@@@", 1)
+    bj = batch.parse_jobs(broken)
+    check(bj[0].error == "the text cannot be decoded" and "damaged" in bj[0].describe() and bj[1].error == "", "a damaged job is marked, the other one is fine")
+    nocsv = "\n".join(l for l in script.splitlines() if not l.startswith("# C="))
+    check(batch.parse_jobs(nocsv)[0].error == "no segment list", "a job without a segment list")
+    # --- the window for choosing
+    W.QDialog.exec_result = 1
+    W.QDialog.on_exec = lambda d: setattr(d.list, "sel_", [1])
+    check(import_dialog.choose_job(None, jobs) is jobs[1], "choosing a job")
+    W.QDialog.on_exec = lambda d: setattr(d.list, "sel_", [])
+    check(import_dialog.choose_job(None, jobs) is None, "nothing selected: None")
+    W.QDialog.exec_result, W.QDialog.on_exec = 0, None
+    check(import_dialog.choose_job(None, jobs) is None, "cancelled: None")
+    W.QDialog.exec_result = 1
+    one = sessions_dialog_choose = __import__("sessions_dialog").SessionDialog(None, "Import job", "Select", jobs, False, False)
+    one.list.itemDoubleClicked.emit(None)
+    check(len(one.called("accept")) == 1, "a double click on a job is OK")
+    # --- File => Import
+    script_path = win.batch_path()
+    check(script_path == os.path.splitext(win.settings.path)[0] + ".sh", "the batch file lies next to the INI file")
+    win.messages.clear()
+    win.mnuImport_Click()
+    check(win.messages[-1] == "No batch file found.", "no batch file: message")
+    open(script_path, "w", encoding="utf-8").write("#!/bin/bash\necho hi\n")
+    win.mnuImport_Click()
+    check(win.messages[-1] == "The batch file contains no job that can be imported.", "no job in it: message")
+    open(script_path, "w", encoding="utf-8").write(script)
+    win.choose_job = lambda jobs: None
+    before = [dataclasses.replace(s) for s in win.segments]
+    win.mnuImport_Click()
+    check(win.segments == before, "cancelled: nothing changes")
+    win.choose_job = lambda jobs: bj[0]
+    open(script_path, "w", encoding="utf-8").write(broken)
+    win.mnuImport_Click()
+    check(win.messages[-1] == "Job 1 cannot be imported: the text cannot be decoded." and win.segments == before, "a damaged job is refused")
+    open(script_path, "w", encoding="utf-8").write(script)
+    # the current state differs from job 1: other list, other options, other profile; the paths of the programs are local
+    win.segments.pop()
+    win.settings.set_option("crop", "60")
+    win.settings.set_option("avidemux", "/local/avidemux")
+    win.settings.set_option("batch", script_path)
+    win.settings.set_profile({**win.profile, "scale": "1280:720"})
+    win._save()
+    asked = []
+    win.ask = lambda text: (asked.append(text), False)[1]
+    win.choose_job = lambda jobs: jobs[0]
+    win.mnuImport_Click()
+    check(len(asked) == 1 and asked[0].startswith("The list (1 segment) is replaced by the 2 segments of the job") and "saved as a session first" in asked[0] and len(win.segments) == 1
+          and not sessions.list_sessions(win.sessions_directory()), "the list is not empty: the question; No: nothing changes, no session")
+    win.ask = lambda text: (asked.append(text), True)[1]
+    win.mnuImport_Click()
+    now = win.segments
+    check(len(now) == 2 and [(s.path, s.name, s.start, s.end, s.crop_top, s.crop_left, s.mask, s.fps, s.width, s.height) for s in now]
+          == [(s.path, s.name, s.start, s.end, s.crop_top, s.crop_left, s.mask, s.fps, s.width, s.height) for s in original], "Yes: the segment list of the job is back, with crop and mask")
+    check([s.first_frame for s in now] == [a.first_frame, b.first_frame] and [s.total_frames for s in now] == [a.total_frames, b.total_frames], "first frame and length found again")
+    check(win.lvwSegments.row_count() == 2 and win.current == -1, "the list shows them, nothing is selected")
+    check(win.options["crop"] == "0" and win.profile["scale"] == "720:404" and Settings(win.settings.path).profile["scale"] == "720:404", "options and profile of the job are taken over (and saved)")
+    check(win.options["avidemux"] == "/local/avidemux" and win.options["batch"] == script_path, "the options of this computer (programs, batch file) stay")
+    auto = sessions.list_sessions(win.sessions_directory())
+    check(len(auto) == 1 and auto[0].note == "automatic backup before importing a job from the batch file" and auto[0].segments == 1, "the state before is saved as a session")
+    check(load_segments(win.project_path)[1].crop_left == 8, "saved")
+    # an empty list: no question, no session; an old option name in the job is taken over as the new one
+    win.segments.clear()
+    win._save()
+    win.reload_session()
+    old = batch.encode_block("T", 'crop="0" overlap="300" focus="0"')
+    lines = [l for l in script.splitlines() if not l.startswith("# T=")]
+    first_j = lines.index("# J=/out/first.mp4")
+    open(script_path, "w", encoding="utf-8").write("\n".join(lines[:first_j + 1] + old + lines[first_j + 1:]) + "\n")
+    asked.clear()
+    win.mnuImport_Click()
+    check(asked == [] and len(win.segments) == 2 and len(sessions.list_sessions(win.sessions_directory())) == 1, "empty list: no question and no new session")
+    check(win.options.get("dedup") == "300" and "overlap" not in win.options and "focus" not in win.options, "old names in the job: overlap -> dedup, dropped options go")
+    print("Import of a job: OK (reading the script, choosing, taking over, local options, session, damaged jobs)")
+
+
 def test_wait_dialog(tmp, videos):
     """The wait window has room for several lines (before, the second line was cut off) and wraps long lines."""
     import dialogs
@@ -4559,6 +4784,8 @@ def main():
     test_delete_sidecars(tmp, sys.argv[1])
     test_dedup(tmp, sys.argv[1])
     test_renamed_option(tmp, sys.argv[1])
+    test_crop_segment(tmp, sys.argv[1])
+    test_import_job(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])
     test_timeline(tmp, sys.argv[1])
     test_segments(tmp, sys.argv[1])

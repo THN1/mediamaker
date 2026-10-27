@@ -8,8 +8,10 @@ are created from Base64 text in the script itself.
 from __future__ import annotations
 
 import base64
+import binascii
 import os
 import re
+from dataclasses import dataclass
 from typing import Iterable, Optional
 
 from cutlist import Job, Segment
@@ -66,6 +68,55 @@ def job_lines(job: Job, command: list[str]) -> list[str]:
     lines.append(command_line(command))
     lines.append(CLEANUP)
     return lines
+
+
+@dataclass
+class BatchJob:
+    """A job that was read from a batch file (the comments J, P, T and C)."""
+    number: int
+    output: str
+    profile: str = ""            # text of the profile: key="value" ...
+    options: str = ""            # text of the options
+    csv: str = ""                # the segment list as CSV
+    error: str = ""              # not empty: the job cannot be imported
+
+    def describe(self) -> str:
+        """Line for the list of jobs (VB6: \"Job1:<output file>\")."""
+        return f"Job{self.number}: {self.output}" + (f"   (damaged: {self.error})" if self.error else "")
+
+
+def decode_block(chunks: list) -> str:
+    """The text from the lines of one comment block (Base64 of UTF-16LE); the empty text if there are no lines."""
+    data = "".join(chunks)
+    return base64.b64decode(data, validate=True).decode("utf-16le") if data else ""
+
+
+def parse_jobs(text: str) -> list:
+    """All jobs of a batch file, whether they are switched off (REMed with '# ') or not: their comments are the same. A job begins with the
+    line '# J=<output file>' and has the blocks P (profile), T (options) and C (segment list)."""
+    jobs: list = []
+    current, blocks = None, {}
+
+    def close() -> None:
+        if current is None:
+            return
+        try:
+            current.profile, current.options, current.csv = (decode_block(blocks.get(k, [])) for k in ("P", "T", "C"))
+            for key, label in (("P", "profile"), ("C", "segment list")):
+                if not blocks.get(key):
+                    raise ValueError(f"no {label}")
+        except (binascii.Error, UnicodeDecodeError, ValueError) as e:
+            current.error = str(e) if isinstance(e, ValueError) and not isinstance(e, binascii.Error) else "the text cannot be decoded"
+        jobs.append(current)
+
+    for line in text.splitlines():
+        if line.startswith("# J="):
+            close()
+            current, blocks = BatchJob(number=len(jobs) + 1, output=line[4:].strip()), {}
+        elif current is not None and line[:4] in ("# P=", "# T=", "# C="):
+            blocks.setdefault(line[2], []).append(line[4:].strip())
+    close()
+    return jobs
 
 
 def build_script(job: Job, command: list[str], old_text: Optional[str] = None) -> str:

@@ -51,6 +51,17 @@ class Qt:
     ScrollBarPolicy = EnumGroup("Qt.ScrollBarPolicy", {"ScrollBarAlwaysOff", "ScrollBarAsNeeded", "ScrollBarAlwaysOn"})
 
 
+class QPoint(Base):
+    def __init__(self, x=0, y=0):
+        self._x, self._y = x, y
+
+    def x(self):
+        return self._x
+
+    def y(self):
+        return self._y
+
+
 class QUrl(Base):
     @staticmethod
     def fromLocalFile(path):
