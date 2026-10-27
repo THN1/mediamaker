@@ -3634,8 +3634,8 @@ def test_sessions(tmp, videos):
     win._save()
     win.settings.set_option("crop", "60")
     win.settings.save()
-    chosen = {}
-    win.choose_session = lambda title, prompt, infos, multi=False, with_parts=False, with_backup=False: chosen.get("answer")
+    chosen, defaults = {}, []
+    win.choose_session = lambda title, prompt, infos, multi=False, with_parts=False, with_backup=False, backup_default=True: (defaults.append(backup_default), chosen.get("answer"))[1]
     win.messages.clear()
     win.mnuRestoreSession_Click()
     check(len(win.segments) == 1 and not any(m.startswith("Session ") for m in win.messages), "cancelling the choice: nothing happens")
@@ -3661,6 +3661,28 @@ def test_sessions(tmp, videos):
     win.mnuRestoreSession_Click()
     check(len(sessions.list_sessions(directory)) == n_sessions and len(win.segments) == 2 and asked[-1].find("NOT saved first") > 0 and "saved as a session first" not in asked[-1]
           and win.messages[-1] == f"Session {first.stamp} has been restored.", f"without the backup: no new session, the question says so: {win.messages[-1]}")
+    # the choice of the backup check box is remembered (option restore_backup), the other two check boxes are not
+    check(defaults[0] is True and win.options["restore_backup"] == "off" and Settings(win.settings.path).options["restore_backup"] == "off",
+          "the first call had the box ticked (default on); after switching it off the option is off, also in the INI file - although the restore brought back the "
+          "INI file of the session (which did not have the option)")
+    chosen["answer"] = None
+    win.mnuRestoreSession_Click()
+    check(defaults[-1] is False and win.options["restore_backup"] == "off", "the next time the window opens with the box NOT ticked; cancelling changes nothing")
+    chosen["answer"] = ([first], ("list", "ini"), True)
+    answers[:] = [False]
+    win.mnuRestoreSession_Click()
+    check(win.options["restore_backup"] == "on" and Settings(win.settings.path).options["restore_backup"] == "on", "ticked again: remembered as on, even if the question after it is answered No")
+    chosen["answer"] = None
+    win.mnuRestoreSession_Click()
+    check(defaults[-1] is True, "and the next window has it ticked again")
+    infos_box = [sessions.SessionInfo(stamp="2026.10.21_10-00-00", path="/x", created="2026-10-21T10:00:00", segments=1, titles=["a.ts"])]
+    boxes = sessions_dialog.SessionDialog(None, "Restore", "prompt", infos_box, False, True, True, False)
+    check(boxes.chkBackup.isChecked() is False and boxes.chkList.isChecked() and boxes.chkIni.isChecked(), "in the window: the backup box as remembered, the other two always ticked")
+    boxes = sessions_dialog.SessionDialog(None, "Restore", "prompt", infos_box, False, True, True, True)
+    check(boxes.chkBackup.isChecked() and boxes.chkList.isChecked() and boxes.chkIni.isChecked(), "all three ticked")
+    from profiles import validate_options
+    from settings import default_options
+    check(default_options()["restore_backup"] == "on" and validate_options({"restore_backup": "off"}) == [] and len(validate_options({"restore_backup": "maybe"})) == 1, "option restore_backup")
     # parts: only the list
     win.settings.set_option("crop", "55")
     win.settings.save()

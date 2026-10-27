@@ -1595,9 +1595,10 @@ class frmMain(frmMainBase):
         custom = (self.options.get("sessions_dir", "") or "").strip()
         return os.path.expanduser(custom) if custom else sessions.default_directory(self.settings.path)
 
-    def choose_session(self, title: str, prompt: str, infos: list, multi: bool = False, with_parts: bool = False, with_backup: bool = False):
+    def choose_session(self, title: str, prompt: str, infos: list, multi: bool = False, with_parts: bool = False, with_backup: bool = False,
+                       backup_default: bool = True):
         import sessions_dialog
-        return sessions_dialog.choose_sessions(self, title, prompt, infos, multi, with_parts, with_backup)
+        return sessions_dialog.choose_sessions(self, title, prompt, infos, multi, with_parts, with_backup, backup_default)
 
     def make_session(self, note: str) -> "sessions.SessionInfo":
         self._save()                                              # the list on disk is the current one
@@ -1615,6 +1616,14 @@ class frmMain(frmMainBase):
             return
         self.msg(f"Session backup with timestamp {info.stamp} has been created.")
 
+    def remember_restore_backup(self, backup: bool) -> None:
+        """The choice of the check box \"Save the current state as a session first\" is remembered in the option restore_backup (the other two boxes
+        are not)."""
+        value = "on" if backup else "off"
+        if self.options.get("restore_backup", "on") != value:
+            self.settings.set_option("restore_backup", value)
+            self.settings.save()
+
     def mnuRestoreSession_Click(self):
         """Puts a saved session back: the segment list and/or the settings. The state before is saved as a session first, unless the check box in the
         window for choosing is switched off (so that the number of sessions stays manageable)."""
@@ -1622,10 +1631,12 @@ class frmMain(frmMainBase):
         if not infos:
             self.msg("There are no saved sessions yet (menu File => Backup session).")
             return
-        choice = self.choose_session("Restore session", "Select the session to restore and what to restore from it:", infos, with_parts=True, with_backup=True)
+        choice = self.choose_session("Restore session", "Select the session to restore and what to restore from it:", infos, with_parts=True, with_backup=True,
+                                     backup_default=self.options.get("restore_backup", "on") != "off")
         if choice is None:
             return
         (info,), parts, backup = choice
+        self.remember_restore_backup(backup)
         if not info.ok:
             self.msg(f"The session {info.stamp} is damaged and cannot be restored.")
             return
@@ -1640,6 +1651,7 @@ class frmMain(frmMainBase):
             self.msg(f"The session could not be restored: {e}")
             return
         self.reload_session()
+        self.remember_restore_backup(backup)                         # (a restored INI file brings the value it had in the session)
         self.msg(f"Session {info.stamp} has been restored." + (f" The state before is saved as session {before.stamp}." if before else ""))
 
     def mnuDeleteSession_Click(self):

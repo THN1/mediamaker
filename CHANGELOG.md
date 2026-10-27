@@ -5,8 +5,10 @@
 - Version number set to 0.5-dev.
 - After an **import** from the batch file or a **restore** of a session the first entry of the list is selected as a whole (all fields, as if it had been
   clicked; before only the number field showed the focus); the crop window is centred in the preview (as in VB6, instead of one third from the corner);
-  the window for **Restore session** has a check box "Save the current state as a session first" (ticked at first), so that the number of automatic
-  sessions stays manageable; the question and the message after the restore say which it was.
+  the window for **Restore session** has a check box "Save the current state as a session first", so that the number of automatic
+  sessions stays manageable; the question and the message after the restore say which it was. The choice of this box is remembered between the runs of the
+  program in the new option `restore_backup` (on|off, group Technical, default on; a restored INI file does not take it back); the other two boxes
+  (segment list, settings) are ticked every time.
 - **Cropping of one segment** (the crop button, VB6 `cmdCommand(5)` with `frmCrop`; modules `crop_dialog.py` and `cropping.py`): a small window with the four margins
   (top, bottom 0..400, left, right 0..250) as scroll bars and text boxes (a number typed into a box moves its scroll bar), R sets everything to zero,
   OK takes the values over, X cancels. While it is open the margins are shown as red bands over the preview, in proportion to the picture. The check box

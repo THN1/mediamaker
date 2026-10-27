@@ -26,6 +26,7 @@ PRESETS = {
     "dialog_style": ["tabs", "list"],
     "file_dialog": ["qt", "native"],
     "cutpoint_filters": ["on", "off"],
+    "restore_backup": ["on", "off"],
 }
 
 
@@ -83,7 +84,7 @@ OPTION_GROUPS = (
     ("Logo", ("overlay_opacity",)),
     ("Audio/Subtitles", ("audio", "multilanguage", "subtitle", "aflags")),
     ("Batch", ("path_map", "batch")),
-    ("Technical", ("floor", "detect", "player", "vlc_args", "hide_messages", "dialog_style", "file_dialog", "sessions_dir", "cutpoint_filters")),
+    ("Technical", ("floor", "detect", "player", "vlc_args", "hide_messages", "dialog_style", "file_dialog", "sessions_dir", "restore_backup", "cutpoint_filters")),
     ("Tools", ("avidemux", "vlc")),
 )
 
@@ -126,6 +127,8 @@ def validate_options(o: dict) -> list[str]:
             errors.append(f'"{key}" must not contain double quotes.')
     if "player" in o and o["player"] not in ("memory", "embed"):
         errors.append('"player" must be memory or embed.')
+    if "restore_backup" in o and o["restore_backup"] not in ("on", "off"):
+        errors.append('"restore_backup" must be on or off.')
     if "cutpoint_filters" in o and o["cutpoint_filters"] not in ("on", "off"):
         errors.append('"cutpoint_filters" must be on or off.')
     if "file_dialog" in o and o["file_dialog"] not in ("qt", "native"):

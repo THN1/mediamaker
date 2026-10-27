@@ -8,7 +8,7 @@ from PySide6 import QtWidgets
 
 
 class SessionDialog(QtWidgets.QDialog):
-    def __init__(self, parent, title: str, prompt: str, infos: list, multi: bool, with_parts: bool, with_backup: bool = False):
+    def __init__(self, parent, title: str, prompt: str, infos: list, multi: bool, with_parts: bool, with_backup: bool = False, backup_default: bool = True):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.infos = infos
@@ -37,7 +37,7 @@ class SessionDialog(QtWidgets.QDialog):
         self.chkBackup = None
         if with_backup:
             self.chkBackup = QtWidgets.QCheckBox("Save the current state as a session first (so that you can go back)")
-            self.chkBackup.setChecked(True)
+            self.chkBackup.setChecked(bool(backup_default))               # the last choice (option restore_backup); the other two boxes are always ticked
             layout.addWidget(self.chkBackup)
         button = QtWidgets.QDialogButtonBox.StandardButton
         buttons = QtWidgets.QDialogButtonBox(button.Ok | button.Cancel)
@@ -61,10 +61,11 @@ class SessionDialog(QtWidgets.QDialog):
         return tuple(name for name, box in (("list", self.chkList), ("ini", self.chkIni)) if box.isChecked())
 
 
-def choose_sessions(parent, title: str, prompt: str, infos: list, multi: bool = False, with_parts: bool = False, with_backup: bool = False) -> Optional[tuple]:
+def choose_sessions(parent, title: str, prompt: str, infos: list, multi: bool = False, with_parts: bool = False, with_backup: bool = False,
+                    backup_default: bool = True) -> Optional[tuple]:
     """Shows the dialog. Returns (selected sessions, parts), with `with_backup` (selected sessions, parts, save the current state first), or None on
     cancel / nothing selected / no part chosen."""
-    dialog = SessionDialog(parent, title, prompt, infos, multi, with_parts, with_backup)
+    dialog = SessionDialog(parent, title, prompt, infos, multi, with_parts, with_backup, backup_default)
     try:
         if not dialog.exec():
             return None
