@@ -24,6 +24,9 @@
     program was closed, next to the target file (`<target>.chapters.tmp`, removed after the call). Old steps keep them.
   * **Import** asks whether to restore the chapters of the job. **Sessions** contain the file; the window for restoring has a third box "Chapters" (ticked every time); chapters
     that do not fit the restored list are deleted with the warning.
+- **Chapter editor layout**: the check box no longer sits on the edge of the frame (the frame showed through it). The frame, with everything in it, and the Close button
+  move down, the frame has the caption "Chapter names" (it was "Frame1" in the VB6 form), the check box stands alone above it. Done when the window is built, the
+  generated user interface is unchanged.
 - **Open dialog**: the file type that was chosen there (for example mp4 or avi instead of ts) is the first suggestion the next time, as long as the program runs;
   it is not saved, a new run starts with ts again. Cancelling does not forget it.
 - **Copy mode**: switching it OFF is confirmed with a message ("Copy mode is switched off."); switching it on asks first, as before.
