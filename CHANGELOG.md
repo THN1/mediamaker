@@ -3,6 +3,24 @@
 ## 0.5 (in progress)
 
 - Version number set to 0.5-dev.
+- **Chapters** (Edit => Chapters, Ctrl+H; VB6 `frmChapters` with `savetxt()`; modules `chapters.py`, `chapters_dialog.py`): the chapter editor shows one chapter per
+  segment. The check box "Add chapter(s) to target file" switches them on (the first style is made at once) and off (the file is deleted); the style
+  (Enumerated, Named = "Scene from <file>", Named (short), Previous = the names of the existing file, From Batch = the names in the last job of the batch file that has
+  chapters) gives the names; a double click or F2 edits a name; every change writes the chapters file at once (`MediaMaker.chapters` next to the INI file, ffmpeg's
+  metadata format). When there are more or fewer names than segments, the surplus ones are dropped and the missing ones are called "Scene n". The old warning
+  "input files must not have chapters" is hidden: the command now takes the chapters explicitly from this file (`-map_chapters`), so a source with chapters of its own
+  does no harm. VB6 wrote the times in microseconds under `TIMEBASE=1/1000` (a factor of 1000 too long); they are milliseconds now, rounded from the running sum so that
+  nothing drifts. `&` is no longer replaced by `+` (that was for the batch file of Windows).
+  * **Validity**: the times come from the segments, so the file is only valid while the segments are the same. It carries a signature of them in a comment line (file,
+    cut points counted from the first video frame, frame rate, order): deleting, moving, loading again or other cut points make it useless, cropping, rescaling, the
+    logo filter and the target output profile do not, nor does a correction of the first frame. Whenever the list is saved or loaded the file is checked; if it does not
+    fit any more it is deleted, after a warning. (VB6 deleted the file when the program ended; it is kept now, as long as it is valid.)
+  * **Saving** takes valid chapters into the target file; in copy mode only if they fit (joined files in full length, one segment per file; a cut has one chapter, a little
+    off because the start is a keyframe), otherwise they are named in the message "Not taken into account".
+  * **Batch file**: the chapters are written as the comment `K=` (like J, P, T, C) AND as a heredoc that the script runs to make the file when it runs, also long after the
+    program was closed, next to the target file (`<target>.chapters.tmp`, removed after the call). Old steps keep them.
+  * **Import** asks whether to restore the chapters of the job. **Sessions** contain the file; the window for restoring has a third box "Chapters" (ticked every time); chapters
+    that do not fit the restored list are deleted with the warning.
 - **Open dialog**: the file type that was chosen there (for example mp4 or avi instead of ts) is the first suggestion the next time, as long as the program runs;
   it is not saved, a new run starts with ts again. Cancelling does not forget it.
 - **Copy mode**: switching it OFF is confirmed with a message ("Copy mode is switched off."); switching it on asks first, as before.

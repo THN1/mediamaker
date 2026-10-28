@@ -246,7 +246,8 @@ def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str]
         filtr += audio_filter(seg, pos, trim)
 
     if chapters_file:
-        args += ["-i", chapters_file, "-map_metadata", str(len(segs))]
+        # (-map_chapters: the chapters come from THIS file, also if a source file has chapters itself; without it ffmpeg takes the first input that has any)
+        args += ["-i", chapters_file, "-map_metadata", str(len(segs)), "-map_chapters", str(len(segs))]
 
     n = len(segs)
     if n == 1:

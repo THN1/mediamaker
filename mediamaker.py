@@ -40,6 +40,7 @@ import ffmpeg_cmd                                                     # noqa: E4
 from frames import grab_frame, grab_numbered, grab_scanlines        # noqa: E402
 import dedup                                                          # noqa: E402
 import copymode                                                       # noqa: E402
+import chapters                                                       # noqa: E402
 import cropping                                                       # noqa: E402
 import timeline as tl                                                # noqa: E402
 import dialogs                                                       # noqa: E402
@@ -318,6 +319,7 @@ class frmMain(frmMainBase):
 
     def _save(self) -> None:
         save_segments(self.project_path, self.segments)
+        self.chapters_check()                                       # (any change of the list can make the chapters useless)
 
     # ------------------------------------------------------------------ Start
     def Form_Load(self):
@@ -355,6 +357,7 @@ class frmMain(frmMainBase):
         moved = self.upgrade_legacy(self.segments) or moved
         if moved:
             self._save()
+        self.chapters_check()
 
     def setup_columns(self) -> None:
         metrics = self.lvwSegments.fontMetrics()
@@ -874,11 +877,15 @@ class frmMain(frmMainBase):
                 list_path = os.path.join(work, "files.txt") if plan.kind == "concat" else None
                 if list_path:
                     copymode.write_list(plan, list_path)
-                command = copymode.build_copy_command(plan, job, list_path)
+                chapters_file = self.chapters_path() if self.chapters_valid() else None
+                if chapters_file and not copymode.chapters_fit(plan, job.segments):
+                    chapters_file = None
+                    plan.ignored.append("the chapters")
+                command = copymode.build_copy_command(plan, job, list_path, chapters_file=chapters_file)
                 expected, total = None, plan.seconds
             else:
                 write_masks(job.segments, work)                       # removelogoNN.png for the filter
-                command = build_command(job)
+                command = build_command(job, chapters_file=self.chapters_path() if self.chapters_valid() else None)
                 expected, total = expected_frames(job), total_seconds(job)
         except copymode.CopyModeError as e:
             shutil.rmtree(work, ignore_errors=True)
@@ -1004,16 +1011,76 @@ class frmMain(frmMainBase):
         job = self.make_job(name)
         if not self.check_job(job):
             return
+        chapter_text = self.chapters_text() if self.chapters_valid() else None          # the script writes the file itself when it runs
         try:
-            command = batch.map_sources(build_command(job), batch.parse_path_map(job.options.get("path_map", "")))
+            command = batch.map_sources(build_command(job, chapters_file=batch.chapters_temp(name) if chapter_text else None),
+                                        batch.parse_path_map(job.options.get("path_map", "")))
         except Exception as e:
             self.msg(f"The job cannot be built: {e}")
             return
         os.makedirs(os.path.dirname(script) or ".", exist_ok=True)
         with open(script, "w", encoding="utf-8", newline="\n") as f:
-            f.write(batch.build_script(job, command, old))
+            f.write(batch.build_script(job, command, old, chapter_text))
         os.chmod(script, 0o755)
         self.inform(f"Batch file was updated and can be run from the command line:\n{script}")
+
+    # ------------------------------------------------------------------ Chapters (Edit => Chapters; module chapters.py, dialog chapters_dialog.py)
+    def chapters_path(self) -> str:
+        """The chapters file lies next to the INI file (MediaMaker.chapters)."""
+        return os.path.splitext(self.settings.path)[0] + ".chapters"
+
+    def chapters_text(self) -> Optional[str]:
+        return chapters.read(self.chapters_path())
+
+    def chapters_valid(self) -> bool:
+        """Is there a chapters file that fits the segments of the list?"""
+        text = self.chapters_text()
+        return text is not None and chapters.is_valid(text, self.segments)
+
+    def remove_chapters_file(self) -> None:
+        try:
+            os.remove(self.chapters_path())
+        except OSError:
+            pass
+
+    def chapters_check(self, warn: bool = True) -> bool:
+        """The times in the chapters file come from the segments: deleting, moving, loading again or other cut points make it useless (cropping,
+        rescaling and the target output profile do not). Then the file is deleted, after a warning. True if it was deleted."""
+        text = self.chapters_text()
+        if text is None or chapters.is_valid(text, self.segments):
+            return False
+        self.remove_chapters_file()
+        if warn:
+            self.msg("Attention: the segments were changed (deleted, moved, loaded again or given other cut points), so the chapters no longer fit them. "
+                     "The chapters were deleted; use Edit => Chapters to make new ones.")
+        return True
+
+    def batch_chapter_titles(self) -> Optional[list]:
+        """The names of the chapters of the last job in the batch file that has some (the chapter editor style \"From Batch\"); None (and a message)
+        if there is no batch file or no chapters in it."""
+        script = self.batch_path()
+        if not os.path.exists(script):
+            self.msg(f'Batch file "{script}" not found.')
+            return None
+        with open(script, encoding="utf-8", errors="replace") as f:
+            found = [job for job in batch.parse_jobs(f.read()) if job.chapters]
+        if not found:
+            self.msg("The batch file contains no chapters.")
+            return None
+        return chapters.parse_titles(found[-1].chapters)
+
+    def run_chapters_dialog(self, dialog) -> None:
+        dialog.exec()
+
+    def mnuChapters_Click(self):
+        """Edit => Chapters: one chapter per segment; a style gives them names, the names can be edited (see chapters_dialog.py)."""
+        if not self.segments:
+            self.msg("There are no segments in the list.")
+            return
+        from chapters_dialog import frmChapters
+        dialog = frmChapters(self)
+        self.run_chapters_dialog(dialog)
+        dialog.deleteLater()
 
     # ------------------------------------------------------------------ Import of a job from the batch file (File => Import, Ctrl+M)
     LOCAL_OPTIONS = {"batch", "player", "dialog_style", "vlc_args", "hide_messages", "overlay_opacity", "file_dialog", "sessions_dir", "avidemux", "vlc",
@@ -1052,6 +1119,8 @@ class frmMain(frmMainBase):
                             f"job are taken over. The state before is saved as a session first, so that you can go back.\n\nImport the job?"):
                 return
             self.make_session("automatic backup before importing a job from the batch file")
+        restore_chapters = bool(job.chapters) and self.ask(
+            f"The job also has chapters ({len(chapters.parse_titles(job.chapters))} names). Restore them? (They are only valid for the segments of the job.)")
         options = dict(self.options)
         taken = {RENAMED_OPTIONS.get(k, k): v for k, v in parse_kv(job.options).items() if k not in REMOVED_OPTIONS}     # names from older versions
         options.update({k: v for k, v in taken.items() if k not in self.LOCAL_OPTIONS})
@@ -1061,6 +1130,11 @@ class frmMain(frmMainBase):
             self.settings.set_profile(profile)
         self.settings.save()
         save_segments(self.project_path, segments)
+        if restore_chapters:
+            with open(self.chapters_path(), "w", encoding="utf-8", newline="\n") as f:
+                f.write(job.chapters)                                # (checked after the list is up to date: the first frames are found again then)
+        else:
+            self.remove_chapters_file()                             # they belonged to the list that is replaced
         self.reload_session()                                       # reads the files again, brings old lists up to date, shows everything
 
     # ------------------------------------------------------------------ Information (overview of all segments)
@@ -1656,7 +1730,7 @@ class frmMain(frmMainBase):
 
     def make_session(self, note: str) -> "sessions.SessionInfo":
         self._save()                                              # the list on disk is the current one
-        return sessions.create_session(self.sessions_directory(), self.settings.path, self.project_path, self.segments, note, VERSION)
+        return sessions.create_session(self.sessions_directory(), self.settings.path, self.project_path, self.segments, note, VERSION, chapters_path=self.chapters_path())
 
     def mnuBackupSession_Click(self):
         """Saves the segment list and the settings as a session (one zip file, named with the time)."""
@@ -1694,13 +1768,13 @@ class frmMain(frmMainBase):
         if not info.ok:
             self.msg(f"The session {info.stamp} is damaged and cannot be restored.")
             return
-        if not self.ask(f"The session {info.stamp} replaces the current " + " and ".join({"list": "segment list", "ini": "settings (INI file)"}[p] for p in parts)
+        if not self.ask(f"The session {info.stamp} replaces the current " + " and ".join({"list": "segment list", "ini": "settings (INI file)", "chapters": "chapters"}[p] for p in parts)
                         + (". The current state is saved as a session first, so that you can go back." if backup else ". The current state is NOT saved first.")
                         + "\n\nRestore the session?"):
             return
         try:
             before = self.make_session(f"automatic backup before restoring {info.stamp}") if backup else None
-            sessions.restore_session(info, self.settings.path, self.project_path, parts)
+            sessions.restore_session(info, self.settings.path, self.project_path, parts, self.chapters_path())
         except (sessions.SessionError, OSError) as e:
             self.msg(f"The session could not be restored: {e}")
             return

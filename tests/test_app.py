@@ -3786,20 +3786,21 @@ def test_sessions(tmp, videos):
     check(win3.messages[-1] == "The list of segments is already empty.", "an empty list: a message instead of nothing")
     # --- the dialog (stub): single, several, parts
     infos3 = [sessions.SessionInfo(stamp=f"2026.10.2{i}_10-00-00", path="/x", created=f"2026-10-2{i}T10:00:00", segments=i, titles=["a.ts"]) for i in range(1, 4)]
-    def pick(rows, list_on=True, ini_on=True):
+    def pick(rows, list_on=True, ini_on=True, chapters_on=True):
         def hook(dialog):
             dialog.list.sel_ = rows
             dialog.chkList.setChecked(list_on) if dialog.chkList else None
             dialog.chkIni.setChecked(ini_on) if dialog.chkIni else None
+            dialog.chkChapters.setChecked(chapters_on) if dialog.chkChapters else None
         return hook
     W.QDialog.exec_result = 1
     W.QDialog.on_exec = pick([1])
     got = sessions_dialog.choose_sessions(None, "Restore", "prompt", infos3, with_parts=True)
-    check(got == ([infos3[1]], ("list", "ini")), f"single selection with both parts: {got}")
-    W.QDialog.on_exec = pick([1], list_on=False)
+    check(got == ([infos3[1]], ("list", "ini", "chapters")), f"single selection with all three parts: {got}")
+    W.QDialog.on_exec = pick([1], list_on=False, chapters_on=False)
     got = sessions_dialog.choose_sessions(None, "Restore", "prompt", infos3, with_parts=True)
     check(got == ([infos3[1]], ("ini",)), "only the settings")
-    W.QDialog.on_exec = pick([1], list_on=False, ini_on=False)
+    W.QDialog.on_exec = pick([1], list_on=False, ini_on=False, chapters_on=False)
     check(sessions_dialog.choose_sessions(None, "Restore", "prompt", infos3, with_parts=True) is None, "no part chosen: None")
     W.QDialog.on_exec = pick([0, 2])
     got = sessions_dialog.choose_sessions(None, "Delete", "prompt", infos3, multi=True)
@@ -3812,12 +3813,12 @@ def test_sessions(tmp, videos):
     W.QDialog.exec_result = 1
     W.QDialog.on_exec = lambda d: setattr(d.list, "sel_", [1])
     got = sessions_dialog.choose_sessions(None, "Restore", "prompt", infos3, with_parts=True, with_backup=True)
-    check(got == ([infos3[1]], ("list", "ini"), True), f"the check box for the backup is ticked at first: {got}")
+    check(got == ([infos3[1]], ("list", "ini", "chapters"), True), f"the check box for the backup is ticked at first: {got}")
     W.QDialog.on_exec = lambda d: (setattr(d.list, "sel_", [1]), d.chkBackup.setChecked(False))
     got = sessions_dialog.choose_sessions(None, "Restore", "prompt", infos3, with_parts=True, with_backup=True)
-    check(got == ([infos3[1]], ("list", "ini"), False), "switched off")
+    check(got == ([infos3[1]], ("list", "ini", "chapters"), False), "switched off")
     W.QDialog.on_exec = lambda d: setattr(d.list, "sel_", [1])
-    check(sessions_dialog.choose_sessions(None, "Restore", "prompt", infos3, with_parts=True) == ([infos3[1]], ("list", "ini")), "without the option: as before (no third value)")
+    check(sessions_dialog.choose_sessions(None, "Restore", "prompt", infos3, with_parts=True) == ([infos3[1]], ("list", "ini", "chapters")), "without the option: as before (no third value)")
     W.QDialog.exec_result, W.QDialog.on_exec = 1, None
     # a double click on a session: OK (when restoring one session), not when deleting several
     one = sessions_dialog.SessionDialog(None, "Restore", "prompt", infos3, False, True)
@@ -4951,6 +4952,279 @@ def test_copy_mode(tmp, videos):
     print("Copy mode: OK (plan, command, stream selection, menu, real cut at a keyframe, joining, refusals)")
 
 
+def test_chapters(tmp, videos):
+    """Chapters: the file for ffmpeg (one chapter per segment), its validity, the editor, saving with chapters, the batch file, import, sessions."""
+    import batch
+    import chapters
+    import sessions
+    import zipfile
+    from fractions import Fraction as F
+    from PySide6 import QtWidgets as W
+    from ffmpeg_cmd import build_command
+    from mediaprobe import first_frame_number
+    from runner import run_ffmpeg
+    win = seek_window(tmp, videos, ("sample2.ts", "sample3.ts"), workdir="chapterwin", first_fn=first_frame_number)
+    a, b = win.segments
+    a.start, a.end = a.first_frame + 20, a.first_frame + 90
+    b.start, b.end = b.first_frame + 10, b.first_frame + 80
+    a.name, b.name = "My Film & Co.ts", "Second.ts"
+    ffprobe_chapters = lambda path: [(c["tags"]["title"], round(float(c["start_time"]), 3), round(float(c["end_time"]), 3)) for c in json.loads(
+        subprocess.run(["ffprobe", "-v", "error", "-show_chapters", "-of", "json", path], capture_output=True, text=True).stdout)["chapters"]]
+    # --- the signature: what the times depend on
+    sig = chapters.signature([a, b])
+    shifted = dataclasses.replace(a, first_frame=a.first_frame + 3, start=a.start + 3, end=a.end + 3, total_frames=a.total_frames + 3)
+    check(sig == chapters.signature([shifted, b]), "a correction of the first frame (everything moves together) does not change it")
+    check(sig != chapters.signature([dataclasses.replace(a, end=a.end - 1), b]) and sig != chapters.signature([dataclasses.replace(a, start=a.start + 1), b])
+          and sig != chapters.signature([b, a]) and sig != chapters.signature([a]) and sig != chapters.signature([dataclasses.replace(a, path="/other.ts"), b]), "cut points, order, number and file change it")
+    check(sig == chapters.signature([dataclasses.replace(a, crop_top=9, mask="0.1 0.2 0.3 0.4", width=1280), b]), "cropping, logo filter and size do not")
+    # --- names, times, escaping
+    check(chapters.style_titles(0, [a, b]) == ["Scene 1", "Scene 2"] and chapters.style_titles(1, [a, b]) == ["Scene from My Film & Co", "Scene from Second"]
+          and chapters.style_titles(2, [a, b]) == ["My Film & Co", "Second"], "the three styles (no replacement of & any more: it was for the batch file of Windows)")
+    check(chapters.fit_titles(["x"], [a, b]) == ["x", "Scene 2"] and chapters.fit_titles(["x", "y", "z"], [a, b]) == ["x", "y"], "one name per segment")
+    raw = "a=b;c#d\\e \u00fc"
+    check(chapters.unescape(chapters.escape(raw)) == raw and chapters.escape("a\nb") == "a b", "escaping = ; # and the backslash")
+    ntsc = [dataclasses.replace(a, start=0, end=1, fps=F(30000, 1001)) for _ in range(3)]
+    check(chapters.milliseconds(ntsc) == [(0, 33), (33, 67), (67, 100)] and chapters.milliseconds([a, b]) == [(0, 2800), (2800, 5600)], "milliseconds, without the drift of rounded sums")
+    text = chapters.build_text(["Intro", "Ende"], [a, b])
+    check(text.startswith(";FFMETADATA1\n;MEDIAMAKER chapters signature=" + sig + "\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=2800\ntitle=Intro\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=2800\nEND=5600\ntitle=Ende\n"), f"the file: {text!r}")
+    check(chapters.parse_titles(text) == ["Intro", "Ende"] and chapters.parse_titles("TITLE=Old style") == ["Old style"] and chapters.is_valid(text, [a, b]) and not chapters.is_valid(text, [b, a])
+          and not chapters.is_valid(";FFMETADATA1\n", [a, b]) and not chapters.is_valid(text, []), "reading it, validity")
+    # --- the place; the editor
+    path = win.chapters_path()
+    check(path == os.path.splitext(win.settings.path)[0] + ".chapters" and not os.path.exists(path), "the file lies next to the INI file; there is none at first")
+    win.segments.clear()
+    win.mnuChapters_Click()
+    check(win.messages[-1] == "There are no segments in the list.", "no segments: message")
+    win.segments[:] = [a, b]
+    dialogs_seen = []
+    win.run_chapters_dialog = lambda d: dialogs_seen.append(d)
+    win.mnuChapters_Click()
+    dlg = dialogs_seen[-1]
+    check(not dlg.chkActivate.isChecked() and dlg.titles() == [] and dlg.Frame1.called("setEnabled")[-1] == (False,), "first time: not activated, nothing in the list, the frame is disabled")
+    check(dlg.Label2.called("hide"), "the old warning (sources must not have chapters) is hidden: it is not true any more")
+    dlg.chkActivate.setChecked(True)
+    dlg.chkActivate_Click()
+    check(dlg.titles() == ["Scene 1", "Scene 2"] and dlg.Frame1.called("setEnabled")[-1] == (True,) and chapters.read(path) == chapters.build_text(["Scene 1", "Scene 2"], [a, b]) and win.chapters_valid(),
+          "activating makes the first style (enumerated) and writes the file")
+    for index, want in ((1, ["Scene from My Film & Co", "Scene from Second"]), (2, ["My Film & Co", "Second"]), (0, ["Scene 1", "Scene 2"])):
+        dlg.cboStyle.setCurrentIndex(index)
+        dlg.cboStyle_Click()
+        check(dlg.titles() == want and chapters.parse_titles(chapters.read(path)) == want, f"style {index}: {want}")
+    names = iter(["Intro", "", None])
+    win.ask_text = lambda title, label, default="": (asked_text.append((title, label, default)), next(names))[1]
+    asked_text = []
+    dlg.lvwChapters.select_row(0)
+    dlg.lvwChapters_KeyUp(113, 0)
+    check(asked_text == [("Chapter Editor", "Enter new value:", "Scene 1")] and dlg.titles() == ["Intro", "Scene 2"] and chapters.parse_titles(chapters.read(path)) == ["Intro", "Scene 2"],
+          f"F2 edits the name of the chapter, the file follows: {asked_text}")
+    dlg.lvwChapters_KeyUp(65, 0)
+    dlg.lvwChapters.select_row(1)
+    dlg.edit_current()
+    dlg.edit_current()
+    check(len(asked_text) == 3 and dlg.titles() == ["Intro", "Scene 2"], "another key does nothing; an empty or cancelled input changes nothing")
+    dlg.cboStyle.setCurrentIndex(3)
+    dlg.cboStyle_Click()
+    check(dlg.titles() == ["Intro", "Scene 2"], "style Previous: the names of the file")
+    # the style From Batch: the names of the last job with chapters
+    script = win.batch_path()
+    if os.path.exists(script):
+        os.remove(script)
+    dlg.cboStyle.setCurrentIndex(4)
+    dlg.cboStyle_Click()
+    check(win.messages[-1] == f'Batch file "{script}" not found.', "From Batch without a batch file: message")
+    open(script, "w", encoding="utf-8").write("#!/bin/bash\necho hi\n")
+    dlg.cboStyle_Click()
+    check(win.messages[-1] == "The batch file contains no chapters.", "a batch file without chapters: message")
+    job0 = win.make_job("/out/x.mp4")
+    two_jobs = batch.build_script(job0, ["ffmpeg", "x"], None, chapters.build_text(["Alpha", "Beta", "Gamma"], [a, b, b]))
+    two_jobs = batch.build_script(job0, ["ffmpeg", "y"], two_jobs, None)
+    open(script, "w", encoding="utf-8").write(two_jobs)
+    dlg.cboStyle_Click()
+    check(dlg.titles() == ["Alpha", "Beta"] and "3 names, the list has 2 segments: the surplus names are dropped." in win.messages[-1] and chapters.parse_titles(chapters.read(path)) == ["Alpha", "Beta"],
+          f"From Batch: the names of the last job that has chapters; a surplus name is dropped: {dlg.titles()}")
+    os.remove(script)
+    dlg.cboStyle.setCurrentIndex(0)
+    dlg.cboStyle_Click()
+    # reopening: the valid file fills the list
+    win.mnuChapters_Click()
+    dlg2 = dialogs_seen[-1]
+    check(dlg2.chkActivate.isChecked() and dlg2.titles() == ["Scene 1", "Scene 2"] and dlg2.Frame1.called("setEnabled")[-1] == (True,), "the next time: activated, with the names of the file")
+    dlg2.cmdOK_Click()
+    check(len(dlg2.called("accept")) == 1, "Close")
+    dlg.chkActivate.setChecked(False)
+    dlg.chkActivate_Click()
+    check(not os.path.exists(path) and dlg.titles() == [] and dlg.Frame1.called("setEnabled")[-1] == (False,), "switching off deletes the file")
+    # --- validity: what deletes the file (after a warning) and what does not
+    def make_file():
+        chapters.write(path, ["One", "Two"], win.segments)
+    make_file()
+    n = len(win.messages)
+    a.crop_top, a.crop_left = 12, 30
+    a.mask = "0.1 0.2 0.3 0.4"
+    win.settings.set_profile({**win.profile, "scale": "1280:720", "fps": "30.000"})
+    win.settings.set_option("crop", "60")
+    win._save()
+    win.lblSegment_Upd() if win.current >= 0 else None
+    check(os.path.exists(path) and len(win.messages) == n, "cropping, logo filter, rescaling and the profile do not matter")
+    for seg in (a, b):
+        seg.first_frame, seg.start, seg.end, seg.total_frames = seg.first_frame + 3, seg.start + 3, seg.end + 3, seg.total_frames + 3
+    win._save()
+    check(os.path.exists(path) and len(win.messages) == n, "nor does a correction of the first frame")
+    for seg in (a, b):                                              # (back to the real values: the first frame is that of the file)
+        seg.first_frame, seg.start, seg.end, seg.total_frames = seg.first_frame - 3, seg.start - 3, seg.end - 3, seg.total_frames - 3
+    win._save()
+    b.end -= 5
+    win._save()
+    text_warning = ("Attention: the segments were changed (deleted, moved, loaded again or given other cut points), so the chapters no longer fit them. "
+                    "The chapters were deleted; use Edit => Chapters to make new ones.")
+    check(not os.path.exists(path) and win.messages[-1] == text_warning and len(win.messages) == n + 1, "other cut points: warning, the file is deleted")
+    b.end += 5
+    win._save()
+    make_file()
+    win.segments[:] = [b, a]
+    win._save()
+    check(not os.path.exists(path) and win.messages[-1] == text_warning, "moved segments")
+    win.segments[:] = [a, b]
+    make_file()
+    win.segments.pop()
+    win._save()
+    check(not os.path.exists(path), "a deleted segment")
+    win.segments[:] = [a, b]
+    make_file()
+    n = len(win.messages)
+    win._save()
+    win.chapters_check()
+    check(os.path.exists(path) and win.chapters_check(warn=False) is False and len(win.messages) == n, "unchanged: nothing happens")
+    win.segments[:] = [a]
+    check(win.chapters_check(warn=False) is True and not os.path.exists(path) and len(win.messages) == n, "without a warning if asked not to")
+    win.segments[:] = [a, b]
+    make_file()
+    save_segments(win.project_path, [b])
+    win.load_list()
+    check(not os.path.exists(path) and win.messages[-1] == text_warning, "a list that was loaded and is another one: deleted")
+    win.segments[:] = [a, b]
+    win._save()
+    # --- saving with chapters (real ffmpeg): the chapters are in the file, also when a source has chapters itself
+    win.settings.set_profile({**win.profile, "scale": "720:576", "fps": "25.000"})
+    win.settings.set_option("crop", "0")
+    make_file()
+    win.choose_output = lambda kind: os.path.join(tmp, "chapterwin", "film.mkv")
+    win.mnuSaveMP4_Click()
+    got = ffprobe_chapters(os.path.join(tmp, "chapterwin", "film.mkv"))
+    check([t for t, _, _ in got] == ["One", "Two"] and abs(got[0][1]) < 0.001 and abs(got[0][2] - 2.8) < 0.001 and abs(got[1][2] - 5.6) < 0.001, f"saved with chapters: {got}")
+    os.remove(os.path.join(tmp, "chapterwin", "film.mkv"))
+    meta = os.path.join(tmp, "chapterwin", "own.txt")
+    open(meta, "w").write(chapters.build_text(["Source A", "Source B"], [a, b]))
+    own = os.path.join(tmp, "chapterwin", "own.mkv")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", a.path, "-i", meta, "-map", "0:v:0", "-map", "0:a:0", "-map_chapters", "1", "-c", "copy", own], capture_output=True, stdin=subprocess.DEVNULL)
+    check([t for t, _, _ in ffprobe_chapters(own)] == ["Source A", "Source B"], "(a source with chapters of its own)")
+    with_own = dataclasses.replace(a, path=own)
+    job = dataclasses.replace(win.make_job(os.path.join(tmp, "chapterwin", "own_out.mkv")), segments=[with_own, b])
+    cmd = build_command(job, chapters_file=path)
+    check(cmd[cmd.index("-map_metadata") + 1] == "2" and cmd[cmd.index("-map_chapters") + 1] == "2", "the command names the file that has the chapters (also for -map_chapters)")
+    subprocess.run(cmd, capture_output=True, stdin=subprocess.DEVNULL)
+    check([t for t, _, _ in ffprobe_chapters(os.path.join(tmp, "chapterwin", "own_out.mkv"))] == ["One", "Two"], "the chapters of the file win over those of a source (the old warning is not needed any more)")
+    os.remove(os.path.join(tmp, "chapterwin", "own_out.mkv"))
+    # without a valid file there are no chapters
+    os.remove(path)
+    win.mnuSaveMP4_Click()
+    check(ffprobe_chapters(os.path.join(tmp, "chapterwin", "film.mkv")) == [], "no chapters file: no chapters")
+    os.remove(os.path.join(tmp, "chapterwin", "film.mkv"))
+    # --- copy mode: joined files in full length can have chapters, cut ones cannot
+    a.crop_top, a.crop_left, a.mask = 0, 0, ""
+    win.mnuCopyMode.setChecked(True)
+    whole_a, whole_b = dataclasses.replace(a, start=a.first_frame, end=a.total_frames), dataclasses.replace(b, start=b.first_frame, end=b.total_frames)
+    win.segments[:] = [whole_a, whole_b]
+    chapters.write(path, ["First file", "Second file"], win.segments)
+    win.mnuSaveMP4_Click()
+    got = ffprobe_chapters(os.path.join(tmp, "chapterwin", "film.mkv"))
+    check([t for t, _, _ in got] == ["First file", "Second file"] and "the chapters" not in win.messages[-1], f"copy mode, two whole files: with chapters {got}")
+    os.remove(os.path.join(tmp, "chapterwin", "film.mkv"))
+    win.segments[:] = [a, b]
+    chapters.write(path, ["One", "Two"], win.segments)
+    win.mnuSaveMP4_Click()
+    check(ffprobe_chapters(os.path.join(tmp, "chapterwin", "film.mkv")) == [] and "Not taken into account in copy mode: the cut markers, the chapters." in win.messages[-1],
+          f"copy mode, joined files with cut markers: no chapters, said in the message: {win.messages[-1]!r}")
+    os.remove(os.path.join(tmp, "chapterwin", "film.mkv"))
+    win.mnuCopyMode.setChecked(False)
+    # --- the batch file: the chapters are in comments and written again when the script runs
+    chapters.write(path, ["Part A", "Part B"], win.segments)
+    script = win.batch_path()
+    if os.path.exists(script):
+        os.remove(script)
+    target = os.path.join(tmp, "chapterwin", "batch_out.mkv")
+    win.ask_output = lambda title, suggestion: target
+    win.mnuBatch_Click()
+    sh = open(script, encoding="utf-8").read()
+    temp = target + ".chapters.tmp"
+    check("\n# K=" in sh and f"cat > {temp} <<'MEDIAMAKER_CHAPTERS_END'\n;FFMETADATA1\n" in sh and f"\nMEDIAMAKER_CHAPTERS_END\n" in sh and sh.rstrip().endswith(f"rm -f {temp}")
+          and f"-i {temp} -map_metadata 2 -map_chapters 2" in sh, "the script has the comment K= and writes and removes the file itself")
+    jobs = batch.parse_jobs(sh)
+    check(len(jobs) == 1 and chapters.parse_titles(jobs[0].chapters) == ["Part A", "Part B"] and jobs[0].chapters == chapters.read(path), "and the job gives them back")
+    os.remove(path)                                                  # the program is "closed": nothing but the script is left
+    check(not os.path.exists(temp), "(no chapters file now)")
+    run = subprocess.run(["bash", script], capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=os.path.join(tmp, "chapterwin"))
+    got = ffprobe_chapters(target) if os.path.exists(target) else None
+    check(run.returncode == 0 and got and [t for t, _, _ in got] == ["Part A", "Part B"] and abs(got[0][2] - 2.8) < 0.001 and not os.path.exists(temp),
+          f"running the script by itself makes the file with chapters and removes the temporary file: {run.returncode} {run.stderr[-100:]!r} {got}")
+    os.remove(target)
+    # a second job without chapters, the first one is kept as an old step: its chapters can still be read
+    win.ask3 = lambda text: "yes"
+    win.mnuBatch_Click()
+    sh2 = open(script, encoding="utf-8").read()
+    jobs = batch.parse_jobs(sh2)
+    check(len(jobs) == 2 and chapters.parse_titles(jobs[0].chapters) == ["Part A", "Part B"] and jobs[1].chapters == "" and "# cat > " in sh2 and "# MEDIAMAKER_CHAPTERS_END" in sh2,
+          "an old step keeps its chapters (also in comments), a job without chapters has none")
+    # --- import: the chapters can be restored
+    open(script, "w", encoding="utf-8").write(sh)
+    win.choose_job = lambda jobs: jobs[0]
+    asked = []
+    win.ask = lambda text: (asked.append(text), True)[1]
+    win.segments[:] = [dataclasses.replace(s, end=s.end - 4) for s in win.segments]              # (other cut points)
+    win._save()
+    win.mnuImport_Click()
+    check(len(asked) == 2 and asked[1] == "The job also has chapters (2 names). Restore them? (They are only valid for the segments of the job.)" and win.chapters_valid()
+          and chapters.parse_titles(win.chapters_text()) == ["Part A", "Part B"], f"Yes: the chapters are back and fit the segments of the job: {asked[-1][:60]}")
+    answers_import = iter([True, False])
+    win.ask = lambda text: next(answers_import)
+    win.mnuImport_Click()
+    check(not os.path.exists(path), "No: the job comes without chapters (and the old ones, made for the list that is replaced, are gone)")
+    # --- sessions: the chapters are part of them and can be restored (or not)
+    win.ask = lambda text: True
+    win.messages.clear()
+    chapters.write(path, ["Kept A", "Kept B"], win.segments)
+    first = win.make_session("with chapters")
+    check(first.has_chapters and sessions.CHAPTERS_NAME in zipfile.ZipFile(first.path).namelist() and sessions.CHAPTERS_NAME in json.loads(zipfile.ZipFile(first.path).read("session.json"))["files"],
+          "the session has the chapters file")
+    win.segments.pop()
+    win._save()
+    check(not os.path.exists(path) and win.messages[-1] == text_warning, "(the list changed: chapters deleted, with the warning)")
+    plain = win.make_session("without chapters")
+    check(not plain.has_chapters, "a session without chapters")
+    win.choose_session = lambda title, prompt, infos, multi=False, with_parts=False, with_backup=False, backup_default=True: chosen_session
+    chosen_session = ([first], ("list", "ini", "chapters"), False)
+    asked.clear()
+    win.ask = lambda text: (asked.append(text), True)[1]
+    win.mnuRestoreSession_Click()
+    check(win.chapters_valid() and chapters.parse_titles(win.chapters_text()) == ["Kept A", "Kept B"] and len(win.segments) == 2 and "segment list and settings (INI file) and chapters" in asked[0],
+          "restoring the list, the settings and the chapters: the chapters are back")
+    win.segments.pop()
+    win._save()
+    chosen_session = ([first], ("list", "ini"), False)
+    win.mnuRestoreSession_Click()
+    check(len(win.segments) == 2 and not os.path.exists(path), "restoring without the chapters: the list is back, there are no chapters")
+    chosen_session = ([first], ("chapters",), False)
+    win.segments.pop()
+    win._save()
+    win.messages.clear()
+    win.mnuRestoreSession_Click()
+    check(not os.path.exists(path) and text_warning in win.messages, "only the chapters, but the list is another one: they do not fit and are deleted, with the warning")
+    chosen_session = ([plain], ("list", "ini", "chapters"), False)
+    win.mnuRestoreSession_Click()
+    check(len(win.segments) == 1 and not os.path.exists(path) and "could not be restored" not in win.messages[-1], "a session without chapters: nothing to restore, no error")
+    print("Chapters: OK (file, signature, editor, validity, saving, copy mode, batch file, import, sessions)")
+
+
 def test_wait_dialog(tmp, videos):
     """The wait window has room for several lines (before, the second line was cut off) and wraps long lines."""
     import dialogs
@@ -5030,6 +5304,7 @@ def main():
     test_import_job(tmp, sys.argv[1])
     test_open_filter(tmp, sys.argv[1])
     test_copy_mode(tmp, sys.argv[1])
+    test_chapters(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])
     test_timeline(tmp, sys.argv[1])
     test_segments(tmp, sys.argv[1])

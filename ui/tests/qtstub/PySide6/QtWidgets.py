@@ -228,12 +228,16 @@ class QPlainTextEdit(QFrame):
 
 
 class QComboBox(QWidget):
-    methods = {"setEditable", "setCurrentText", "addItem", "addItems", "currentText"}
+    methods = {"setEditable", "setCurrentText", "addItem", "addItems", "currentText", "setCurrentIndex", "currentIndex"}
     signals = {"activated", "editTextChanged", "currentIndexChanged"}
 
     def _ret_currentText(self):
         args = self.called("setCurrentText")
         return args[-1][0] if args else ""
+
+    def _ret_currentIndex(self):
+        args = self.called("setCurrentIndex")
+        return args[-1][0] if args else 0
 
 
 class QAbstractSlider(QWidget):

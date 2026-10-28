@@ -6,6 +6,7 @@ VB6 copied the files into a folder named with the time and pushed it into a 7-Zi
     2026.10.25_14-03-12.zip
         MediaMaker.ini      the settings (profiles, options, tool paths ...)
         MediaMaker.json     the segment list (the masks of the logo filters are part of it)
+        MediaMaker.chapters the chapters for ffmpeg, if there were any (only valid for this segment list)
         session.json        what the session is: time, note, number of segments, their titles, program version
 
 One file per session means: nothing is rewritten when a session is added, deleting a session is deleting a file, a session can be copied or sent
@@ -25,7 +26,8 @@ EXTENSION = ".zip"
 MANIFEST = "session.json"
 INI_NAME = "MediaMaker.ini"
 LIST_NAME = "MediaMaker.json"
-PARTS = {"ini": INI_NAME, "list": LIST_NAME}
+CHAPTERS_NAME = "MediaMaker.chapters"
+PARTS = {"ini": INI_NAME, "list": LIST_NAME, "chapters": CHAPTERS_NAME}
 
 
 class SessionError(Exception):
@@ -44,6 +46,7 @@ class SessionInfo:
     size: int = 0
     has_ini: bool = False
     has_list: bool = False
+    has_chapters: bool = False
     ok: bool = True                  # False: the file is not a readable session
 
     def describe(self) -> str:
@@ -79,7 +82,7 @@ def read_info(path: str) -> SessionInfo:
     try:
         with zipfile.ZipFile(path) as z:
             names = set(z.namelist())
-            info.has_ini, info.has_list = INI_NAME in names, LIST_NAME in names
+            info.has_ini, info.has_list, info.has_chapters = INI_NAME in names, LIST_NAME in names, CHAPTERS_NAME in names
             if MANIFEST in names:
                 data = json.loads(z.read(MANIFEST).decode("utf-8"))
                 if data.get("format") != FORMAT:
@@ -105,7 +108,7 @@ def list_sessions(directory: str) -> list[SessionInfo]:
 
 
 def create_session(directory: str, ini_path: str, list_path: str, segments: list, note: str = "", program: str = "",
-                   now: Optional[datetime.datetime] = None) -> SessionInfo:
+                   now: Optional[datetime.datetime] = None, chapters_path: str = "") -> SessionInfo:
     """Writes a new session file (first under a temporary name, so that a failure leaves no half file) and returns its information."""
     os.makedirs(directory, exist_ok=True)
     stamp = new_stamp(now)
@@ -116,12 +119,12 @@ def create_session(directory: str, ini_path: str, list_path: str, segments: list
     path = os.path.join(directory, name + EXTENSION)
     manifest = {"format": FORMAT, "version": 1, "created": (now or datetime.datetime.now()).isoformat(timespec="seconds"),
                 "note": " ".join(note.split()), "program": program, "segments": len(segments),
-                "titles": [s.name for s in segments], "files": [n for n, p in ((INI_NAME, ini_path), (LIST_NAME, list_path)) if os.path.exists(p)]}
+                "titles": [s.name for s in segments], "files": [n for n, p in ((INI_NAME, ini_path), (LIST_NAME, list_path), (CHAPTERS_NAME, chapters_path)) if p and os.path.exists(p)]}
     part = path + ".part"
     try:
         with zipfile.ZipFile(part, "w", zipfile.ZIP_DEFLATED) as z:
-            for arcname, source in ((INI_NAME, ini_path), (LIST_NAME, list_path)):
-                if os.path.exists(source):
+            for arcname, source in ((INI_NAME, ini_path), (LIST_NAME, list_path), (CHAPTERS_NAME, chapters_path)):
+                if source and os.path.exists(source):
                     z.write(source, arcname)
             z.writestr(MANIFEST, json.dumps(manifest, indent=2, ensure_ascii=False))
         os.replace(part, path)
@@ -131,12 +134,13 @@ def create_session(directory: str, ini_path: str, list_path: str, segments: list
     return read_info(path)
 
 
-def restore_session(info: SessionInfo, ini_path: str, list_path: str, parts: tuple = ("ini", "list")) -> list[str]:
-    """Puts the files of the session back (each one replaced in one step). Returns the names of the restored files.
+def restore_session(info: SessionInfo, ini_path: str, list_path: str, parts: tuple = ("ini", "list"), chapters_path: str = "") -> list[str]:
+    """Puts the files of the session back (each one replaced in one step). Returns the names of the restored files. The part "chapters" is
+    restored if the session has chapters (it is no error if it has none).
 
     Everything is read and checked first (zip intact, the list is a MediaMaker list), only then something is written."""
-    wanted = [PARTS[p] for p in parts]
-    targets = {INI_NAME: ini_path, LIST_NAME: list_path}
+    wanted = [PARTS[p] for p in parts if p != "chapters" or (info.has_chapters and chapters_path)]
+    targets = {INI_NAME: ini_path, LIST_NAME: list_path, CHAPTERS_NAME: chapters_path}
     try:
         with zipfile.ZipFile(info.path) as z:
             bad = z.testzip()

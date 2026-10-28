@@ -40,6 +40,9 @@ def main():
         mine = build_command(job, ffmpeg=ref[0], chapters_file=meta, path_map=lambda p: mapping[p], stream_times=None)
     except NotImplementedError as e:
         sys.exit(f"Not implemented yet: {e}")
+    if "-map_chapters" in mine:                           # (VB6 does not have it: the chapters are taken from this file here explicitly)
+        i = mine.index("-map_chapters")
+        del mine[i:i + 2]
     print(f"Segments: {len(job.segments)} | Profile: {job.profile.get('description', '?')} | "
           f"crop={job.options.get('crop')} pad={job.options.get('pad')} floor={job.options.get('floor')}")
     diffs = []

@@ -6,6 +6,7 @@ __pycache__/
 MediaMaker.ini
 MediaMaker.json
 MediaMaker.sh
+MediaMaker.chapters
 mediamaker_debug.log
 *.bak
 

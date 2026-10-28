@@ -81,6 +81,14 @@ def make_plan(segments: list, options: dict) -> CopyPlan:
     return CopyPlan("concat", files, None, seconds, ignored)
 
 
+def chapters_fit(plan: CopyPlan, segments: list) -> bool:
+    """Do chapters made from the segments fit the result? Joined files are in full length: only if every segment is a whole file (and there is one per
+    file). A cut or a copy has one chapter per segment (the start of a cut is the keyframe, so its times are a little off)."""
+    if plan.kind != "concat":
+        return True
+    return len(segments) == len(plan.files) and all(is_whole(s) for s in segments)
+
+
 def write_list(plan: CopyPlan, path: str) -> None:
     """The list of files for the concat demuxer (`file '<path>'`, a quote in a name is written as '\\'' )."""
     with open(path, "w", encoding="utf-8", newline="\n") as f:

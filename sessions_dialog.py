@@ -26,14 +26,17 @@ class SessionDialog(QtWidgets.QDialog):
         layout.addWidget(self.list, 1)
         if not multi:
             self.list.itemDoubleClicked.connect(lambda item: self.accept())       # a double click on the wanted session is OK (not for deleting)
-        self.chkList = self.chkIni = None
+        self.chkList = self.chkIni = self.chkChapters = None
         if with_parts:
             self.chkList = QtWidgets.QCheckBox("Segment list")
             self.chkIni = QtWidgets.QCheckBox("Settings (INI file: profiles, options, tool paths)")
+            self.chkChapters = QtWidgets.QCheckBox("Chapters (if the session has them; they only fit the segment list of the session)")
             self.chkList.setChecked(True)
             self.chkIni.setChecked(True)
+            self.chkChapters.setChecked(True)
             layout.addWidget(self.chkList)
             layout.addWidget(self.chkIni)
+            layout.addWidget(self.chkChapters)
         self.chkBackup = None
         if with_backup:
             self.chkBackup = QtWidgets.QCheckBox("Save the current state as a session first (so that you can go back)")
@@ -58,7 +61,7 @@ class SessionDialog(QtWidgets.QDialog):
     def parts(self) -> tuple:
         if self.chkList is None:
             return ("ini", "list")
-        return tuple(name for name, box in (("list", self.chkList), ("ini", self.chkIni)) if box.isChecked())
+        return tuple(name for name, box in (("list", self.chkList), ("ini", self.chkIni), ("chapters", self.chkChapters)) if box.isChecked())
 
 
 def choose_sessions(parent, title: str, prompt: str, infos: list, multi: bool = False, with_parts: bool = False, with_backup: bool = False,
