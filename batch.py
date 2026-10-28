@@ -2,9 +2,9 @@
 
 A batch file is a shell script that cuts one job with ffmpeg. Besides the commands it carries the whole job as comments so that
 it can be read again later ("Import"): J= the output file, P= the profile, T= the options and C= the segment list as CSV, and K= the chapters
-(only if there are valid ones). P, T, C and K are the text encoded as UTF-16LE and Base64, in lines of 72 characters (as VB6 wrote them). Masks for the
-removelogo filter and the chapters file are created in the script itself, when it runs (also when the program has been closed long before), and
-removed afterwards.
+(only if there are valid ones) and M=copy (copy mode was on: the job is saved without re-encoding, see copymode.py). P, T, C and K are the text encoded as UTF-16LE
+and Base64, in lines of 72 characters (as VB6 wrote them). Masks for the removelogo filter, the chapters file and, in copy mode, the list of files for the concat
+demuxer are created in the script itself, when it runs (also when the program has been closed long before), and removed afterwards.
 """
 from __future__ import annotations
 
@@ -58,6 +58,8 @@ def segments_to_csv(segments: Iterable[Segment]) -> str:
 
 
 CHAPTERS_END = "MEDIAMAKER_CHAPTERS_END"
+LIST_END = "MEDIAMAKER_LIST_END"
+COPY_MARK = "# M=copy"
 
 
 def chapters_temp(output: str) -> str:
@@ -65,26 +67,40 @@ def chapters_temp(output: str) -> str:
     return output + ".chapters.tmp"
 
 
-def job_lines(job: Job, command: list[str], chapters: Optional[str] = None) -> list[str]:
-    """The lines of one job: comments with the whole job, masks, the chapters file, the ffmpeg call, clean-up. `chapters` is the text of the chapters
-    file (the command then has to read chapters_temp(output))."""
+def list_temp(output: str) -> str:
+    """Where the script writes the list of files for the concat demuxer (copy mode) while it runs: next to the target file."""
+    return output + ".files.tmp"
+
+
+def job_lines(job: Job, command: list[str], chapters: Optional[str] = None, chapters_run: Optional[str] = None, copy_list: Optional[str] = None,
+              copy_mode: bool = False) -> list[str]:
+    """The lines of one job: comments with the whole job, masks, the files that the call needs, the ffmpeg call, clean-up.
+    `chapters` is the text of the chapters file as it is kept in the program (the comment K= for a later import); `chapters_run` the text that the
+    script writes for ffmpeg (it is the same, unless copy mode made other times: the whole files); the command then has to read chapters_temp(output).
+    `copy_mode`: M=copy, no masks (copy mode has no filters); `copy_list`: the text of the list of files (the command then has to read list_temp(output))."""
     lines = [f"# J={job.output}"]
     lines += encode_block("P", format_kv(job.profile))
     lines += encode_block("T", format_kv(job.options))
     lines += encode_block("C", segments_to_csv(job.segments))
     if chapters:
         lines += encode_block("K", chapters)
-    for i, seg in enumerate(job.segments, 1):
-        if seg.has_png_mask:
-            lines.append(f'base64 -d <<< "{seg.mask}" > removelogo{i:02d}.png')
-    if chapters:
-        lines.append(f"cat > {bash_quote(chapters_temp(job.output))} <<'{CHAPTERS_END}'")
-        lines += chapters.rstrip("\n").split("\n")
-        lines.append(CHAPTERS_END)
+    if copy_mode:
+        lines.append(COPY_MARK)
+    else:
+        for i, seg in enumerate(job.segments, 1):
+            if seg.has_png_mask:
+                lines.append(f'base64 -d <<< "{seg.mask}" > removelogo{i:02d}.png')
+    temps = []
+    for text, path, end in ((copy_list, list_temp(job.output), LIST_END), (chapters_run if chapters_run is not None else chapters, chapters_temp(job.output), CHAPTERS_END)):
+        if text:
+            lines.append(f"cat > {bash_quote(path)} <<'{end}'")
+            lines += text.rstrip("\n").split("\n")
+            lines.append(end)
+            temps.append(path)
     lines.append(command_line(command))
     lines.append(CLEANUP)
-    if chapters:
-        lines.append(f"rm -f {bash_quote(chapters_temp(job.output))}")
+    for path in temps:
+        lines.append(f"rm -f {bash_quote(path)}")
     return lines
 
 
@@ -97,6 +113,7 @@ class BatchJob:
     options: str = ""            # text of the options
     csv: str = ""                # the segment list as CSV
     chapters: str = ""           # the chapters file (empty if the job had no chapters)
+    copy_mode: bool = False      # the job was made in copy mode
     error: str = ""              # not empty: the job cannot be imported
 
     def describe(self) -> str:
@@ -132,13 +149,16 @@ def parse_jobs(text: str) -> list:
         if line.startswith("# J="):
             close()
             current, blocks = BatchJob(number=len(jobs) + 1, output=line[4:].strip()), {}
+        elif current is not None and line.strip() == COPY_MARK:
+            current.copy_mode = True
         elif current is not None and line[:4] in ("# P=", "# T=", "# C=", "# K="):
             blocks.setdefault(line[2], []).append(line[4:].strip())
     close()
     return jobs
 
 
-def build_script(job: Job, command: list[str], old_text: Optional[str] = None, chapters: Optional[str] = None) -> str:
+def build_script(job: Job, command: list[str], old_text: Optional[str] = None, chapters: Optional[str] = None, chapters_run: Optional[str] = None,
+                 copy_list: Optional[str] = None, copy_mode: bool = False) -> str:
     """Text of the batch file. With `old_text` (the existing file) its earlier jobs are kept but switched off: every line that is
     not a comment gets '# ' in front (the comments stay, so the old jobs can still be imported)."""
     lines = [SHEBANG]
@@ -147,7 +167,7 @@ def build_script(job: Job, command: list[str], old_text: Optional[str] = None, c
         if old and old[0].startswith("#!"):
             old = old[1:]
         lines += [line if line.startswith("#") else "# " + line for line in old]
-    lines += job_lines(job, command, chapters)
+    lines += job_lines(job, command, chapters, chapters_run, copy_list, copy_mode)
     return "\n".join(lines) + "\n"
 
 

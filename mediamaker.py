@@ -892,14 +892,12 @@ class frmMain(frmMainBase):
                 list_path = os.path.join(work, "files.txt") if plan.kind == "concat" else None
                 if list_path:
                     copymode.write_list(plan, list_path)
-                chapters_file = self.chapters_path() if self.chapters_valid() else None
-                if chapters_file and plan.kind == "concat":              # joined in full length: the names are those of the file, the times those of the whole files
-                    durations = copymode.chapter_durations(plan, mediaprobe.format_duration)
-                    if durations is None:                                # (no duration: the lengths of the segments)
-                        durations = [Fraction(s.total_frames - s.first_frame) / s.fps for s in job.segments]
+                chapters_file = None
+                chapter_text = self.copy_chapter_text(plan, job)
+                if chapter_text:
                     chapters_file = os.path.join(work, "chapters.txt")
                     with open(chapters_file, "w", encoding="utf-8", newline="\n") as f:
-                        f.write(chapters.build_text(chapters.parse_titles(self.chapters_text()), job.segments, durations))
+                        f.write(chapter_text)
                 command = copymode.build_copy_command(plan, job, list_path, chapters_file=chapters_file)
                 expected, total = None, plan.seconds
             else:
@@ -960,10 +958,7 @@ class frmMain(frmMainBase):
             text = f"File was saved in {format_hms(result.elapsed)}."
             plan = info.get("plan")
             if plan is not None:                                      # copy mode
-                text += {"concat": f"\n\nCopy mode: {len(plan.files)} files joined in full length.", "cut": "\n\nCopy mode: cut at a keyframe (the start is the first keyframe "
-                         "that is not before the marker).", "copy": "\n\nCopy mode: copied as it is."}[plan.kind]
-                if plan.ignored:
-                    text += "\nNot taken into account in copy mode: " + ", ".join(plan.ignored) + "."
+                text += "\n\n" + self.copy_summary(plan)
             if info.get("chapters") and not chapters.holds_chapters(output):
                 text += f"\n\nAttention: the chapters were NOT saved: a {os.path.splitext(output)[1] or 'file'} file cannot hold chapters (use mp4 or mkv)."
             if not ok:
@@ -983,6 +978,35 @@ class frmMain(frmMainBase):
     def render_failed(self, text: str) -> None:
         self.render_finished()
         self.msg(f"ffmpeg could not be run: {text}")
+
+    COPY_NOTICE = ("Attention: copy mode is switched ON now ({what} was made in copy mode). Saving does NOT re-encode: one video is cut at a keyframe or "
+                   "several are joined in full length; cropping, logo filters, rescaling and the output profile are ignored. To encode as usual switch it off "
+                   "in the Edit menu.")
+
+    def apply_copy_mode(self, on: bool) -> bool:
+        """Puts copy mode into the state it had (when a job or a session is taken back). True if it was switched ON just now (then the caller tells the user)."""
+        was = self.mnuCopyMode.isChecked()
+        self.mnuCopyMode.setChecked(bool(on))
+        return bool(on) and not was
+
+    def copy_summary(self, plan) -> str:
+        """What copy mode does with the job (for the message after saving and after writing the batch file)."""
+        text = {"concat": f"Copy mode: {len(plan.files)} files joined in full length.", "cut": "Copy mode: cut at a keyframe (the start is the first keyframe that is not "
+                "before the marker).", "copy": "Copy mode: copied as it is."}[plan.kind]
+        if plan.ignored:
+            text += "\nNot taken into account in copy mode: " + ", ".join(plan.ignored) + "."
+        return text
+
+    def copy_chapter_text(self, plan, job) -> Optional[str]:
+        """The chapters file as ffmpeg needs it in copy mode (None: no valid chapters). Several files joined in full length: the names are those of the chapters file,
+        the times those of the whole files, as the container gives them (see copymode.chapter_durations); otherwise the file as it is."""
+        text = self.chapters_text() if self.chapters_valid() else None
+        if text is None or plan.kind != "concat":
+            return text
+        durations = copymode.chapter_durations(plan, mediaprobe.format_duration)
+        if durations is None:                                            # (no duration: the lengths of the segments)
+            durations = [Fraction(s.total_frames - s.first_frame) / s.fps for s in job.segments]
+        return chapters.build_text(chapters.parse_titles(text), job.segments, durations)
 
     def copy_mode_possible(self) -> bool:
         """Can the list be saved in copy mode? If not, the reason is told (see copymode.make_plan)."""
@@ -1031,8 +1055,8 @@ class frmMain(frmMainBase):
         """Writes the job as a shell script next to the INI file; its comments carry the job for a later import."""
         if not self.segments:
             return
-        if self.mnuCopyMode.isChecked():
-            self.msg("You cannot save job to batch with 'copy mode' enabled (yet).")
+        copy = self.mnuCopyMode.isChecked()
+        if copy and not self.copy_mode_possible():                    # said at once (the job is written as a script in copy mode too: no re-encoding)
             return
         script = self.batch_path()
         old = None
@@ -1052,17 +1076,29 @@ class frmMain(frmMainBase):
         if not self.check_job(job):
             return
         chapter_text = self.chapters_text() if self.chapters_valid() else None          # the script writes the file itself when it runs
+        rules = batch.parse_path_map(job.options.get("path_map", ""))
+        plan = copy_list = chapters_run = None
         try:
-            command = batch.map_sources(build_command(job, chapters_file=batch.chapters_temp(name) if chapter_text else None),
-                                        batch.parse_path_map(job.options.get("path_map", "")))
+            if copy:                                                  # no filter, -c copy: the script writes the list of files for the concat demuxer itself
+                plan = copymode.make_plan(job.segments, job.options)
+                copy_list = copymode.list_text(plan, lambda p: batch.map_path(p, rules)) if plan.kind == "concat" else None
+                chapters_run = self.copy_chapter_text(plan, job)
+                command = copymode.build_copy_command(plan, job, batch.list_temp(name) if copy_list else None,
+                                                      chapters_file=batch.chapters_temp(name) if chapters_run else None)
+            else:
+                command = build_command(job, chapters_file=batch.chapters_temp(name) if chapter_text else None)
+            command = batch.map_sources(command, rules)
+        except copymode.CopyModeError as e:
+            self.msg(str(e))
+            return
         except Exception as e:
             self.msg(f"The job cannot be built: {e}")
             return
         os.makedirs(os.path.dirname(script) or ".", exist_ok=True)
         with open(script, "w", encoding="utf-8", newline="\n") as f:
-            f.write(batch.build_script(job, command, old, chapter_text))
+            f.write(batch.build_script(job, command, old, chapter_text, chapters_run, copy_list, copy))
         os.chmod(script, 0o755)
-        self.inform(f"Batch file was updated and can be run from the command line:\n{script}")
+        self.inform(f"Batch file was updated and can be run from the command line:\n{script}" + (f"\n\n{self.copy_summary(plan)}" if plan is not None else ""))
 
     # ------------------------------------------------------------------ Chapters (Edit => Chapters; module chapters.py, dialog chapters_dialog.py)
     def chapters_path(self) -> str:
@@ -1176,6 +1212,8 @@ class frmMain(frmMainBase):
         else:
             self.remove_chapters_file()                             # they belonged to the list that is replaced
         self.reload_session()                                       # reads the files again, brings old lists up to date, shows everything
+        if self.apply_copy_mode(job.copy_mode):                      # the job was made in copy mode: it is switched on again, with a note
+            self.inform(self.COPY_NOTICE.format(what="the job"))
 
     # ------------------------------------------------------------------ Information (overview of all segments)
     def mnuInfo_Click(self):
@@ -1770,7 +1808,8 @@ class frmMain(frmMainBase):
 
     def make_session(self, note: str) -> "sessions.SessionInfo":
         self._save()                                              # the list on disk is the current one
-        return sessions.create_session(self.sessions_directory(), self.settings.path, self.project_path, self.segments, note, VERSION, chapters_path=self.chapters_path())
+        return sessions.create_session(self.sessions_directory(), self.settings.path, self.project_path, self.segments, note, VERSION, chapters_path=self.chapters_path(),
+                                      copy_mode=self.mnuCopyMode.isChecked())
 
     def mnuBackupSession_Click(self):
         """Saves the segment list and the settings as a session (one zip file, named with the time)."""
@@ -1820,7 +1859,10 @@ class frmMain(frmMainBase):
             return
         self.reload_session()
         self.remember_restore_backup(backup)                         # (a restored INI file brings the value it had in the session)
-        self.msg(f"Session {info.stamp} has been restored." + (f" The state before is saved as session {before.stamp}." if before else ""))
+        text = f"Session {info.stamp} has been restored." + (f" The state before is saved as session {before.stamp}." if before else "")
+        if "list" in parts and self.apply_copy_mode(info.copy_mode):                # copy mode belongs to the job, so it comes back with the list
+            text += "\n\n" + self.COPY_NOTICE.format(what="this session")
+        self.msg(text)
 
     def mnuDeleteSession_Click(self):
         """Deletes sessions (several can be selected)."""

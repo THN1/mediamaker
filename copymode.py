@@ -96,11 +96,14 @@ def chapter_durations(plan: CopyPlan, duration_fn) -> Optional[list]:
         return None
 
 
+def list_text(plan: CopyPlan, path_fn=lambda p: p) -> str:
+    """The list of files for the concat demuxer (`file '<path>'`, a quote in a name is written as '\\'' ). `path_fn` changes the paths (the batch file maps them)."""
+    return "".join("file '" + path_fn(name).replace("'", "'\\''") + "'\n" for name in plan.files)
+
+
 def write_list(plan: CopyPlan, path: str) -> None:
-    """The list of files for the concat demuxer (`file '<path>'`, a quote in a name is written as '\\'' )."""
     with open(path, "w", encoding="utf-8", newline="\n") as f:
-        for name in plan.files:
-            f.write("file '" + name.replace("'", "'\\''") + "'\n")
+        f.write(list_text(plan))
 
 
 def subtitle_numbers(options: dict) -> list:

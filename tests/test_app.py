@@ -1859,10 +1859,6 @@ def test_batch_file(tmp, videos):
     answers["text"] = "/tmp/out/Ohne"
     win.settings.set_option("path_map", "")
     n = len(win.messages)
-    win.mnuCopyMode.setChecked(True)
-    win.mnuBatch_Click()
-    check("copy mode" in win.messages[-1] and open(script_ui).read() == before, "copy mode: message, nothing written")
-    win.mnuCopyMode.setChecked(False)
     win.segments[0].path = "/does/not/exist.ts"
     win.mnuBatch_Click()
     check("Source file not found" in win.messages[-1] and open(script_ui).read() == before, "missing source file: message, nothing written")
@@ -5357,6 +5353,136 @@ def test_chapters(tmp, videos):
     print("Chapters: OK (file, signature, editor, validity, saving, copy mode, batch file, import, sessions)")
 
 
+def test_copy_mode_batch(tmp, videos):
+    """Copy mode in the batch file and in sessions: the script has the flag M=copy, writes the list of files itself and runs without ffmpeg encoding; importing a job
+    or restoring a session switches copy mode on again (with a note) or off."""
+    import batch
+    import chapters
+    import copymode
+    import sessions
+    import zipfile
+    from mediaprobe import first_frame_number
+    win = seek_window(tmp, videos, ("sample2.ts", "sample3.ts"), workdir="copybatch", first_fn=first_frame_number)
+    a, b = win.segments
+    work = os.path.join(tmp, "copybatch")
+    ffprobe_chapters = lambda path: [(c["tags"]["title"], round(float(c["start_time"]), 3), round(float(c["end_time"]), 3)) for c in json.loads(
+        subprocess.run(["ffprobe", "-v", "error", "-show_chapters", "-of", "json", path], capture_output=True, text=True).stdout).get("chapters", [])]
+    container = lambda p: float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", p], capture_output=True, text=True).stdout.split()[0].rstrip(","))
+    script = win.batch_path()
+    target = os.path.join(work, "joined.mkv")
+    win.ask_output = lambda title, suggestion: target
+    win.ask3 = lambda text: "no"
+    # --- unit: the lines of a copy job
+    job = win.make_job(target)
+    plan = copymode.make_plan(job.segments, job.options)
+    lines = batch.job_lines(job, ["ffmpeg", "x"], "STORED", "RUN\n", copymode.list_text(plan), True)
+    check("# M=copy" in lines and f"cat > {target}.files.tmp <<'MEDIAMAKER_LIST_END'" in lines and f"cat > {target}.chapters.tmp <<'MEDIAMAKER_CHAPTERS_END'" in lines
+          and lines.index("RUN") > lines.index(f"cat > {target}.chapters.tmp <<'MEDIAMAKER_CHAPTERS_END'") and f"rm -f {target}.files.tmp" in lines and f"rm -f {target}.chapters.tmp" in lines
+          and not [l for l in lines if l.startswith("base64 -d")], f"copy job: the flag, the list, the chapters for ffmpeg; no masks: {lines[-12:]}")
+    check(batch.decode_block([l[4:] for l in lines if l.startswith("# K=")]) == "STORED", "the comment K= keeps the chapters as the program has them (for a later import)")
+    check(batch.parse_jobs("\n".join(lines))[0].copy_mode is True and batch.parse_jobs("\n".join(batch.job_lines(job, ["ffmpeg", "x"])))[0].copy_mode is False, "the flag is read again")
+    # --- the batch file in copy mode: two different files joined, with chapters; the script runs by itself
+    win.settings.set_option("crop", "0")
+    chapters.write(win.chapters_path(), ["First", "Second"], win.segments)
+    win.mnuCopyMode.setChecked(True)
+    if os.path.exists(script):
+        os.remove(script)
+    win.mnuBatch_Click()
+    sh = open(script, encoding="utf-8").read()
+    check("# M=copy" in sh and f"file '{a.path}'" in sh and f"file '{b.path}'" in sh and "-f concat -safe 0" in sh and "filter_complex" not in sh and "libx264" not in sh
+          and win.messages[-1].endswith("Copy mode: 2 files joined in full length."), f"batch file in copy mode: {win.messages[-1]!r}")
+    stored = chapters.read(win.chapters_path())
+    job1 = batch.parse_jobs(sh)[0]
+    check(job1.copy_mode and job1.chapters == stored, "the job gives back the flag and the chapters as stored")
+    run_text = sh.split(f"cat > {target}.chapters.tmp <<'MEDIAMAKER_CHAPTERS_END'\n")[1].split("\nMEDIAMAKER_CHAPTERS_END")[0]
+    len_a = container(a.path)
+    check(chapters.parse_titles(run_text) == ["First", "Second"] and f"END={round(len_a * 1000)}" in run_text, "what the script writes for ffmpeg has the times of the whole files")
+    run = subprocess.run(["bash", script], capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=work)
+    got = ffprobe_chapters(target) if os.path.exists(target) else None
+    left = [f for f in os.listdir(work) if f.endswith(".tmp")]
+    check(run.returncode == 0 and got and [t for t, _, _ in got] == ["First", "Second"] and abs(got[0][2] - len_a) < 0.01 and left == [],
+          f"the script runs by itself: joined file with chapters {got}, no temporary file is left: {left} {run.stderr[-100:]!r}")
+    os.remove(target)
+    # --- one segment: cut at a keyframe, also from the script
+    a.start, a.end = a.first_frame + 56, a.first_frame + 126
+    win.segments[:] = [a]
+    chapters.write(win.chapters_path(), ["Only"], win.segments)
+    win.ask3 = lambda text: "yes"
+    win.mnuBatch_Click()
+    sh2 = open(script, encoding="utf-8").read()
+    check(sh2.count("# M=copy") == 2 and "-copyts -seek_timestamp 1 -ss" in sh2 and "-f concat" in sh2.split("# J=")[1] and "-f concat" not in sh2.split("# J=")[2], "the second job is a cut, the first one is kept as an old step")
+    check(win.messages[-1].endswith("Copy mode: cut at a keyframe (the start is the first keyframe that is not before the marker)."), f"message: {win.messages[-1]!r}")
+    # (an old step is switched off: run only the new job by taking the script without the first job)
+    new_only = "#!/bin/bash\n" + "# J=" + sh2.split("# J=")[2]
+    open(os.path.join(work, "cut.sh"), "w").write(new_only)
+    run = subprocess.run(["bash", os.path.join(work, "cut.sh")], capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=work)
+    check(run.returncode == 0 and os.path.exists(target) and [t for t, _, _ in ffprobe_chapters(target)] == ["Only"] and not [f for f in os.listdir(work) if f.endswith(".tmp")],
+          f"the cut runs from the script: {run.returncode} {run.stderr[-100:]!r}")
+    os.remove(target)
+    # --- refused at once in copy mode when the list cannot be saved (nothing is written, no question)
+    win.segments[:] = [a, dataclasses.replace(a, start=a.start + 100, end=a.end + 5)]
+    before = open(script, encoding="utf-8").read()
+    asked_names = []
+    win.ask_output = lambda title, suggestion: (asked_names.append(title), target)[1]
+    win.mnuBatch_Click()
+    check("2 segments of the same video" in win.messages[-1] and open(script, encoding="utf-8").read() == before and asked_names == [], "batch in copy mode: the reason is told at once, nothing is written")
+    # --- import: the job was made in copy mode: switched on again, with a note; a normal job switches it off, without one
+    win.segments[:] = [a, b]
+    open(script, "w", encoding="utf-8").write(sh)
+    win.choose_job = lambda jobs: jobs[0]
+    win.ask = lambda text: True
+    win.mnuCopyMode.setChecked(False)
+    win.messages.clear()
+    win.mnuImport_Click()
+    check(win.mnuCopyMode.isChecked() and win.messages and win.messages[-1] == win.COPY_NOTICE.format(what="the job") and "switched ON now (the job was made in copy mode)" in win.messages[-1],
+          f"import of a copy mode job: copy mode is on again, with a note: {win.messages[-1][:90]!r}")
+    win.messages.clear()
+    win.mnuImport_Click()
+    check(win.mnuCopyMode.isChecked() and not [m for m in win.messages if "switched ON" in m], "copy mode was on already: no note")
+    normal = batch.build_script(win.make_job(target), ["ffmpeg", "x"])
+    open(script, "w", encoding="utf-8").write(normal)
+    win.messages.clear()
+    win.mnuImport_Click()
+    check(not win.mnuCopyMode.isChecked() and not [m for m in win.messages if "switched ON" in m], "a job made without copy mode: it is off, no note")
+    # --- sessions: the state of copy mode is in them
+    win.settings.set_option("crop", "0")
+    win.mnuCopyMode.setChecked(True)
+    on = win.make_session("with copy mode")
+    check(on.copy_mode and json.loads(zipfile.ZipFile(on.path).read("session.json"))["copy_mode"] is True and "[copy mode]" in on.describe(), f"the session knows: {on.describe()!r}")
+    win.mnuCopyMode.setChecked(False)
+    off = win.make_session("without")
+    check(not off.copy_mode and json.loads(zipfile.ZipFile(off.path).read("session.json"))["copy_mode"] is False and "[copy mode]" not in off.describe(), "and one without")
+    win.choose_session = lambda title, prompt, infos, multi=False, with_parts=False, with_backup=False, backup_default=True: chosen
+    win.ask = lambda text: True
+    chosen = ([on], ("list", "ini"), False)
+    win.mnuRestoreSession_Click()
+    check(win.mnuCopyMode.isChecked() and win.messages[-1].endswith(win.COPY_NOTICE.format(what="this session")), f"restoring a copy mode session: copy mode is on, the note is in the message: {win.messages[-1][-80:]!r}")
+    win.mnuRestoreSession_Click()
+    check(win.mnuCopyMode.isChecked() and "switched ON" not in win.messages[-1], "restoring it again: it was on already, no note")
+    chosen = ([off], ("list", "ini"), False)
+    win.mnuRestoreSession_Click()
+    check(not win.mnuCopyMode.isChecked() and "switched ON" not in win.messages[-1], "restoring one without copy mode: copy mode is off, no note")
+    win.mnuCopyMode.setChecked(True)
+    chosen = ([off], ("ini",), False)
+    win.mnuRestoreSession_Click()
+    check(win.mnuCopyMode.isChecked(), "only the settings are restored: copy mode stays as it is (it belongs to the list)")
+    # an old session (made before this version) has no entry: copy mode off
+    old_path = os.path.join(os.path.dirname(off.path), "2020.01.01_00-00-00.zip")
+    with zipfile.ZipFile(off.path) as zin, zipfile.ZipFile(old_path, "w") as zout:
+        for item in zin.namelist():
+            data = zin.read(item)
+            if item == "session.json":
+                manifest = json.loads(data)
+                manifest.pop("copy_mode")
+                data = json.dumps(manifest).encode("utf-8")
+            zout.writestr(item, data)
+    old = sessions.read_info(old_path)
+    chosen = ([old], ("list", "ini"), False)
+    win.mnuRestoreSession_Click()
+    check(not old.copy_mode and not win.mnuCopyMode.isChecked(), "a session without the entry (an old one): copy mode is off")
+    print("Copy mode in the batch file and sessions: OK (script, real runs, import, sessions, notes)")
+
+
 def test_counting_note(tmp, videos):
     """The note "counting frames" in the title goes away whenever a counting ends: with a result, cancelled, with an error, or when the file cannot be read."""
     import mediamaker
@@ -5521,6 +5647,7 @@ def main():
     test_open_filter(tmp, sys.argv[1])
     test_copy_mode(tmp, sys.argv[1])
     test_chapters(tmp, sys.argv[1])
+    test_copy_mode_batch(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])

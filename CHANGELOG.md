@@ -3,9 +3,18 @@
 ## 0.6 (in progress)
 
 - Version number set to 0.6-dev.
+- **Copy mode in the batch file, in the import and in sessions**:
+  * **File => Batch works in copy mode** now (it was refused, as in VB6): the script has the comment `# M=copy` (like J, P, T, C, K), writes the list of files for the concat demuxer
+    (`<target>.files.tmp`, the paths mapped by `path_map`) and the chapters file for ffmpeg by itself when it runs, calls ffmpeg with `-c copy` (no filter, no encoding) and removes the
+    temporary files. A single segment is a cut at a keyframe with absolute times, as when saving. The comment K= keeps the chapters as the program has them, the heredoc has what ffmpeg
+    needs (in copy mode with files joined: the times of the whole files). The message says what copy mode does with the job. The reason why a list cannot be saved is told at once.
+  * **Import** (File => Import): a job with `M=copy` switches copy mode ON again, with a note; a job without it switches copy mode off (no note). Scripts of older versions have no
+    flag and count as made without copy mode.
+  * **Sessions** keep whether copy mode was on (`copy_mode` in `session.json`; the list shows `[copy mode]`). Restoring the segment list (part "list") puts copy mode back as it was, with a
+    note in the message when it is switched ON; restoring only the settings leaves it alone; sessions of older versions count as made without copy mode.
 - **Copy mode: the reason why a list cannot be saved is told at once**, when Save as MP4/AVI is called, and no longer only after the name of the target file was asked for
-  (just before ffmpeg would start). Same check as before (`copymode.make_plan`: segments of one file with cut markers, files that differ, no segments). File => Batch is still
-  refused first in copy mode ("You cannot save job to batch with 'copy mode' enabled (yet)").
+  (just before ffmpeg would start). Same check as before (`copymode.make_plan`: segments of one file with cut markers, files that differ, no segments). File => Batch does the same
+  check first (it works in copy mode now, see above).
 - **Fix: "counting frames ..." stayed in the title** of the main window. Only a counting that ended WITH a result took the note away; if the counting ended without one (file not
   readable, cancelled, any other error) the file stayed in the list of the running countings for good. Now every counting reports when it ends (`FrameCounter.ended`), and the
   note shows the files whose counting is really still running (two countings of the same file at the same time are told apart); counters that have ended are let go when the
@@ -70,8 +79,8 @@ Still to do: DVD mode, multilanguage, and more tests with several audio and subt
     with different size, frame rate or sample rate are refused with the list of differences.
   * a list of ONE file only with several segments is refused (that would be cutting AND joining).
   * the sound track (`audio`, all of them with `multilanguage`) and the subtitles (`subtitle`, numbers 1, 2 ...; for mp4 as `mov_text`) are chosen with `-map`;
-    what is not mapped is deleted; `build_copy_command` accepts a chapters file for the chapters function that is still to come. File => Batch is still refused
-    in copy mode.
+    what is not mapped is deleted; `build_copy_command` accepts a chapters file for the chapters function that is still to come. File => Batch
+    works in copy mode too (since 0.6-dev).
 - After an **import** from the batch file or a **restore** of a session the first entry of the list is selected as a whole (all fields, as if it had been
   clicked; before only the number field showed the focus); the crop window is centred in the preview. It is now a PART of the main window, not a window of its own: under Wayland the compositor decides where a
   window goes, so the position could not be set (it came up in the middle of the main window). As in VB6 the rest of the main window cannot be used while it is

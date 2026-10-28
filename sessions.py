@@ -7,7 +7,7 @@ VB6 copied the files into a folder named with the time and pushed it into a 7-Zi
         MediaMaker.ini      the settings (profiles, options, tool paths ...)
         MediaMaker.json     the segment list (the masks of the logo filters are part of it)
         MediaMaker.chapters the chapters for ffmpeg, if there were any (only valid for this segment list)
-        session.json        what the session is: time, note, number of segments, their titles, program version
+        session.json        what the session is: time, note, number of segments, their titles, program version, whether copy mode was on
 
 One file per session means: nothing is rewritten when a session is added, deleting a session is deleting a file, a session can be copied or sent
 by mail, any archive program opens it, and a damaged session does not harm the others. The name is the time (as in VB6), so the list is sorted by time.
@@ -47,6 +47,7 @@ class SessionInfo:
     has_ini: bool = False
     has_list: bool = False
     has_chapters: bool = False
+    copy_mode: bool = False          # copy mode was switched on when the session was saved
     ok: bool = True                  # False: the file is not a readable session
 
     def describe(self) -> str:
@@ -57,7 +58,7 @@ class SessionInfo:
         what = f"{self.segments} segment{'s' if self.segments != 1 else ''}"
         if self.titles:
             what += f": {self.titles[0]}" + (f" (+{len(self.titles) - 1})" if len(self.titles) > 1 else "")
-        return f"{when}  {what}" + (f"  - {self.note}" if self.note else "")
+        return f"{when}  {what}" + ("  [copy mode]" if self.copy_mode else "") + (f"  - {self.note}" if self.note else "")
 
 
 def default_directory(ini_path: str) -> str:
@@ -92,6 +93,7 @@ def read_info(path: str) -> SessionInfo:
                 info.segments = int(data.get("segments", 0))
                 info.titles = list(data.get("titles", []))
                 info.program = data.get("program", "")
+                info.copy_mode = bool(data.get("copy_mode", False))
             elif not (info.has_ini or info.has_list):
                 raise SessionError("no files of a session")
     except (zipfile.BadZipFile, OSError, ValueError, SessionError):
@@ -108,7 +110,7 @@ def list_sessions(directory: str) -> list[SessionInfo]:
 
 
 def create_session(directory: str, ini_path: str, list_path: str, segments: list, note: str = "", program: str = "",
-                   now: Optional[datetime.datetime] = None, chapters_path: str = "") -> SessionInfo:
+                   now: Optional[datetime.datetime] = None, chapters_path: str = "", copy_mode: bool = False) -> SessionInfo:
     """Writes a new session file (first under a temporary name, so that a failure leaves no half file) and returns its information."""
     os.makedirs(directory, exist_ok=True)
     stamp = new_stamp(now)
@@ -119,7 +121,8 @@ def create_session(directory: str, ini_path: str, list_path: str, segments: list
     path = os.path.join(directory, name + EXTENSION)
     manifest = {"format": FORMAT, "version": 1, "created": (now or datetime.datetime.now()).isoformat(timespec="seconds"),
                 "note": " ".join(note.split()), "program": program, "segments": len(segments),
-                "titles": [s.name for s in segments], "files": [n for n, p in ((INI_NAME, ini_path), (LIST_NAME, list_path), (CHAPTERS_NAME, chapters_path)) if p and os.path.exists(p)]}
+                "titles": [s.name for s in segments], "copy_mode": bool(copy_mode),
+                "files": [n for n, p in ((INI_NAME, ini_path), (LIST_NAME, list_path), (CHAPTERS_NAME, chapters_path)) if p and os.path.exists(p)]}
     part = path + ".part"
     try:
         with zipfile.ZipFile(part, "w", zipfile.ZIP_DEFLATED) as z:
