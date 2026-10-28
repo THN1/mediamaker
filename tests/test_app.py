@@ -5483,6 +5483,81 @@ def test_copy_mode_batch(tmp, videos):
     print("Copy mode in the batch file and sessions: OK (script, real runs, import, sessions, notes)")
 
 
+def test_copy_mode_remembered(tmp, videos):
+    """Copy mode is remembered for the next start ([settings] copy_mode=), put back with the same note as for a job or a session, and written only when it changes something."""
+    import sessions
+    from PySide6 import QtCore as QC
+    from mediaprobe import first_frame_number
+    text_of = lambda path: open(path, encoding="utf-8").read()
+
+    def start(work, **kwargs):
+        os.makedirs(work, exist_ok=True)
+        win = make_window(work, **kwargs)
+        QC.QTimer.pending.clear()
+        win.showEvent(None)
+        for ms, fn in list(QC.QTimer.pending):                      # (what is scheduled for when the window is there)
+            fn()
+        QC.QTimer.pending.clear()
+        return win
+    # --- the settings
+    work = os.path.join(tmp, "cmrem")
+    win = start(work)
+    ini = win.settings.path
+    before = open(ini, "rb").read()
+    check(win.settings.copy_mode is False and win.settings.set_copy_mode(False) is False and open(ini, "rb").read() == before and "copy_mode" not in text_of(ini),
+          "nothing is written as long as copy mode is off and was never on: the INI file of someone who does not use it stays as it is")
+    check(not win.mnuCopyMode.isChecked() and win.messages == [], "a start without the entry: off, no note")
+    # --- switching on: remembered at once
+    win.ask = lambda text: True
+    win.mnuCopyMode.setChecked(True)
+    win.mnuCopyMode_Click()
+    check(Settings(ini).copy_mode is True and "\ncopy_mode=on\n" in text_of(ini) and 'options=' in text_of(ini), "switched on: written at once, in [settings], not among the options")
+    check("copy_mode" not in Settings(ini).options, "(not an option)")
+    # --- the next start: on again, with the note
+    again = start(work)
+    check(again.mnuCopyMode.isChecked() and again.messages == [again.COPY_NOTICE.format(what="the last run")] and
+          again.messages[0].startswith("Attention: copy mode is switched ON now (the last run was made in copy mode), hence disabling re-encoding. A single video can be cut at a keyframe or several "
+                                       "are joined in full length, with or without chapters;"), f"the next start: copy mode is on and the note says so: {again.messages!r}")
+    # --- switching off: confirmed, remembered
+    again.messages.clear()
+    again.mnuCopyMode.setChecked(False)
+    again.mnuCopyMode_Click()
+    check(again.messages == ["Copy mode is switched off."] and Settings(ini).copy_mode is False and "\ncopy_mode=off\n" in text_of(ini), "switched off: the message, and 'off' is written")
+    third = start(work)
+    check(not third.mnuCopyMode.isChecked() and third.messages == [], "the start after that: off, no note")
+    # --- declining the question when switching on: nothing changes, nothing is written
+    work2 = os.path.join(tmp, "cmrem2")
+    win2 = start(work2)
+    before2 = open(win2.settings.path, "rb").read()
+    win2.ask = lambda text: False
+    win2.mnuCopyMode.setChecked(True)
+    win2.mnuCopyMode_Click()
+    check(not win2.mnuCopyMode.isChecked() and open(win2.settings.path, "rb").read() == before2, "No at the question: off, the INI file is not touched")
+    # --- the end of the program writes the state too (also when it was changed without the menu)
+    win2.mnuCopyMode.setChecked(True)
+    win2.Form_Unload()
+    check(Settings(win2.settings.path).copy_mode is True, "ending the program: the state is saved")
+    # --- a new job starts without copy mode, and that is remembered too
+    fresh = start(work2, fresh=True)
+    check(not fresh.mnuCopyMode.isChecked() and fresh.messages == [] and Settings(fresh.settings.path).copy_mode is False and "\ncopy_mode=off\n" in text_of(fresh.settings.path),
+          "a new job: off, no note, 'off' written")
+    # --- sessions: the state of the program counts, not the entry in the INI file that is put back
+    win3 = seek_window(tmp, videos, ("sample2.ts",), workdir="cmrem3", first_fn=first_frame_number)
+    win3._save()
+    off_session = win3.make_session("without copy mode")
+    win3.ask = lambda text: True
+    win3.mnuCopyMode.setChecked(True)
+    win3.mnuCopyMode_Click()
+    win3.choose_session = lambda title, prompt, infos, multi=False, with_parts=False, with_backup=False, backup_default=True: chosen
+    chosen = ([off_session], ("ini",), False)
+    win3.mnuRestoreSession_Click()
+    check(win3.mnuCopyMode.isChecked() and Settings(win3.settings.path).copy_mode is True, "only the settings are restored (the session's INI file has no entry): copy mode stays on, and 'on' is in the file again")
+    chosen = ([off_session], ("list", "ini"), False)
+    win3.mnuRestoreSession_Click()
+    check(not win3.mnuCopyMode.isChecked() and Settings(win3.settings.path).copy_mode is False, "the list is restored too: the session was made without copy mode, so it is off, and 'off' is written")
+    print("Copy mode remembered: OK (written only on change, next start with the note, switching off, new job, end of program, sessions)")
+
+
 def test_counting_note(tmp, videos):
     """The note "counting frames" in the title goes away whenever a counting ends: with a result, cancelled, with an error, or when the file cannot be read."""
     import mediamaker
@@ -5648,6 +5723,7 @@ def main():
     test_copy_mode(tmp, sys.argv[1])
     test_chapters(tmp, sys.argv[1])
     test_copy_mode_batch(tmp, sys.argv[1])
+    test_copy_mode_remembered(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])

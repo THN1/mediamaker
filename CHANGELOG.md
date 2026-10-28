@@ -3,6 +3,13 @@
 ## 0.6 (in progress)
 
 - Version number set to 0.6-dev.
+- **Copy mode is remembered for the next start**: the state is written to the INI file as its own entry `copy_mode=on|off` in [settings] (not among the options, so not in the options
+  dialog) at every change and once more when the program ends, and put back at the next start, with the same note as for an import or a session ("... (the last run was made in copy mode) ...").
+  The file is only written when that changes something (no entry and "off" are the same), so the INI file of someone who never uses copy mode stays as it is. A new job
+  (fresh start) begins without copy mode and writes "off". After restoring a session the state of the program counts, not the entry in the INI file that was put back. The note
+  now reads: "Attention: copy mode is switched ON now (... was made in copy mode), hence disabling re-encoding. A single video can be cut at a keyframe or several are joined in full
+  length, with or without chapters; cropping, logo filters, rescaling and the output profile are ignored. To enable re-encoding, switch copy mode off in the Edit menu." (the wording of
+  the user's own change in his clone, taken over so that the update does not clash with it).
 - **Copy mode in the batch file, in the import and in sessions**:
   * **File => Batch works in copy mode** now (it was refused, as in VB6): the script has the comment `# M=copy` (like J, P, T, C, K), writes the list of files for the concat demuxer
     (`<target>.files.tmp`, the paths mapped by `path_map`) and the chapters file for ffmpeg by itself when it runs, calls ffmpeg with `-c copy` (no filter, no encoding) and removes the
@@ -66,8 +73,7 @@ Still to do: DVD mode, multilanguage, and more tests with several audio and subt
 - **Open dialog**: the file type that was chosen there (for example mp4 or avi instead of ts) is the first suggestion the next time, as long as the program runs;
   it is not saved, a new run starts with ts again. Cancelling does not forget it.
 - **Copy mode**: switching it OFF is confirmed with a message ("Copy mode is switched off."); switching it on asks first, as before.
-- **Copy mode** (Edit => Copy mode, Ctrl+D; module `copymode.py`): saving WITHOUT re-encoding (`-c copy`, no `filter_complex`). The switch exists only in the menu, it is
-  not saved in the options nor in the batch script (as in VB6, which could only join files; the menu entry could not even be checked before). Switching it on
+- **Copy mode** (Edit => Copy mode, Ctrl+D; module `copymode.py`): saving WITHOUT re-encoding (`-c copy`, no `filter_complex`). It is a switch in the menu, not an option; since 0.6-dev its state is also remembered (see below), in the batch file and in sessions (VB6 could only join files, and its menu entry could not even be checked before). Switching it on
   warns first (Continue anyway?). The decisive number is that of different SOURCE FILES in the list:
   * **one video, one segment**: cut at a keyframe, without trim and without `setsar=1`, so the aspect ratio of the source stays. ffmpeg starts a copied
     cut at the first keyframe that is NOT BEFORE the marker, never before it; the end is marker B. A segment that is the whole file is copied as it is.

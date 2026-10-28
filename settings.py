@@ -176,6 +176,21 @@ class Settings:
     RECENT_LIMIT = 10                    # number of folders that are remembered
 
     @property
+    def copy_mode(self) -> bool:
+        """Copy mode as it was when the program ended ([settings] copy_mode=on|off). It is not an option (not in the options dialog): it is the state of the
+        menu entry Edit => Copy mode, which is put back at the next start."""
+        return (self.get("settings", "copy_mode", "off") or "off").strip().lower() == "on"
+
+    def set_copy_mode(self, on: bool) -> bool:
+        """Remembers the state. The file is only written if that changes something (no entry and off are the same), so that the INI file of someone who never
+        uses copy mode stays as it is. True if the file was written."""
+        if bool(on) == self.copy_mode:
+            return False
+        self.set("settings", "copy_mode", "on" if on else "off")
+        self.save()
+        return True
+
+    @property
     def recent_dirs(self) -> list:
         """Folders of target files used recently, newest first ([settings] recent_dirs=, separated by |)."""
         return [d for d in (self.get("settings", "recent_dirs", "") or "").split("|") if d.strip()]

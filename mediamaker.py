@@ -332,7 +332,7 @@ class frmMain(frmMainBase):
         self.setWindowTitle(f"MediaMaker {VERSION}")
         self.style_delogo_frame()
         self.add_debug_menu()
-        self.mnuCopyMode.setCheckable(True)                          # a switch that is not saved (the state is only in the menu)
+        self.mnuCopyMode.setCheckable(True)                          # a switch; its state is remembered for the next start (see below and save_copy_mode)
         self.logo_tooltip = vbqt.ShiftToolTip(self.cmdCommand[6], "Open/close DeLogo dialog", "Open/close RemoveLogo dialog")
         self.migrate_settings()
         if self.fresh:
@@ -340,6 +340,12 @@ class frmMain(frmMainBase):
             self._save()
         else:
             self.load_list()
+        if self.fresh:                                              # a new job starts without copy mode
+            self.mnuCopyMode.setChecked(False)
+            self.save_copy_mode()
+        elif self.settings.copy_mode:                               # the program was left in copy mode: it is on again, with the same note as for a job or session
+            self.mnuCopyMode.setChecked(True)
+            QtCore.QTimer.singleShot(0, lambda: self.inform(self.COPY_NOTICE.format(what="the last run")))        # (when the window is there)
         self.setup_columns()
         self.picTimeline.paint_hook = self.timeline_paint
         self.picProgress.paint_hook = self.progress_paint
@@ -407,6 +413,7 @@ class frmMain(frmMainBase):
                 (A thread that is still running at exit would crash the program.)"""
         if self._modal_child is not None:                            # the crop window is open: cancel it
             self._modal_child.reject()
+        self.save_copy_mode()                                        # (it is saved at every change too; this is for safety)
         workers = (self._counters + self._thumb_loaders + ([self._seek_worker] if self._seek_worker else [])
                    + ([self._render_worker] if self._render_worker else []))
         for worker in workers:
@@ -979,15 +986,20 @@ class frmMain(frmMainBase):
         self.render_finished()
         self.msg(f"ffmpeg could not be run: {text}")
 
-    COPY_NOTICE = ("Attention: copy mode is switched ON now ({what} was made in copy mode). Saving does NOT re-encode: one video is cut at a keyframe or "
-                   "several are joined in full length; cropping, logo filters, rescaling and the output profile are ignored. To encode as usual switch it off "
-                   "in the Edit menu.")
+    COPY_NOTICE = ("Attention: copy mode is switched ON now ({what} was made in copy mode), hence disabling re-encoding. A single video can be cut at a keyframe or "
+                   "several are joined in full length, with or without chapters; cropping, logo filters, rescaling and the output profile are ignored. To enable "
+                   "re-encoding, switch copy mode off in the Edit menu.")
 
     def apply_copy_mode(self, on: bool) -> bool:
         """Puts copy mode into the state it had (when a job or a session is taken back). True if it was switched ON just now (then the caller tells the user)."""
         was = self.mnuCopyMode.isChecked()
         self.mnuCopyMode.setChecked(bool(on))
+        self.save_copy_mode()
         return bool(on) and not was
+
+    def save_copy_mode(self) -> None:
+        """Copy mode is remembered for the next start ([settings] copy_mode= in the INI file, not an option). Written only when it changes something."""
+        self.settings.set_copy_mode(self.mnuCopyMode.isChecked())
 
     def copy_summary(self, plan) -> str:
         """What copy mode does with the job (for the message after saving and after writing the batch file)."""
@@ -1031,6 +1043,7 @@ class frmMain(frmMainBase):
             self.mnuCopyMode.setChecked(False)
         elif not self.mnuCopyMode.isChecked():
             self.inform("Copy mode is switched off.")
+        self.save_copy_mode()
 
     def mnuCancel_Click(self):
         """Cancel save: ends ffmpeg (the progress is polled regularly, so this takes a moment)."""
@@ -1862,6 +1875,7 @@ class frmMain(frmMainBase):
         text = f"Session {info.stamp} has been restored." + (f" The state before is saved as session {before.stamp}." if before else "")
         if "list" in parts and self.apply_copy_mode(info.copy_mode):                # copy mode belongs to the job, so it comes back with the list
             text += "\n\n" + self.COPY_NOTICE.format(what="this session")
+        self.save_copy_mode()                                        # (a restored INI file has the entry it had in the session: the state of the program counts)
         self.msg(text)
 
     def mnuDeleteSession_Click(self):
