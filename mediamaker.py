@@ -878,14 +878,20 @@ class frmMain(frmMainBase):
                 if list_path:
                     copymode.write_list(plan, list_path)
                 chapters_file = self.chapters_path() if self.chapters_valid() else None
-                if chapters_file and not copymode.chapters_fit(plan, job.segments):
-                    chapters_file = None
-                    plan.ignored.append("the chapters")
+                if chapters_file and plan.kind == "concat":              # joined in full length: the times come from the whole files
+                    wholes = copymode.whole_segments(plan, job.segments)
+                    if wholes is None:
+                        chapters_file = None
+                        plan.ignored.append("the chapters")
+                    else:
+                        chapters_file = os.path.join(work, "chapters.txt")
+                        chapters.write(chapters_file, chapters.parse_titles(self.chapters_text()), wholes)
                 command = copymode.build_copy_command(plan, job, list_path, chapters_file=chapters_file)
                 expected, total = None, plan.seconds
             else:
                 write_masks(job.segments, work)                       # removelogoNN.png for the filter
-                command = build_command(job, chapters_file=self.chapters_path() if self.chapters_valid() else None)
+                chapters_file = self.chapters_path() if self.chapters_valid() else None
+                command = build_command(job, chapters_file=chapters_file)
                 expected, total = expected_frames(job), total_seconds(job)
         except copymode.CopyModeError as e:
             shutil.rmtree(work, ignore_errors=True)
@@ -895,7 +901,7 @@ class frmMain(frmMainBase):
             shutil.rmtree(work, ignore_errors=True)
             self.msg(f"The job cannot be built: {e}")
             return
-        self._render = {"job": job, "output": output, "dir": work, "expected": expected, "total": total, "plan": plan}
+        self._render = {"job": job, "output": output, "dir": work, "expected": expected, "total": total, "plan": plan, "chapters": "-map_chapters" in command}
         worker = RenderWorker(command, self._render["total"], work, self._render_fn)
         worker.progress.connect(self.render_progress)
         worker.done.connect(self.render_done)
@@ -944,6 +950,8 @@ class frmMain(frmMainBase):
                          "that is not before the marker).", "copy": "\n\nCopy mode: copied as it is."}[plan.kind]
                 if plan.ignored:
                     text += "\nNot taken into account in copy mode: " + ", ".join(plan.ignored) + "."
+            if info.get("chapters") and not chapters.holds_chapters(output):
+                text += f"\n\nAttention: the chapters were NOT saved: a {os.path.splitext(output)[1] or 'file'} file cannot hold chapters (use mp4 or mkv)."
             if not ok:
                 text += "\n\n" + check
             getattr(QtWidgets.QApplication, "beep", lambda: None)()

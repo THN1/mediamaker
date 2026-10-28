@@ -5202,9 +5202,30 @@ def test_chapters(tmp, videos):
     win.segments[:] = [a, b]
     chapters.write(path, ["One", "Two"], win.segments)
     win.mnuSaveMP4_Click()
-    check(ffprobe_chapters(os.path.join(tmp, "chapterwin", "film.mkv")) == [] and "Not taken into account in copy mode: the cut markers, the chapters." in win.messages[-1],
-          f"copy mode, joined files with cut markers: no chapters, said in the message: {win.messages[-1]!r}")
+    got = ffprobe_chapters(os.path.join(tmp, "chapterwin", "film.mkv"))
+    len_a, len_b = (a.total_frames - a.first_frame) / 25, (b.total_frames - b.first_frame) / 25
+    check([t for t, _, _ in got] == ["One", "Two"] and abs(got[0][2] - len_a) < 0.01 and abs(got[1][1] - len_a) < 0.01 and abs(got[1][2] - (len_a + len_b)) < 0.01
+          and "Not taken into account in copy mode: the cut markers." in win.messages[-1] and "chapters" not in win.messages[-1].split("Not taken into account")[1],
+          f"copy mode, joined files with cut markers (they are ignored): the chapters have the times of the WHOLE files {len_a} + {len_b}: {got}")
     os.remove(os.path.join(tmp, "chapterwin", "film.mkv"))
+    # not one segment per file (the same file twice): the names cannot be matched to the files
+    win.segments[:] = [a, b, dataclasses.replace(a, start=a.start + 5)]
+    chapters.write(path, ["One", "Two", "Three"], win.segments)
+    win.mnuSaveMP4_Click()
+    check(ffprobe_chapters(os.path.join(tmp, "chapterwin", "film.mkv")) == [] and "Not taken into account in copy mode: the cut markers, the chapters." in win.messages[-1],
+          f"copy mode, 3 segments of 2 files: no chapters, said in the message: {win.messages[-1]!r}")
+    os.remove(os.path.join(tmp, "chapterwin", "film.mkv"))
+    # a file type that cannot hold chapters (avi): said, not silently left out
+    win.segments[:] = [whole_a, whole_b]
+    chapters.write(path, ["First file", "Second file"], win.segments)
+    win.choose_output = lambda kind: os.path.join(tmp, "chapterwin", "film.avi")
+    win.mnuSaveMP4_Click()
+    check(os.path.exists(os.path.join(tmp, "chapterwin", "film.avi")) and ffprobe_chapters(os.path.join(tmp, "chapterwin", "film.avi")) == []
+          and "Attention: the chapters were NOT saved: a .avi file cannot hold chapters (use mp4 or mkv)." in win.messages[-1], f"avi: no chapters, and the message says why: {win.messages[-1]!r}")
+    os.remove(os.path.join(tmp, "chapterwin", "film.avi"))
+    check(chapters.holds_chapters("/x/a.MP4") and chapters.holds_chapters("a.mkv") and not chapters.holds_chapters("a.avi") and not chapters.holds_chapters("a.ts"), "the file types that can hold chapters")
+    win.choose_output = lambda kind: os.path.join(tmp, "chapterwin", "film.mkv")
+    win.segments[:] = [a, b]                                        # (the cut segments again for the following steps)
     win.mnuCopyMode.setChecked(False)
     # --- the batch file: the chapters are in comments and written again when the script runs
     chapters.write(path, ["Part A", "Part B"], win.segments)

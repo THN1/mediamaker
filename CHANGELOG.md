@@ -15,8 +15,11 @@
     cut points counted from the first video frame, frame rate, order): deleting, moving, loading again or other cut points make it useless, cropping, rescaling, the
     logo filter and the target output profile do not, nor does a correction of the first frame. Whenever the list is saved or loaded the file is checked; if it does not
     fit any more it is deleted, after a warning. (VB6 deleted the file when the program ended; it is kept now, as long as it is valid.)
-  * **Saving** takes valid chapters into the target file; in copy mode only if they fit (joined files in full length, one segment per file; a cut has one chapter, a little
-    off because the start is a keyframe), otherwise they are named in the message "Not taken into account".
+  * **Saving** takes valid chapters into the target file (`-i <chapters> -map_chapters`). In copy mode with several files joined (concat demuxer) the chapters take their
+    NAMES from the chapters file and their TIMES from the whole files, because the files are joined in full length (the cut markers are ignored); this needs one
+    segment per file, otherwise (for example the same file twice) there are no chapters and the message after saving says "Not taken into account: ... the chapters". (First
+    version: chapters only if every segment was a whole file, so with cut markers set the result had none.) A cut has one chapter, a little off because the start is a keyframe.
+    avi and ts cannot hold chapters at all (ffmpeg leaves them out without a word): the message after saving now says so (mp4 and mkv work, also with the concat demuxer).
   * **Batch file**: the chapters are written as the comment `K=` (like J, P, T, C) AND as a heredoc that the script runs to make the file when it runs, also long after the
     program was closed, next to the target file (`<target>.chapters.tmp`, removed after the call). Old steps keep them.
   * **Import** asks whether to restore the chapters of the job. **Sessions** contain the file; the window for restoring has a third box "Chapters" (ticked every time); chapters

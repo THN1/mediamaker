@@ -13,6 +13,7 @@ Several segments of ONE video cannot be copied (that would be cutting AND joinin
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 from dataclasses import dataclass, field
 from fractions import Fraction
@@ -81,12 +82,15 @@ def make_plan(segments: list, options: dict) -> CopyPlan:
     return CopyPlan("concat", files, None, seconds, ignored)
 
 
-def chapters_fit(plan: CopyPlan, segments: list) -> bool:
-    """Do chapters made from the segments fit the result? Joined files are in full length: only if every segment is a whole file (and there is one per
-    file). A cut or a copy has one chapter per segment (the start of a cut is the keyframe, so its times are a little off)."""
+def whole_segments(plan: CopyPlan, segments: list) -> Optional[list]:
+    """For chapters in copy mode: the segments as they end up in the result. Joined files are in FULL length (the cut markers are ignored), so the
+    chapters take their times from the whole files: one segment per file is needed (names and files are matched by their order). None if the list
+    does not have exactly one segment per file. A cut or a copy keeps its segment (one chapter; a little off because the start is a keyframe)."""
     if plan.kind != "concat":
-        return True
-    return len(segments) == len(plan.files) and all(is_whole(s) for s in segments)
+        return list(segments)
+    if len(segments) != len(plan.files):
+        return None
+    return [dataclasses.replace(s, start=s.first_frame, end=s.total_frames) for s in segments]
 
 
 def write_list(plan: CopyPlan, path: str) -> None:
