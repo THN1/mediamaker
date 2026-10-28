@@ -4828,6 +4828,20 @@ def test_copy_mode(tmp, videos):
         check(False, "two segments of one video are refused")
     except CopyModeError as e:
         check("2 segments of the same video" in str(e) and "cut only once" in str(e), f"two segments of one video: {e}")
+    whole_twice = [whole, dataclasses.replace(whole), dataclasses.replace(whole)]
+    plan = copymode.make_plan(whole_twice, {"crop": "0"})
+    check(plan.kind == "concat" and plan.files == [a.path] * 3 and plan.ignored == [] and abs(plan.seconds - 3 * float(F(whole.frames) / whole.fps)) < 1e-9,
+          f"the same WHOLE file three times (no cut markers anywhere): joined, not refused: {plan}")
+    try:
+        copymode.make_plan([whole, dataclasses.replace(whole), dataclasses.replace(whole, start=whole.start + 20)], {"crop": "0"})
+        check(False, "a cut one among them is refused")
+    except CopyModeError as e:
+        check("3 segments of the same video, and segment 3 has cut markers" in str(e) and "remove the cut markers (then the whole video is joined 3 times)" in str(e), f"the message names the segment: {e}")
+    try:
+        copymode.make_plan([dataclasses.replace(whole, end=whole.end - 5), dataclasses.replace(whole, start=whole.start + 5)], {"crop": "0"})
+        check(False, "two cut ones are refused")
+    except CopyModeError as e:
+        check("segments 1, 2 have cut markers" in str(e), f"several cut ones are named: {e}")
     try:
         copymode.make_plan([], options)
         check(False, "an empty list is refused")
@@ -5233,6 +5247,14 @@ def test_chapters(tmp, videos):
           and int(n_frames) == 2 * n_a + n_b and "Copy mode: 3 files joined in full length." in win.messages[-1]
           and "chapters" not in win.messages[-1].split("Not taken into account")[1], f"copy mode, A B A: three parts ({n_frames} pictures) with three chapters: {got}")
     os.remove(os.path.join(tmp, "chapterwin", "film.mkv"))
+    # the same whole file three times (A, A, A): joined with three chapters (this was refused as "cutting AND joining" although nothing is cut)
+    win.segments[:] = [whole_a, dataclasses.replace(whole_a), dataclasses.replace(whole_a)]
+    chapters.write(path, ["Part a", "Part b", "Part c"], win.segments)
+    win.mnuSaveMP4_Click()
+    got = ffprobe_chapters(os.path.join(tmp, "chapterwin", "film.mkv"))
+    check([t for t, _, _ in got] == ["Part a", "Part b", "Part c"] and abs(got[1][1] - len_a) < 0.01 and abs(got[2][1] - 2 * len_a) < 0.01 and abs(got[2][2] - 3 * len_a) < 0.01
+          and "Copy mode: 3 files joined in full length." in win.messages[-1] and "wrong" not in win.messages[-1], f"copy mode, the same whole file three times: three parts, three chapters: {got}")
+    os.remove(os.path.join(tmp, "chapterwin", "film.mkv"))
     # a file type that cannot hold chapters (avi): said, not silently left out
     win.segments[:] = [whole_a, whole_b]
     chapters.write(path, ["First file", "Second file"], win.segments)
@@ -5321,6 +5343,58 @@ def test_chapters(tmp, videos):
     win.mnuRestoreSession_Click()
     check(len(win.segments) == 1 and not os.path.exists(path) and "could not be restored" not in win.messages[-1], "a session without chapters: nothing to restore, no error")
     print("Chapters: OK (file, signature, editor, validity, saving, copy mode, batch file, import, sessions)")
+
+
+def test_counting_note(tmp, videos):
+    """The note "counting frames" in the title goes away whenever a counting ends: with a result, cancelled, with an error, or when the file cannot be read."""
+    import mediamaker
+    from mediaprobe import ProbeError
+    os.makedirs(os.path.join(tmp, "countnote"), exist_ok=True)
+    title = lambda w: w.called("setWindowTitle")[-1][0]
+    outcomes = {"result": lambda path, on_start=None: (100, 0, 0.0), "probe": None, "boom": None}
+
+    def run(kind):
+        def count_fn(path, on_start=None):
+            if kind == "probe":
+                raise ProbeError("cannot read")
+            if kind == "boom":
+                raise RuntimeError("boom")
+            return 100, 0, 0.0
+        win = make_window(os.path.join(tmp, "countnote"), count_fn=count_fn)
+        win.start_count("/x/film.ts")
+        return win
+    for kind in ("result", "probe", "boom"):
+        win = run(kind)
+        check(win._counting == set() and "counting" not in title(win) and win._counters[-1].done, f"counting ends ({kind}): no note in the title any more: {title(win)!r}")
+    # cancelled: a result may still arrive, it is not used, the note goes in every case
+    win = make_window(os.path.join(tmp, "countnote"), count_fn=lambda path, on_start=None: (100, 0, 0.0))
+    counter = mediamaker.FrameCounter("/x/cancelled.ts", win._count_fn)
+    counter.cancelled = True
+    counter.counted.connect(win.frames_counted)
+    counter.ended.connect(win.count_finished)
+    win._counters.append(counter)
+    win._counting.add("/x/cancelled.ts")
+    win.update_title()
+    check("counting frames" in title(win), "(while it runs the note is there)")
+    counter.start()
+    check(win._counting == set() and "counting" not in title(win), "cancelled: the note goes")
+    # the same file counted twice at the same time: the note stays until BOTH have ended
+    c1, c2 = mediamaker.FrameCounter("/x/same.ts", win._count_fn), mediamaker.FrameCounter("/x/same.ts", win._count_fn)
+    other = mediamaker.FrameCounter("/x/other.ts", win._count_fn)
+    win._counters[:] = [c1, c2, other]
+    win._counting = {"/x/same.ts", "/x/other.ts"}
+    win.update_title()
+    win.count_finished(c1)
+    check(win._counting == {"/x/same.ts", "/x/other.ts"} and "counting frames" in title(win), "one of two countings of the same file has ended: still counting")
+    win.count_finished(other)
+    check(win._counting == {"/x/same.ts"} and "counting frames" in title(win), "the other file has ended: the first one is still counted")
+    win.count_finished(c2)
+    check(win._counting == set() and title(win) == f"MediaMaker {mediamaker.VERSION}", f"all have ended: the plain title: {title(win)!r}")
+    # the ones that have ended are let go when the next counting starts
+    win._counters[:] = [c1, c2, other]
+    win.start_count("/x/next.ts")
+    check([c.path for c in win._counters] == ["/x/next.ts"], f"ended counters are removed from the list: {[c.path for c in win._counters]}")
+    print("Counting note: OK (result, error, unreadable file, cancelled, the same file twice, list cleaned)")
 
 
 def test_play_now(tmp, videos):
@@ -5435,6 +5509,7 @@ def main():
     test_open_filter(tmp, sys.argv[1])
     test_copy_mode(tmp, sys.argv[1])
     test_chapters(tmp, sys.argv[1])
+    test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])
     test_timeline(tmp, sys.argv[1])

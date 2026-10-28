@@ -90,12 +90,14 @@ class FrameCounter(QtCore.QThread):
     """Counts the frames of a file in the background (reads the whole file once)."""
 
     counted = QtCore.Signal(str, int, int, float)          # path, frames, discarded packets, PTS of the first keyframe
+    ended = QtCore.Signal(object)                           # always, when the thread ends: with a result, cancelled or with an error
 
     def __init__(self, path: str, count_fn):
         super().__init__()
         self.path, self.count_fn = path, count_fn
         self._proc = None
         self.cancelled = False
+        self.done = False                                   # set by the main window when it has been told that the counting ended
 
     def _remember(self, proc) -> None:
         self._proc = proc
@@ -109,11 +111,14 @@ class FrameCounter(QtCore.QThread):
 
     def run(self) -> None:
         try:
-            frames, dropped, key_pts = self.count_fn(self.path, on_start=self._remember)
-        except ProbeError:
-            return                                          # cancelled or file not readable: the estimate stays
-        if not self.cancelled:
-            self.counted.emit(self.path, frames, dropped, key_pts)
+            try:
+                frames, dropped, key_pts = self.count_fn(self.path, on_start=self._remember)
+            except Exception:                               # cancelled, file not readable or any other error: the estimate stays
+                return
+            if not self.cancelled:
+                self.counted.emit(self.path, frames, dropped, key_pts)
+        finally:
+            self.ended.emit(self)                           # (the note in the title must go in every case; before, only a result removed it)
 
 
 class frmMain(frmMainBase):
@@ -640,12 +645,21 @@ class frmMain(frmMainBase):
 
     # ------------------------------------------------------------------ Counting frames (background)
     def start_count(self, path: str) -> None:
+        self._counters = [c for c in self._counters if not (c.done and not c.isRunning())]       # (the ones that have ended are let go)
         counter = FrameCounter(path, self._count_fn)
         counter.counted.connect(self.frames_counted)
+        counter.ended.connect(self.count_finished)
         self._counters.append(counter)
         self._counting.add(path)
         self.update_title()
         counter.start()
+
+    def count_finished(self, counter) -> None:
+        """A counting has ended, with a result or without (cancelled, file not readable, error). The note "counting frames" in the title shows the
+        files whose counting is still running, nothing else."""
+        counter.done = True
+        self._counting = {c.path for c in self._counters if not c.done}
+        self.update_title()
 
     def frames_counted(self, path: str, frames: int, dropped: int, key_pts: float) -> None:
         """Exact result of the counting: total number of frames and, where the user has not changed anything, the end."""
@@ -668,8 +682,6 @@ class frmMain(frmMainBase):
         if changed:
             self._save()
             self.lblText_Upd()
-        self._counting.discard(path)
-        self.update_title()
 
     # ------------------------------------------------------------------ Selection and preview
     def lvwSegments_Click(self):

@@ -3,6 +3,13 @@
 ## 0.6 (in progress)
 
 - Version number set to 0.6-dev.
+- **Fix: "counting frames ..." stayed in the title** of the main window. Only a counting that ended WITH a result took the note away; if the counting ended without one (file not
+  readable, cancelled, any other error) the file stayed in the list of the running countings for good. Now every counting reports when it ends (`FrameCounter.ended`), and the
+  note shows the files whose counting is really still running (two countings of the same file at the same time are told apart); counters that have ended are let go when the
+  next one starts.
+- **Fix: copy mode refused the same whole file several times** ("The list has 3 segments of the same video ... cutting AND joining") although nothing is cut. A list of one
+  file only is refused now only if one of its segments has cut markers (the message names them and says that removing the markers joins the whole video n times); with no
+  cut markers the file is joined n times, with one chapter per item.
 
 ## 0.5
 

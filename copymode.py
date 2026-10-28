@@ -10,7 +10,8 @@ What is possible depends on the videos in the segment list (the decisive number 
   codecs). The cut markers, cropping, logo filters, rescaling and the settings of the output profile are ignored.
 * In both cases the sound track and the subtitles are chosen by the options (`audio`, `multilanguage`, `subtitle`) and chapters can be added.
 
-Several segments of ONE video only (no other file in the list) cannot be copied (that would be cutting AND joining): CopyModeError.
+Several segments of ONE video only (no other file in the list) can be joined if none of them has cut markers (the whole video several times); if one has, the job
+would be cutting AND joining, which is not possible without encoding: CopyModeError.
 """
 from __future__ import annotations
 
@@ -61,10 +62,14 @@ def make_plan(segments: list, options: dict) -> CopyPlan:
         raise CopyModeError("There are no segments in the list.")
     files = list(dict.fromkeys(s.path for s in segments))
     global_crop = int(options.get("crop", 0) or 0) > 0
-    if len(files) == 1:
-        if len(segments) > 1:
-            raise CopyModeError(f"The list has {len(segments)} segments of the same video. In copy mode a video can be cut only once (cutting AND joining is "
-                                f"not possible without encoding): remove all but one segment, or switch off copy mode.")
+    if len(files) == 1 and len(segments) > 1:
+        cut = [i for i, s in enumerate(segments, 1) if not is_whole(s)]
+        if cut:                                                     # (the whole file several times is joined below, like several files)
+            raise CopyModeError(f"The list has {len(segments)} segments of the same video, and {'segment' if len(cut) == 1 else 'segments'} "
+                                f"{', '.join(map(str, cut))} {'has' if len(cut) == 1 else 'have'} cut markers. In copy mode a video can be cut only once (cutting AND "
+                                f"joining is not possible without encoding): remove all but one segment, or remove the cut markers (then the whole video is joined "
+                                f"{len(segments)} times), or switch off copy mode.")
+    if len(files) == 1 and len(segments) == 1:
         seg = segments[0]
         ignored = [text for text, hit in (("cropping", global_crop or seg.crop_top + seg.crop_bottom + seg.crop_left + seg.crop_right > 0),
                                           ("the logo filter", bool(seg.mask))) if hit]
