@@ -5,11 +5,12 @@ What is possible depends on the videos in the segment list (the decisive number 
 * ONE video with ONE segment: it is cut at a keyframe, without any filter and without trim: the start is the first keyframe that is not before
   the marker (that is how ffmpeg cuts when copying), the end is the marker. The aspect ratio of the source stays (no setsar=1).
   A segment that is the whole file is copied as it is.
-* SEVERAL videos: they are joined in full length with ffmpeg's concat demuxer. This only works for videos with identical characteristics (size,
-  frame rate, sound, codecs). The cut markers, cropping, logo filters, rescaling and the settings of the output profile are ignored.
+* SEVERAL videos (at least two different files): EVERY item of the list is joined in full length, in the order of the list, with ffmpeg's concat demuxer
+  (as in VB6; the same file may be in the list several times). This only works for videos with identical characteristics (size, frame rate, sound,
+  codecs). The cut markers, cropping, logo filters, rescaling and the settings of the output profile are ignored.
 * In both cases the sound track and the subtitles are chosen by the options (`audio`, `multilanguage`, `subtitle`) and chapters can be added.
 
-Several segments of ONE video cannot be copied (that would be cutting AND joining): CopyModeError.
+Several segments of ONE video only (no other file in the list) cannot be copied (that would be cutting AND joining): CopyModeError.
 """
 from __future__ import annotations
 
@@ -30,7 +31,7 @@ class CopyModeError(Exception):
 @dataclass
 class CopyPlan:
     kind: str                         # "copy" (whole file), "cut" (one segment of one video) or "concat" (several videos)
-    files: list                       # the source files in the order of their first appearance in the list
+    files: list                       # the source files: cut / copy one, concat one for EVERY item of the list (in its order; a file can be there twice)
     segment: Optional[Segment]        # kind copy / cut: the segment
     seconds: float                    # length of the result (for the progress)
     ignored: list = field(default_factory=list)       # what of the job could not be taken into account
@@ -75,22 +76,19 @@ def make_plan(segments: list, options: dict) -> CopyPlan:
     ignored = [text for text, hit in (("the cut markers", any(not is_whole(s) for s in segments)),
                                       ("cropping", global_crop or any(s.crop_top + s.crop_bottom + s.crop_left + s.crop_right > 0 for s in segments)),
                                       ("the logo filter", any(s.mask for s in segments))) if hit]
-    first_of = {}
-    for s in segments:
-        first_of.setdefault(s.path, s)
-    seconds = float(sum(Fraction(s.total_frames - s.first_frame) / s.fps for s in first_of.values()))
-    return CopyPlan("concat", files, None, seconds, ignored)
+    seconds = float(sum(Fraction(s.total_frames - s.first_frame) / s.fps for s in segments))
+    return CopyPlan("concat", [s.path for s in segments], None, seconds, ignored)
 
 
-def whole_segments(plan: CopyPlan, segments: list) -> Optional[list]:
-    """For chapters in copy mode: the segments as they end up in the result. Joined files are in FULL length (the cut markers are ignored), so the
-    chapters take their times from the whole files: one segment per file is needed (names and files are matched by their order). None if the list
-    does not have exactly one segment per file. A cut or a copy keeps its segment (one chapter; a little off because the start is a keyframe)."""
-    if plan.kind != "concat":
-        return list(segments)
-    if len(segments) != len(plan.files):
+def chapter_durations(plan: CopyPlan, duration_fn) -> Optional[list]:
+    """For chapters when files are joined: the length of every file as the container gives it (`duration_fn(path)`, seconds). The concat demuxer
+    moves each file by the duration of the one before it, so these are the places where the parts begin (the length of the picture alone would be
+    too short when the sound starts before the picture, 1.2 s with a recording). None if a duration cannot be had (then the lengths of the segments are used)."""
+    try:
+        cache = {}
+        return [cache.setdefault(path, duration_fn(path)) for path in plan.files]
+    except Exception:
         return None
-    return [dataclasses.replace(s, start=s.first_frame, end=s.total_frames) for s in segments]
 
 
 def write_list(plan: CopyPlan, path: str) -> None:

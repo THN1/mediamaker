@@ -140,6 +140,12 @@ def aspect_from_stream(width: int, height: int, sar=None, dar=None) -> float:
     return shape * pixel if pixel else shape
 
 
+def format_duration(path: str, ffprobe: str = "ffprobe") -> float:
+    """The duration of the file as the container gives it (seconds; fast, nothing is counted). This is the length by which the concat demuxer moves the next file."""
+    data = _run_ffprobe(["-show_entries", "format=duration", path], ffprobe)
+    return _float(data.get("format", {}).get("duration"))
+
+
 def display_aspect(path: str, ffprobe: str = "ffprobe") -> Optional[float]:
     """Proportions (width / height) of the first video stream as a player shows it (see aspect_from_stream); None if unknown."""
     try:

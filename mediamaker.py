@@ -40,6 +40,7 @@ import ffmpeg_cmd                                                     # noqa: E4
 from frames import grab_frame, grab_numbered, grab_scanlines        # noqa: E402
 import dedup                                                          # noqa: E402
 import copymode                                                       # noqa: E402
+import mediaprobe                                                     # noqa: E402
 import chapters                                                       # noqa: E402
 import cropping                                                       # noqa: E402
 import timeline as tl                                                # noqa: E402
@@ -878,14 +879,13 @@ class frmMain(frmMainBase):
                 if list_path:
                     copymode.write_list(plan, list_path)
                 chapters_file = self.chapters_path() if self.chapters_valid() else None
-                if chapters_file and plan.kind == "concat":              # joined in full length: the times come from the whole files
-                    wholes = copymode.whole_segments(plan, job.segments)
-                    if wholes is None:
-                        chapters_file = None
-                        plan.ignored.append("the chapters")
-                    else:
-                        chapters_file = os.path.join(work, "chapters.txt")
-                        chapters.write(chapters_file, chapters.parse_titles(self.chapters_text()), wholes)
+                if chapters_file and plan.kind == "concat":              # joined in full length: the names are those of the file, the times those of the whole files
+                    durations = copymode.chapter_durations(plan, mediaprobe.format_duration)
+                    if durations is None:                                # (no duration: the lengths of the segments)
+                        durations = [Fraction(s.total_frames - s.first_frame) / s.fps for s in job.segments]
+                    chapters_file = os.path.join(work, "chapters.txt")
+                    with open(chapters_file, "w", encoding="utf-8", newline="\n") as f:
+                        f.write(chapters.build_text(chapters.parse_titles(self.chapters_text()), job.segments, durations))
                 command = copymode.build_copy_command(plan, job, list_path, chapters_file=chapters_file)
                 expected, total = None, plan.seconds
             else:
@@ -955,7 +955,16 @@ class frmMain(frmMainBase):
             if not ok:
                 text += "\n\n" + check
             getattr(QtWidgets.QApplication, "beep", lambda: None)()
-            self.inform(text)
+            self.finish_message(text, output)
+
+    def finish_message(self, text: str, output: str) -> None:
+        """The message after a successful save, with the question whether to play the result now (with the program that the system has for it)."""
+        if self.ask(text + "\n\nPlay now?"):
+            self.play_file(output)
+
+    def play_file(self, path: str) -> None:
+        """Opens a file with the media player that is set in the system (xdg-open)."""
+        self.start_external(["xdg-open", path], lambda rc, err: self.msg(f"The file could not be played (xdg-open): {err or rc}\n\nIt is saved as {path}.") if rc else None)
 
     def render_failed(self, text: str) -> None:
         self.render_finished()

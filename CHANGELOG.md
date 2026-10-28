@@ -16,14 +16,17 @@
     logo filter and the target output profile do not, nor does a correction of the first frame. Whenever the list is saved or loaded the file is checked; if it does not
     fit any more it is deleted, after a warning. (VB6 deleted the file when the program ended; it is kept now, as long as it is valid.)
   * **Saving** takes valid chapters into the target file (`-i <chapters> -map_chapters`). In copy mode with several files joined (concat demuxer) the chapters take their
-    NAMES from the chapters file and their TIMES from the whole files, because the files are joined in full length (the cut markers are ignored); this needs one
-    segment per file, otherwise (for example the same file twice) there are no chapters and the message after saving says "Not taken into account: ... the chapters". (First
-    version: chapters only if every segment was a whole file, so with cut markers set the result had none.) A cut has one chapter, a little off because the start is a keyframe.
-    avi and ts cannot hold chapters at all (ffmpeg leaves them out without a word): the message after saving now says so (mp4 and mkv work, also with the concat demuxer).
+    NAMES from the chapters file and their TIMES from the durations of the whole files as the container gives them (`mediaprobe.format_duration`): the concat demuxer moves
+    each file by the duration of the one before it, and that is longer than the picture alone when the sound starts before the picture (measured with a recording: the picture
+    of part 2 began at 29.92 s, the file 1 is 29.676 s long, but only 28.46 s of picture; chapters made from the number of pictures would have begun 1.2 s too early).
+    A cut has one chapter, a little off because the start is a keyframe. avi and ts cannot hold chapters at all (ffmpeg leaves them out without a word): the message after
+    saving says so (mp4 and mkv work, also with the concat demuxer).
   * **Batch file**: the chapters are written as the comment `K=` (like J, P, T, C) AND as a heredoc that the script runs to make the file when it runs, also long after the
     program was closed, next to the target file (`<target>.chapters.tmp`, removed after the call). Old steps keep them.
   * **Import** asks whether to restore the chapters of the job. **Sessions** contain the file; the window for restoring has a third box "Chapters" (ticked every time); chapters
     that do not fit the restored list are deleted with the warning.
+- **Play now?**: the message after a successful save (interactive mode; not in the batch script) ends with the question "Play now?"; Yes opens the result with the
+  program that the system has for it (`xdg-open`), No does nothing; if the player cannot be started the error is told. An error or a cancel does not ask.
 - **Chapter editor: editing a name**: a single click on a row opens the editor IN the row (VB6: label edit; Enter or a click elsewhere confirms, Escape cancels; an empty
   name is put back; the file is written when a name was confirmed), a double click or F2 opens the separate window as before. The editor in the row starts after the time of
   a double click (`QApplication.doubleClickInterval()`), so that a double click can cancel it and open the window instead. Qt's own triggers are switched off for this.
@@ -32,6 +35,8 @@
 - **Chapter editor layout**: the check box no longer sits on the edge of the frame (the frame showed through it). The frame, with everything in it, and the Close button
   move down, the frame has the caption "Chapter names" (it was "Frame1" in the VB6 form), the check box stands alone above it. Done when the window is built, the
   generated user interface is unchanged.
+- **Play now?**: the message after a successful save (interactive mode) ends with the question "Play now?"; Yes opens the result with the player that the system has for the file
+  type (`xdg-open`), No does nothing. An error of the player is told. After an error or a cancel there is no question.
 - **Open dialog**: the file type that was chosen there (for example mp4 or avi instead of ts) is the first suggestion the next time, as long as the program runs;
   it is not saved, a new run starts with ts again. Cancelling does not forget it.
 - **Copy mode**: switching it OFF is confirmed with a message ("Copy mode is switched off."); switching it on asks first, as before.
@@ -42,10 +47,11 @@
     cut at the first keyframe that is NOT BEFORE the marker, never before it; the end is marker B. A segment that is the whole file is copied as it is.
     (Measured with a TV recording: `-ss`/`-t` counted from the cut end up to 0.4 s early because of the lead of the sound; the command therefore uses
     absolute times, `-copyts -seek_timestamp 1 -ss <start> -i <file> -to <end> ... -avoid_negative_ts make_zero`, container start + frame number / frame rate.)
-  * **several videos**: joined in full length with the concat demuxer (`-f concat -safe 0`), every file once in the order of its first appearance; cut markers,
-    cropping, logo filters, rescaling and the output profile are ignored (the message after saving says what was not taken into account). Files with different
-    size, frame rate or sample rate are refused with the list of differences.
-  * several segments of ONE video are refused (that would be cutting AND joining).
+  * **several videos** (at least two different files): EVERY item of the list is joined in full length with the concat demuxer (`-f concat -safe 0`), in the order of the
+    list, as VB6 did; the same file may be in the list several times (A, B, A gives three parts and three chapters; a first version joined every file only once and dropped
+    the chapters then). Cut markers, cropping, logo filters, rescaling and the output profile are ignored (the message after saving says what was not taken into account). Files
+    with different size, frame rate or sample rate are refused with the list of differences.
+  * a list of ONE file only with several segments is refused (that would be cutting AND joining).
   * the sound track (`audio`, all of them with `multilanguage`) and the subtitles (`subtitle`, numbers 1, 2 ...; for mp4 as `mov_text`) are chosen with `-map`;
     what is not mapped is deleted; `build_copy_command` accepts a chapters file for the chapters function that is still to come. File => Batch is still refused
     in copy mode.

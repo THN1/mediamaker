@@ -104,6 +104,7 @@ def make_window(tmp, probe=None, fresh=False, thumb_fn=None, first_fn=None, **kw
     win.messages = []
     win.msg = win.messages.append
     win.inform = win.messages.append
+    win.finish_message = lambda text, output: win.messages.append(text)        # (the real one asks "Play now?": test_play_now)
     win.verify_first_frame = False                       # most tests give the first frame by hand (first_fn); test_first_frame_check switches it on
     win.references_shown = []
     win.show_reference = lambda text, rgb, ref: (win.messages.append(text), win.references_shown.append((text, rgb, ref)))
@@ -4833,10 +4834,13 @@ def test_copy_mode(tmp, videos):
     except CopyModeError as e:
         check(str(e) == "There are no segments in the list.", "empty list")
     plan = copymode.make_plan([a, b, dataclasses.replace(a, start=a.start + 3)], {"crop": "0"})
-    check(plan.kind == "concat" and plan.files == [a.path, b.path] and plan.segment is None, f"several videos: every file once, in the order of the list: {plan.files}")
-    check(plan.ignored == ["the cut markers"] and abs(plan.seconds - ((a.total_frames - a.first_frame) + (b.total_frames - b.first_frame)) / 25) < 1e-9, f"joined in full length: {plan.seconds} s, ignored: {plan.ignored}")
+    check(plan.kind == "concat" and plan.files == [a.path, b.path, a.path] and plan.segment is None, f"several videos: EVERY item of the list, in its order (as in VB6; a file can be there twice): {plan.files}")
+    check(plan.ignored == ["the cut markers"] and abs(plan.seconds - (2 * (a.total_frames - a.first_frame) + (b.total_frames - b.first_frame)) / 25) < 1e-9, f"joined in full length: {plan.seconds} s, ignored: {plan.ignored}")
     b.crop_top = 5
     check(copymode.make_plan([a, b], {"crop": "0"}).ignored == ["the cut markers", "cropping"], "also the cropping of a segment is not taken into account")
+    lst_twice = os.path.join(tmp, "copywin", "files_twice.txt")
+    copymode.write_list(copymode.make_plan([a, b, a], {"crop": "0"}), lst_twice)
+    check(open(lst_twice).read() == f"file '{a.path}'\nfile '{b.path}'\nfile '{a.path}'\n", "the list of files for ffmpeg has the same file twice, as the list of segments has it")
     b.crop_top = 0
     wide = dataclasses.replace(b, width=1280, fps=F(30), sample_rate=44100)
     try:
@@ -5203,17 +5207,31 @@ def test_chapters(tmp, videos):
     chapters.write(path, ["One", "Two"], win.segments)
     win.mnuSaveMP4_Click()
     got = ffprobe_chapters(os.path.join(tmp, "chapterwin", "film.mkv"))
-    len_a, len_b = (a.total_frames - a.first_frame) / 25, (b.total_frames - b.first_frame) / 25
+    container = lambda p: float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", p], capture_output=True, text=True).stdout.split()[0].rstrip(","))
+    len_a, len_b = container(a.path), container(b.path)
     check([t for t, _, _ in got] == ["One", "Two"] and abs(got[0][2] - len_a) < 0.01 and abs(got[1][1] - len_a) < 0.01 and abs(got[1][2] - (len_a + len_b)) < 0.01
           and "Not taken into account in copy mode: the cut markers." in win.messages[-1] and "chapters" not in win.messages[-1].split("Not taken into account")[1],
-          f"copy mode, joined files with cut markers (they are ignored): the chapters have the times of the WHOLE files {len_a} + {len_b}: {got}")
+          f"copy mode, joined files with cut markers (they are ignored): the chapters have the times of the WHOLE files, as the container gives them {len_a} + {len_b}: {got}")
+    # (the length of the picture alone is shorter: the sound starts before the picture; a chapter at its end would begin inside part 1)
+    check(len_a > (a.total_frames - a.first_frame) / 25 + 0.3, f"(here the picture is shorter than the file: {(a.total_frames - a.first_frame) / 25} against {len_a} s)")
+    pts = sorted(float(x.rstrip(",")) for x in subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time", "-of", "csv=p=0",
+                                                              os.path.join(tmp, "chapterwin", "film.mkv")], capture_output=True, text=True).stdout.split() if x)
+    packets = lambda p: len([x for x in subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time", "-of", "csv=p=0", p],
+                                                       capture_output=True, text=True).stdout.split() if x])
+    n_a, n_b = packets(a.path), packets(b.path)
+    before = sum(1 for t in pts if t < got[1][1] - 0.001)
+    check(before == n_a and len(pts) == n_a + n_b, f"in the result exactly the {n_a} pictures of part 1 lie before the start of chapter 2 ({got[1][1]}) and the {n_b} of part 2 after it: {before} before, {len(pts)} in all")
     os.remove(os.path.join(tmp, "chapterwin", "film.mkv"))
-    # not one segment per file (the same file twice): the names cannot be matched to the files
+    # the same file twice in the list (A, B, A): all three are joined and have a chapter each (as VB6 joined every item)
     win.segments[:] = [a, b, dataclasses.replace(a, start=a.start + 5)]
     chapters.write(path, ["One", "Two", "Three"], win.segments)
     win.mnuSaveMP4_Click()
-    check(ffprobe_chapters(os.path.join(tmp, "chapterwin", "film.mkv")) == [] and "Not taken into account in copy mode: the cut markers, the chapters." in win.messages[-1],
-          f"copy mode, 3 segments of 2 files: no chapters, said in the message: {win.messages[-1]!r}")
+    got = ffprobe_chapters(os.path.join(tmp, "chapterwin", "film.mkv"))
+    n_frames = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets", "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0",
+                               os.path.join(tmp, "chapterwin", "film.mkv")], capture_output=True, text=True).stdout.split()[0].rstrip(",")
+    check([t for t, _, _ in got] == ["One", "Two", "Three"] and abs(got[1][1] - len_a) < 0.01 and abs(got[2][1] - (len_a + len_b)) < 0.01 and abs(got[2][2] - (2 * len_a + len_b)) < 0.01
+          and int(n_frames) == 2 * n_a + n_b and "Copy mode: 3 files joined in full length." in win.messages[-1]
+          and "chapters" not in win.messages[-1].split("Not taken into account")[1], f"copy mode, A B A: three parts ({n_frames} pictures) with three chapters: {got}")
     os.remove(os.path.join(tmp, "chapterwin", "film.mkv"))
     # a file type that cannot hold chapters (avi): said, not silently left out
     win.segments[:] = [whole_a, whole_b]
@@ -5305,6 +5323,38 @@ def test_chapters(tmp, videos):
     print("Chapters: OK (file, signature, editor, validity, saving, copy mode, batch file, import, sessions)")
 
 
+def test_play_now(tmp, videos):
+    """After saving the message asks "Play now?"; Yes opens the result with the player of the system, No does nothing."""
+    import mediamaker
+    os.makedirs(os.path.join(tmp, "playnow"), exist_ok=True)
+    win = make_window(os.path.join(tmp, "playnow"))
+    external, asked = [], []
+    win._external_fn = lambda cmd: (external.append(cmd), (0, ""))[1]
+    real = mediamaker.frmMain.finish_message                       # (the test windows have a simple one that only notes the text)
+    win.ask = lambda text: (asked.append(text), False)[1]
+    real(win, "File was saved in 0:00:03.", "/out/film.mp4")
+    check(asked == ["File was saved in 0:00:03.\n\nPlay now?"] and external == [], "the message ends with the question; No: nothing is started")
+    win.ask = lambda text: (asked.append(text), True)[1]
+    real(win, "File was saved in 0:00:03.\n\nCopy mode: copied as it is.", "/out/film.mp4")
+    check(asked[-1] == "File was saved in 0:00:03.\n\nCopy mode: copied as it is.\n\nPlay now?" and external == [["xdg-open", "/out/film.mp4"]], f"Yes: the system opens the file: {external}")
+    win._external_fn = lambda cmd: (external.append(cmd), (1, "no application"))[1]
+    real(win, "File was saved in 0:00:03.", "/out/film.mp4")
+    check("could not be played (xdg-open): no application" in win.messages[-1] and "/out/film.mp4" in win.messages[-1], f"an error is told: {win.messages[-1]!r}")
+    # render_done gives the whole message and the file to it
+    calls = []
+    win.finish_message = lambda text, output: calls.append((text, output))
+    win._render = {"job": None, "output": os.path.join(tmp, "playnow", "x.mp4"), "dir": tempfile.mkdtemp(prefix="mediamaker_"), "expected": None, "total": 1.0, "plan": None, "chapters": False}
+    open(win._render["output"], "wb").write(b"x")
+    from runner import RunResult
+    win.render_done(RunResult(0, False, 3.0, ""))
+    check(len(calls) == 1 and calls[0][0].startswith("File was saved in 00:00:03") and calls[0][1] == os.path.join(tmp, "playnow", "x.mp4"), f"after a successful save: {calls}")
+    calls.clear()
+    win._render = {"job": None, "output": os.path.join(tmp, "playnow", "y.mp4"), "dir": tempfile.mkdtemp(prefix="mediamaker_"), "expected": None, "total": 1.0, "plan": None, "chapters": False}
+    win.render_done(RunResult(1, False, 3.0, "boom"))
+    check(calls == [] and "ffmpeg reported an error" in win.messages[-1], "an error or a cancel does not ask to play")
+    print("Play now: OK (question after saving, Yes starts the system player, No does not, error told)")
+
+
 def test_wait_dialog(tmp, videos):
     """The wait window has room for several lines (before, the second line was cut off) and wraps long lines."""
     import dialogs
@@ -5385,6 +5435,7 @@ def main():
     test_open_filter(tmp, sys.argv[1])
     test_copy_mode(tmp, sys.argv[1])
     test_chapters(tmp, sys.argv[1])
+    test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])
     test_timeline(tmp, sys.argv[1])
     test_segments(tmp, sys.argv[1])

@@ -73,21 +73,22 @@ def unescape(text: str) -> str:
     return "".join(out)
 
 
-def milliseconds(segments: list) -> list:
-    """[(start, end)] in milliseconds; every chapter begins where the one before it ended."""
+def milliseconds(segments: list, durations: Optional[list] = None) -> list:
+    """[(start, end)] in milliseconds; every chapter begins where the one before it ended. The lengths are those of the segments, or the given `durations`
+    (seconds, one per segment; copy mode: the durations of the whole files)."""
     marks, total = [], Fraction(0)
-    for s in segments:
+    for i, s in enumerate(segments):
         begin = total
-        total += Fraction(s.frames) / s.fps
+        total += Fraction(durations[i]).limit_denominator(100000) if durations is not None else Fraction(s.frames) / s.fps
         marks.append((round(begin * 1000), round(total * 1000)))
     return marks
 
 
-def build_text(titles: list, segments: list) -> str:
+def build_text(titles: list, segments: list, durations: Optional[list] = None) -> str:
     """The text of the chapters file for these segments (one chapter per segment, see fit_titles)."""
     names = fit_titles(titles, segments)
     lines = [HEADER, MARK + signature(segments)]
-    for (start, end), name in zip(milliseconds(segments), names):
+    for (start, end), name in zip(milliseconds(segments, durations), names):
         lines += ["[CHAPTER]", "TIMEBASE=1/1000", f"START={start}", f"END={end}", f"title={escape(name)}"]
     return "\n".join(lines) + "\n"
 
