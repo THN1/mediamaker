@@ -5516,7 +5516,7 @@ def test_copy_mode_remembered(tmp, videos):
     # --- the next start: on again, with the note
     again = start(work)
     check(again.mnuCopyMode.isChecked() and again.messages == [again.COPY_NOTICE.format(what="the last run")] and
-          again.messages[0].startswith("Attention: copy mode is switched ON now (the last run was made in copy mode), hence disabling re-encoding. A single video can be cut at a keyframe or several "
+          again.messages[0].startswith("Attention: copy mode is switched ON now (the last run was made in copy mode), hence activating output file creation without re-encoding. A single video can be cut at a keyframe or several "
                                        "are joined in full length, with or without chapters;"), f"the next start: copy mode is on and the note says so: {again.messages!r}")
     # --- switching off: confirmed, remembered
     again.messages.clear()

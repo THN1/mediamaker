@@ -986,9 +986,9 @@ class frmMain(frmMainBase):
         self.render_finished()
         self.msg(f"ffmpeg could not be run: {text}")
 
-    COPY_NOTICE = ("Attention: copy mode is switched ON now ({what} was made in copy mode), hence disabling re-encoding. A single video can be cut at a keyframe or "
-                   "several are joined in full length, with or without chapters; cropping, logo filters, rescaling and the output profile are ignored. To enable "
-                   "re-encoding, switch copy mode off in the Edit menu.")
+    COPY_NOTICE = ("Attention: copy mode is switched ON now ({what} was made in copy mode), hence activating output file creation without re-encoding. "
+                   "A single video can be cut at a keyframe or several are joined in full length, with or without chapters; cropping, logo filters, rescaling "
+                   "and the output profile are ignored. To enable re-encoding, switch copy mode off in the Edit menu.")
 
     def apply_copy_mode(self, on: bool) -> bool:
         """Puts copy mode into the state it had (when a job or a session is taken back). True if it was switched ON just now (then the caller tells the user)."""
