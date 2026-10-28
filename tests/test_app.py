@@ -4768,6 +4768,36 @@ def test_import_job(tmp, videos):
     print("Import of a job: OK (reading the script, choosing, taking over, local options, session, damaged jobs)")
 
 
+def test_open_filter(tmp, videos):
+    """The file type that was chosen in the Open dialog is the first suggestion next time (as long as the program runs, it is not saved)."""
+    from PySide6 import QtWidgets as W
+    import mediamaker
+    os.makedirs(os.path.join(tmp, "openfilter"), exist_ok=True)
+    win = make_window(os.path.join(tmp, "openfilter"))
+    W.QFileDialog.open_calls.clear()
+    W.QFileDialog.result, W.QFileDialog.result_filter = "", ""
+    check(win.choose_file() == "" and W.QFileDialog.open_calls[-1][3] == "", "first time: no file type chosen yet (the dialog takes the first one, ts)")
+    mp4 = "MP4 video file (*.mp4)"
+    W.QFileDialog.result, W.QFileDialog.result_filter = os.path.join(videos, "a.mp4"), mp4
+    check(win.choose_file() == os.path.join(videos, "a.mp4") and W.QFileDialog.open_calls[-1][3] == "", "the dialog is opened as before, the user changes the type to mp4 and opens a file")
+    W.QFileDialog.result, W.QFileDialog.result_filter = "", ""
+    win.choose_file()
+    check(W.QFileDialog.open_calls[-1][3] == mp4 and W.QFileDialog.open_calls[-1][2] == mediamaker.OPEN_FILTERS, f"next time mp4 is the first suggestion (and all types are listed): {W.QFileDialog.open_calls[-1][3]!r}")
+    win.choose_file()
+    check(W.QFileDialog.open_calls[-1][3] == mp4, "cancelling does not forget it")
+    avi = "A/V Interleave file (*.avi)"
+    W.QFileDialog.result, W.QFileDialog.result_filter = os.path.join(videos, "b.avi"), avi
+    win.choose_file()
+    W.QFileDialog.result, W.QFileDialog.result_filter = "", ""
+    win.choose_file()
+    check(W.QFileDialog.open_calls[-1][3] == avi, "another type: the last one counts")
+    again = make_window(os.path.join(tmp, "openfilter"))
+    again.choose_file()
+    check(W.QFileDialog.open_calls[-1][3] == "" and avi not in open(again.settings.path, encoding="utf-8").read(), "a new run of the program starts without it (nothing is saved)")
+    W.QFileDialog.result = ""
+    print("Open dialog: OK (the chosen file type is the first suggestion next time, only for this run)")
+
+
 def test_copy_mode(tmp, videos):
     """Copy mode: saving without re-encoding. One video is cut at a keyframe, several videos are joined in full length."""
     import copymode
@@ -4850,7 +4880,21 @@ def test_copy_mode(tmp, videos):
     check(win.mnuCopyMode.isChecked() and len(asked) == 2, "Yes: it is on")
     win.mnuCopyMode.setChecked(False)
     win.mnuCopyMode_Click()
-    check(not win.mnuCopyMode.isChecked() and len(asked) == 2, "switching off: no question")
+    n_messages = len(win.messages)
+    win.mnuCopyMode.setChecked(False)
+    win.mnuCopyMode_Click()
+    check(not win.mnuCopyMode.isChecked() and len(asked) == 2 and win.messages[-1] == "Copy mode is switched off." and len(win.messages) == n_messages + 1,
+          "switching off: no question, but a message that confirms it")
+    win.mnuCopyMode.setChecked(True)
+    n_messages = len(win.messages)
+    win.ask = lambda text: (asked.append(text), False)[1]
+    win.mnuCopyMode.setChecked(True)
+    win.mnuCopyMode_Click()
+    check(not win.mnuCopyMode.isChecked() and len(win.messages) == n_messages, "No at the warning: it stays off, no further message")
+    win.ask = lambda text: (asked.append(text), True)[1]
+    win.mnuCopyMode.setChecked(True)
+    win.mnuCopyMode_Click()
+    win.mnuCopyMode.setChecked(False)
     check("copy" not in " ".join(open(win.settings.path, encoding="utf-8").read().lower().split("options=")[1].split("\n")[0:1]) and "copy" not in win.options, "not saved in the options")
     # --- saving for real
     win.mnuCopyMode.setChecked(True)
@@ -4984,6 +5028,7 @@ def main():
     test_renamed_option(tmp, sys.argv[1])
     test_crop_segment(tmp, sys.argv[1])
     test_import_job(tmp, sys.argv[1])
+    test_open_filter(tmp, sys.argv[1])
     test_copy_mode(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])
     test_timeline(tmp, sys.argv[1])

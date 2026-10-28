@@ -655,7 +655,10 @@ class QMessageBox(Base):
 
 class QFileDialog(Base):
     result = ""
+    result_filter = ""                   # the file type that the user chose in the dialog (adjustable in the test)
+    open_calls: list = []                # (caption, directory, filters, selected filter) of every call
 
     @staticmethod
-    def getOpenFileName(parent, caption, directory, filters):
-        return QFileDialog.result, ""
+    def getOpenFileName(parent, caption, directory, filters, selectedFilter=""):
+        QFileDialog.open_calls.append((caption, directory, filters, selectedFilter))
+        return QFileDialog.result, QFileDialog.result_filter if QFileDialog.result else ""

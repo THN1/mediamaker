@@ -3,6 +3,9 @@
 ## 0.5 (in progress)
 
 - Version number set to 0.5-dev.
+- **Open dialog**: the file type that was chosen there (for example mp4 or avi instead of ts) is the first suggestion the next time, as long as the program runs;
+  it is not saved, a new run starts with ts again. Cancelling does not forget it.
+- **Copy mode**: switching it OFF is confirmed with a message ("Copy mode is switched off."); switching it on asks first, as before.
 - **Copy mode** (Edit => Copy mode, Ctrl+D; module `copymode.py`): saving WITHOUT re-encoding (`-c copy`, no `filter_complex`). The switch exists only in the menu, it is
   not saved in the options nor in the batch script (as in VB6, which could only join files; the menu entry could not even be checked before). Switching it on
   warns first (Continue anyway?). The decisive number is that of different SOURCE FILES in the list:

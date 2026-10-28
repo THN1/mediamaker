@@ -132,6 +132,7 @@ class frmMain(frmMainBase):
         self._external: list = []                      # running helper programs (keeps the workers alive)
         self._last_search: dict = {}                   # what the last search for a commercial did (debug package)
         self._modal_child = None                       # the crop window while it is open
+        self._open_filter = ""                         # the file type last chosen in the Open dialog (only for this run of the program)
         self.ref_origin: dict = {}                     # mask -> where the reference logo came from (frame, picture, preview), for the debug package
         self._verify_first: set = set()                # files opened just now: the first picture of the thumbnails confirms the first frame
         self.verify_first_frame = True                 # False: take the first frame from the stream data as it is (tests)
@@ -258,7 +259,9 @@ class frmMain(frmMainBase):
 
     def choose_file(self) -> str:
         start = os.path.dirname(self.settings.last) if self.settings.last else ""
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open video", start, OPEN_FILTERS)
+        path, chosen = QtWidgets.QFileDialog.getOpenFileName(self, "Open video", start, OPEN_FILTERS, self._open_filter)
+        if path and chosen:
+            self._open_filter = chosen                                # the next time this file type is the first suggestion (not saved)
         return path
 
     # ------------------------------------------------------------------ Helpers
@@ -955,6 +958,8 @@ class frmMain(frmMainBase):
                 "subtitles are chosen by the options audio, multilanguage and subtitle. The 'Copy mode' flag is not saved in the options nor in the batch "
                 "script(s).\n\nContinue anyway?"):
             self.mnuCopyMode.setChecked(False)
+        elif not self.mnuCopyMode.isChecked():
+            self.inform("Copy mode is switched off.")
 
     def mnuCancel_Click(self):
         """Cancel save: ends ffmpeg (the progress is polled regularly, so this takes a moment)."""
