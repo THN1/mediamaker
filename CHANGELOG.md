@@ -11,6 +11,9 @@
   "input files must not have chapters" is hidden: the command now takes the chapters explicitly from this file (`-map_chapters`), so a source with chapters of its own
   does no harm. VB6 wrote the times in microseconds under `TIMEBASE=1/1000` (a factor of 1000 too long); they are milliseconds now, rounded from the running sum so that
   nothing drifts. `&` is no longer replaced by `+` (that was for the batch file of Windows).
+  * **Layout**: in the VB6 form the check box sits on the upper edge of the frame; here the frame (and its caption "Frame1") showed through it. The frame, with everything
+    in it, and the Close button now move down by 26 pixels, the frame has the caption "Chapter names", and the check box stands alone above it. (Done in the code of the
+    dialog, the generated user interface stays as it is.)
   * **Validity**: the times come from the segments, so the file is only valid while the segments are the same. It carries a signature of them in a comment line (file,
     cut points counted from the first video frame, frame rate, order): deleting, moving, loading again or other cut points make it useless, cropping, rescaling, the
     logo filter and the target output profile do not, nor does a correction of the first frame. Whenever the list is saved or loaded the file is checked; if it does not

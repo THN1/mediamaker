@@ -4956,6 +4956,7 @@ def test_chapters(tmp, videos):
     """Chapters: the file for ffmpeg (one chapter per segment), its validity, the editor, saving with chapters, the batch file, import, sessions."""
     import batch
     import chapters
+    import chapters_dialog
     import sessions
     import zipfile
     from fractions import Fraction as F
@@ -5002,6 +5003,10 @@ def test_chapters(tmp, videos):
     dlg = dialogs_seen[-1]
     check(not dlg.chkActivate.isChecked() and dlg.titles() == [] and dlg.Frame1.called("setEnabled")[-1] == (False,), "first time: not activated, nothing in the list, the frame is disabled")
     check(dlg.Label2.called("hide"), "the old warning (sources must not have chapters) is hidden: it is not true any more")
+    check_geometry = lambda w: (w.geometry().x(), w.geometry().y(), w.geometry().width(), w.geometry().height())
+    box, frame, close = check_geometry(dlg.chkActivate), check_geometry(dlg.Frame1), check_geometry(dlg.cmdOK)
+    check(frame[1] >= box[1] + box[3] and frame[1] == 8 + chapters_dialog.SHIFT and close[1] == 280 + chapters_dialog.SHIFT and dlg.called("resize")[-1] == (369, 313 + chapters_dialog.SHIFT)
+          and dlg.Frame1.title() == "Chapter names", f"the check box stands above the frame, no overlap; the frame has a caption: box {box}, frame {frame}, button {close}")
     dlg.chkActivate.setChecked(True)
     dlg.chkActivate_Click()
     check(dlg.titles() == ["Scene 1", "Scene 2"] and dlg.Frame1.called("setEnabled")[-1] == (True,) and chapters.read(path) == chapters.build_text(["Scene 1", "Scene 2"], [a, b]) and win.chapters_valid(),

@@ -8,6 +8,7 @@ import chapters
 from ui_frmChapters import frmChaptersBase
 
 F2 = 113
+SHIFT = 26                 # pixels: the frame and the button move down, so that the check box is above the frame and not on its edge
 
 
 class frmChapters(frmChaptersBase):
@@ -16,8 +17,18 @@ class frmChapters(frmChaptersBase):
         super().__init__(parent)
         self.main = parent
         self.Label2.hide()                    # "input files MUST NOT HAVE CHAPTERS": no longer true, the command takes the chapters from this file
+        self.arrange()
         self.lvwChapters.itemDoubleClicked.connect(lambda *args: self.edit_current())
         self.Form_Load()
+
+    def arrange(self) -> None:
+        """In the VB6 form the check box sits ON the upper edge of the frame (over its caption "Frame1"); here the frame would show through it. So the frame
+        (with everything in it) and the Close button move down, the frame gets a caption, and the check box stands alone above it."""
+        self.Frame1.setTitle("Chapter names")
+        for widget in (self.Frame1, self.cmdOK):
+            g = widget.geometry()
+            widget.setGeometry(g.x(), g.y() + SHIFT, g.width(), g.height())
+        self.resize(self.width(), self.height() + SHIFT)
 
     # ------------------------------------------------------------------ the list
     def titles(self) -> list:
