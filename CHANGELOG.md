@@ -1,8 +1,11 @@
 # Changes
 
-## 0.5 (in progress)
+## 0.5
 
-- Version number set to 0.5-dev.
+Fifth frozen state: Copy mode (cut at a keyframe, or join in full length, without re-encoding), Chapters (editor, validity, batch file, import, sessions),
+cropping of a single segment, import of a job from the batch file, Dedup scene, "Play now?" after saving, and the many smaller things below.
+Still to do: DVD mode, multilanguage, and more tests with several audio and subtitle tracks.
+
 - **Chapters** (Edit => Chapters, Ctrl+H; VB6 `frmChapters` with `savetxt()`; modules `chapters.py`, `chapters_dialog.py`): the chapter editor shows one chapter per
   segment. The check box "Add chapter(s) to target file" switches them on (the first style is made at once) and off (the file is deleted); the style
   (Enumerated, Named = "Scene from <file>", Named (short), Previous = the names of the existing file, From Batch = the names in the last job of the batch file that has
