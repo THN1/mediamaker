@@ -24,6 +24,8 @@
 - **Chapter editor: editing a name**: a single click on a row opens the editor IN the row (VB6: label edit; Enter or a click elsewhere confirms, Escape cancels; an empty
   name is put back; the file is written when a name was confirmed), a double click or F2 opens the separate window as before. The editor in the row starts after the time of
   a double click (`QApplication.doubleClickInterval()`), so that a double click can cancel it and open the window instead. Qt's own triggers are switched off for this.
+  So that it can be seen that the editor is there, the blue bar of the marked row is taken away while it is open, the cursor stands at the end of the text (no text
+  marked) and flashes there, and when the editor is closed the row is marked again.
 - **Chapter editor layout**: the check box no longer sits on the edge of the frame (the frame showed through it). The frame, with everything in it, and the Close button
   move down, the frame has the caption "Chapter names" (it was "Frame1" in the VB6 form), the check box stands alone above it. Done when the window is built, the
   generated user interface is unchanged.

@@ -27,11 +27,13 @@ class frmChapters(frmChaptersBase):
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.inline_edit)
         self._clicked = None                  # the row that was clicked (its editor starts when the timer ends)
+        self._editing = None                  # the row whose editor is open
         self._names: list = []                # the names as they are (to put one back when an empty one is typed)
         self._loading = False                 # True while the program changes the list itself (no reaction to itemChanged)
         self.lvwChapters.itemClicked.connect(self.item_clicked)
         self.lvwChapters.itemDoubleClicked.connect(self.item_double_clicked)
         self.lvwChapters.itemChanged.connect(self.item_changed)
+        self.lvwChapters.itemDelegate().closeEditor.connect(self.editor_closed)
         self.Form_Load()
 
     def arrange(self) -> None:
@@ -50,6 +52,7 @@ class frmChapters(frmChaptersBase):
     def show_titles(self, titles: list) -> None:
         self._timer.stop()
         self._clicked = None
+        self._editing = None
         self._loading = True
         try:
             self.lvwChapters.set_rows([[t] for t in titles])
@@ -72,8 +75,27 @@ class frmChapters(frmChaptersBase):
         self.edit_current()
 
     def inline_edit(self) -> None:
-        if self._clicked is not None:
-            self.lvwChapters.editItem(self._clicked, 0)
+        """Opens the editor in the row. The blue bar of the marked row is taken away (it would lie behind the editor and hide that it is there), and the
+        cursor is placed at the end of the text, where it flashes: without it the editor shows the whole text marked."""
+        if self._clicked is None:
+            return
+        self._editing = self._clicked
+        self.lvwChapters.clearSelection()
+        self.lvwChapters.editItem(self._clicked, 0)
+        QtCore.QTimer.singleShot(0, self.place_cursor)               # (after Qt has made the editor and marked its text)
+
+    def place_cursor(self) -> None:
+        editors = self.lvwChapters.findChildren(QtWidgets.QLineEdit)
+        if editors:
+            editors[0].deselect()
+            editors[0].end(False)                                    # the cursor at the end of the text, no text marked
+            editors[0].setFocus()
+
+    def editor_closed(self, editor=None, hint=None) -> None:
+        """The editor is closed (confirmed or cancelled): the row is marked again."""
+        item, self._editing = self._editing, None
+        if item is not None and self.lvwChapters.indexOfTopLevelItem(item) >= 0:
+            self.lvwChapters.setCurrentItem(item)
 
     def item_changed(self, item, column=0) -> None:
         """The name was typed in the row and confirmed (VB6: lvwChapters_AfterLabelEdit). An empty name is put back as it was."""

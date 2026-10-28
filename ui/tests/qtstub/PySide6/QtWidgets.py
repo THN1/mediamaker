@@ -199,7 +199,7 @@ class QGroupBox(QWidget):
 
 
 class QLineEdit(QWidget):
-    methods = {"setText", "text", "setMaxLength", "setReadOnly"}
+    methods = {"setText", "text", "setMaxLength", "setReadOnly", "deselect", "end", "selectAll"}
     signals = {"textChanged", "editingFinished"}
 
     def _ret_text(self):
@@ -366,6 +366,10 @@ class QHeaderView(Base):
     methods = {"setStretchLastSection", "setMinimumSectionSize", "setSectionResizeMode"}
 
 
+class _ItemDelegate(QObject):
+    signals = {"closeEditor"}
+
+
 class QTreeWidgetItem(Base):
     def __init__(self, texts=None):
         super().__init__()
@@ -398,7 +402,7 @@ class QTreeWidgetItem(Base):
 
 
 class QTreeWidget(QWidget):
-    methods = {"setEditTriggers", "editItem", "setHeaderLabels", "setColumnWidth", "setHeaderHidden", "setRootIsDecorated", "setUniformRowHeights",
+    methods = {"itemDelegate", "clearSelection", "setEditTriggers", "editItem", "setHeaderLabels", "setColumnWidth", "setHeaderHidden", "setRootIsDecorated", "setUniformRowHeights",
                "viewport", "scrollToItem"}
 
     def header(self):
@@ -421,6 +425,11 @@ class QTreeWidget(QWidget):
 
     def indexOfTopLevelItem(self, item):
         return self.__dict__.get("_items", []).index(item)
+
+    def _ret_itemDelegate(self):
+        if not hasattr(self, "delegate_"):
+            self.delegate_ = _ItemDelegate()
+        return self.delegate_
 
     def currentItem(self):
         return self.__dict__.get("_current")

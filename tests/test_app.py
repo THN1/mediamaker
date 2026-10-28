@@ -5035,8 +5035,18 @@ def test_chapters(tmp, videos):
     n_asked = len(asked_text)
     dlg.item_clicked(item0, 0)
     check(dlg._timer.starts_[-1] == 400 and len(dlg.lvwChapters.called("editItem")) == edits, "a click: the editor waits for the time of a double click")
+    marked = len(dlg.lvwChapters.called("clearSelection"))
     dlg.inline_edit()                                               # (the timer ends)
     check(dlg.lvwChapters.called("editItem")[-1] == (item0, 0) and len(asked_text) == n_asked, "then the editor opens in the row, no separate window")
+    check(len(dlg.lvwChapters.called("clearSelection")) == marked + 1 and dlg._editing is item0, "the blue bar of the marked row is taken away, so that the editor can be seen")
+    from PySide6 import QtCore as QC
+    check(QC.QTimer.pending and QC.QTimer.pending[-1][1] == dlg.place_cursor, "the cursor is placed when Qt has made the editor")
+    line = W.QLineEdit(dlg.lvwChapters)                             # (the editor that Qt made)
+    dlg.place_cursor()
+    check(line.called("deselect") and line.called("end")[-1] == (False,) and line.called("setFocus"), "no text marked, the cursor at the end of the text (it flashes there)")
+    dlg.editor_closed()
+    check(dlg.lvwChapters.currentItem() is item0 and dlg._editing is None, "when the editor is closed the row is marked again")
+    dlg.editor_closed()                                             # (a second call does no harm)
     writes = []
     real_write = chapters.write
     chapters.write = lambda *args: (writes.append(args[1]), real_write(*args))[1]
