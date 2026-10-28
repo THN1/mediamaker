@@ -42,6 +42,7 @@ class Qt:
     TransformationMode = EnumGroup("Qt.TransformationMode", {"SmoothTransformation", "FastTransformation"})
     AlignmentFlag = EnumGroup("Qt.AlignmentFlag", {"AlignLeft", "AlignRight", "AlignHCenter", "AlignTop", "AlignVCenter", "AlignCenter"})
     Orientation = EnumGroup("Qt.Orientation", {"Horizontal", "Vertical"})
+    ItemFlag = EnumGroup("Qt.ItemFlag", {"ItemIsEditable", "ItemIsEnabled", "ItemIsSelectable"})
     WindowType = EnumGroup("Qt.WindowType", {"WindowMaximizeButtonHint", "WindowMinimizeButtonHint", "FramelessWindowHint", "Widget"})
     Key = EnumGroup("Qt.Key", {"Key_Shift"})
     KeyboardModifier = EnumGroup("Qt.KeyboardModifier", {"ShiftModifier", "ControlModifier", "AltModifier"})

@@ -21,6 +21,9 @@
     program was closed, next to the target file (`<target>.chapters.tmp`, removed after the call). Old steps keep them.
   * **Import** asks whether to restore the chapters of the job. **Sessions** contain the file; the window for restoring has a third box "Chapters" (ticked every time); chapters
     that do not fit the restored list are deleted with the warning.
+- **Chapter editor: editing a name**: a single click on a row opens the editor IN the row (VB6: label edit; Enter or a click elsewhere confirms, Escape cancels; an empty
+  name is put back; the file is written when a name was confirmed), a double click or F2 opens the separate window as before. The editor in the row starts after the time of
+  a double click (`QApplication.doubleClickInterval()`), so that a double click can cancel it and open the window instead. Qt's own triggers are switched off for this.
 - **Chapter editor layout**: the check box no longer sits on the edge of the frame (the frame showed through it). The frame, with everything in it, and the Close button
   move down, the frame has the caption "Chapter names" (it was "Frame1" in the VB6 form), the check box stands alone above it. Done when the window is built, the
   generated user interface is unchanged.

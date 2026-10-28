@@ -5027,6 +5027,50 @@ def test_chapters(tmp, videos):
     dlg.edit_current()
     dlg.edit_current()
     check(len(asked_text) == 3 and dlg.titles() == ["Intro", "Scene 2"], "another key does nothing; an empty or cancelled input changes nothing")
+    # --- a single click edits IN the row (after the time of a double click), a double click or F2 opens the separate window
+    check(dlg.lvwChapters.called("setEditTriggers")[-1][0] == W.QAbstractItemView.EditTrigger.NoEditTriggers, "Qt does not start the editor by itself (the dialog decides when)")
+    item0, item1 = dlg.lvwChapters.topLevelItem(0), dlg.lvwChapters.topLevelItem(1)
+    check("ItemIsEditable" in item0.flags().name and "ItemIsEditable" in item1.flags().name, "the rows can be edited")
+    edits = len(dlg.lvwChapters.called("editItem"))
+    n_asked = len(asked_text)
+    dlg.item_clicked(item0, 0)
+    check(dlg._timer.starts_[-1] == 400 and len(dlg.lvwChapters.called("editItem")) == edits, "a click: the editor waits for the time of a double click")
+    dlg.inline_edit()                                               # (the timer ends)
+    check(dlg.lvwChapters.called("editItem")[-1] == (item0, 0) and len(asked_text) == n_asked, "then the editor opens in the row, no separate window")
+    writes = []
+    real_write = chapters.write
+    chapters.write = lambda *args: (writes.append(args[1]), real_write(*args))[1]
+    try:
+        item0.setText(0, "  Typed in the row  ")
+        dlg.item_changed(item0, 0)
+        check(item0.text(0) == "Typed in the row" and dlg.titles() == ["Typed in the row", "Scene 2"] and chapters.parse_titles(chapters.read(path)) == ["Typed in the row", "Scene 2"]
+              and len(writes) == 1, f"typed in the row and confirmed: the name is cleaned up and the file follows: {dlg.titles()}")
+        item0.setText(0, "   ")
+        dlg.item_changed(item0, 0)
+        check(item0.text(0) == "Typed in the row" and len(writes) == 1, "an empty name is put back, nothing is written")
+        item0.setText(0, "Typed in the row")
+        dlg.item_changed(item0, 0)
+        check(len(writes) == 1, "an unchanged name: nothing is written")
+        dlg._loading = True
+        item0.setText(0, "The program changes it")
+        dlg.item_changed(item0, 0)
+        dlg._loading = False
+        item0.setText(0, "Typed in the row")
+        check(len(writes) == 1, "while the program changes the list itself there is no reaction")
+        dlg.item_clicked(item1, 0)
+        edits = len(dlg.lvwChapters.called("editItem"))
+        names = iter(["Via the window"])
+        win.ask_text = lambda title, label, default="": (asked_text.append((title, label, default)), next(names))[1]
+        dlg.lvwChapters.select_row(0)
+        dlg.item_double_clicked(item0, 0)
+        dlg.inline_edit()                                           # (a timer that had been started is stopped, nothing is left to open)
+        check(dlg._timer._active is False and dlg._clicked is None and len(dlg.lvwChapters.called("editItem")) == edits and asked_text[-1] == ("Chapter Editor", "Enter new value:", "Typed in the row")
+              and dlg.titles() == ["Via the window", "Scene 2"] and len(writes) == 2, "a double click: the separate window, the editor in the row is cancelled, one write")
+        item0.setText(0, "Intro")
+        dlg.item_changed(item0, 0)
+    finally:
+        chapters.write = real_write
+    check(dlg.titles() == ["Intro", "Scene 2"], "(back to the names of the following steps)")
     dlg.cboStyle.setCurrentIndex(3)
     dlg.cboStyle_Click()
     check(dlg.titles() == ["Intro", "Scene 2"], "style Previous: the names of the file")

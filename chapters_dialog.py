@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from PySide6 import QtCore, QtWidgets
+
 import chapters
 from ui_frmChapters import frmChaptersBase
 
@@ -18,7 +20,18 @@ class frmChapters(frmChaptersBase):
         self.main = parent
         self.Label2.hide()                    # "input files MUST NOT HAVE CHAPTERS": no longer true, the command takes the chapters from this file
         self.arrange()
-        self.lvwChapters.itemDoubleClicked.connect(lambda *args: self.edit_current())
+        # Editing a name: a single click opens the editor IN the row (VB6: label edit), a double click or F2 opens a separate window. Qt would start the
+        # editor by itself after a click on a marked row; here it is started after the time of a double click, so that a double click can cancel it.
+        self.lvwChapters.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._timer = QtCore.QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self.inline_edit)
+        self._clicked = None                  # the row that was clicked (its editor starts when the timer ends)
+        self._names: list = []                # the names as they are (to put one back when an empty one is typed)
+        self._loading = False                 # True while the program changes the list itself (no reaction to itemChanged)
+        self.lvwChapters.itemClicked.connect(self.item_clicked)
+        self.lvwChapters.itemDoubleClicked.connect(self.item_double_clicked)
+        self.lvwChapters.itemChanged.connect(self.item_changed)
         self.Form_Load()
 
     def arrange(self) -> None:
@@ -35,7 +48,49 @@ class frmChapters(frmChaptersBase):
         return [self.lvwChapters.topLevelItem(i).text(0) for i in range(self.lvwChapters.row_count())]
 
     def show_titles(self, titles: list) -> None:
-        self.lvwChapters.set_rows([[t] for t in titles])
+        self._timer.stop()
+        self._clicked = None
+        self._loading = True
+        try:
+            self.lvwChapters.set_rows([[t] for t in titles])
+            for i in range(self.lvwChapters.row_count()):
+                item = self.lvwChapters.topLevelItem(i)
+                item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)       # (so that the editor can be opened in the row)
+        finally:
+            self._loading = False
+        self._names = list(titles)
+
+    # ------------------------------------------------------------------ editing in the row
+    def item_clicked(self, item, column=0) -> None:
+        self._clicked = item
+        self._timer.start(QtWidgets.QApplication.doubleClickInterval())
+
+    def item_double_clicked(self, item, column=0) -> None:
+        self._timer.stop()                                           # (a double click is not a click: the window opens, not the editor in the row)
+        self._clicked = None
+        self.lvwChapters.setCurrentItem(item)
+        self.edit_current()
+
+    def inline_edit(self) -> None:
+        if self._clicked is not None:
+            self.lvwChapters.editItem(self._clicked, 0)
+
+    def item_changed(self, item, column=0) -> None:
+        """The name was typed in the row and confirmed (VB6: lvwChapters_AfterLabelEdit). An empty name is put back as it was."""
+        if self._loading:
+            return
+        row = self.lvwChapters.indexOfTopLevelItem(item)
+        if not 0 <= row < len(self._names):
+            return
+        new = item.text(0).strip()
+        self._loading = True
+        try:
+            item.setText(0, new or self._names[row])
+        finally:
+            self._loading = False
+        if new and new != self._names[row]:
+            self._names[row] = new
+            self.savetxt()
 
     def savetxt(self) -> None:
         """Writes the chapters file for the segments of the main window."""
@@ -95,9 +150,15 @@ class frmChapters(frmChaptersBase):
         if row < 0:
             return
         item = self.lvwChapters.topLevelItem(row)
+        self._timer.stop()
         new = self.main.ask_text("Chapter Editor", "Enter new value:", item.text(0))
         if new:                                                      # (empty: nothing changes, as in VB6)
-            item.setText(0, new)
+            self._loading = True
+            try:
+                item.setText(0, new)
+            finally:
+                self._loading = False
+            self._names[row] = new
             self.savetxt()
 
     def lvwChapters_KeyUp(self, keycode=0, shift=0):
@@ -105,4 +166,5 @@ class frmChapters(frmChaptersBase):
             self.edit_current()
 
     def cmdOK_Click(self):
+        self._timer.stop()
         self.accept()

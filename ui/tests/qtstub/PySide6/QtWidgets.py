@@ -1,5 +1,5 @@
 from ._model import Base, Enum, EnumGroup
-from .QtCore import QObject
+from .QtCore import QObject, Qt
 from .QtGui import QAction
 
 
@@ -320,6 +320,7 @@ class QTabWidget(QWidget):
 
 class QAbstractItemView(QWidget):
     SelectionMode = EnumGroup("QAbstractItemView.SelectionMode", {"SingleSelection", "ExtendedSelection", "MultiSelection", "NoSelection"})
+    EditTrigger = EnumGroup("QAbstractItemView.EditTrigger", {"NoEditTriggers", "SelectedClicked", "DoubleClicked", "EditKeyPressed", "AnyKeyPressed"})
 
 
 class QListWidget(QAbstractItemView):
@@ -389,9 +390,15 @@ class QTreeWidgetItem(Base):
     def setFont(self, col, font):
         self._fonts[col] = font
 
+    def flags(self):
+        return self.__dict__.get("flags_", Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+
+    def setFlags(self, flags):
+        self.flags_ = flags
+
 
 class QTreeWidget(QWidget):
-    methods = {"setHeaderLabels", "setColumnWidth", "setHeaderHidden", "setRootIsDecorated", "setUniformRowHeights",
+    methods = {"setEditTriggers", "editItem", "setHeaderLabels", "setColumnWidth", "setHeaderHidden", "setRootIsDecorated", "setUniformRowHeights",
                "viewport", "scrollToItem"}
 
     def header(self):
@@ -600,6 +607,10 @@ class QApplication(Base):
     @staticmethod
     def instance():
         return None
+
+    @staticmethod
+    def doubleClickInterval():
+        return 400
 
     @staticmethod
     def font():
