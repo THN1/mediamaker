@@ -3,6 +3,9 @@
 ## 0.6 (in progress)
 
 - Version number set to 0.6-dev.
+- **Copy mode: the reason why a list cannot be saved is told at once**, when Save as MP4/AVI is called, and no longer only after the name of the target file was asked for
+  (just before ffmpeg would start). Same check as before (`copymode.make_plan`: segments of one file with cut markers, files that differ, no segments). File => Batch is still
+  refused first in copy mode ("You cannot save job to batch with 'copy mode' enabled (yet)").
 - **Fix: "counting frames ..." stayed in the title** of the main window. Only a counting that ended WITH a result took the note away; if the counting ended without one (file not
   readable, cancelled, any other error) the file stayed in the list of the running countings for good. Now every counting reports when it ends (`FrameCounter.ended`), and the
   note shows the files whose counting is really still running (two countings of the same file at the same time are told apart); counters that have ended are let go when the

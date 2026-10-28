@@ -4953,16 +4953,28 @@ def test_copy_mode(tmp, videos):
     check("Copy mode: 2 files joined in full length." in win.messages[-1] and "Not taken into account in copy mode: the cut markers." in win.messages[-1], f"message: {win.messages[-1]!r}")
     check(not [d for d in os.listdir(tempfile.gettempdir()) if d.startswith("mediamaker_") and os.path.isdir(os.path.join(tempfile.gettempdir(), d))], "the list of files is removed")
     os.remove(result)
-    # --- refusals: nothing is started
-    runs = []
+    # --- refusals: nothing is started, and the message comes BEFORE the name of the target file is asked for
+    runs, names_asked = [], []
     win._render_fn = lambda *args, **kw: runs.append(args)
+    win.choose_output = lambda kind: (names_asked.append(kind), result)[1]
     win.segments[:] = [a, dataclasses.replace(a, start=a.start + 100, end=a.end + 5)]
     win.mnuSaveMP4_Click()
-    check("2 segments of the same video" in win.messages[-1] and runs == [] and win._render is None and not os.path.exists(result), "two segments of one video: message, nothing started")
+    check("2 segments of the same video" in win.messages[-1] and runs == [] and win._render is None and not os.path.exists(result) and names_asked == [],
+          "two segments of one video: message, nothing started, no question for the file name")
+    win.segments[:] = [dataclasses.replace(whole, end=whole.end - 20), dataclasses.replace(whole), dataclasses.replace(whole)]
+    win.mnuSaveMP4_Click()
+    check("3 segments of the same video, and segment 1 has cut markers" in win.messages[-1] and runs == [] and names_asked == [], "the case of the screenshot: three segments, the first one cut: told at once")
     win.segments[:] = [a, wide]
     wide.path = b.path
     win.mnuSaveMP4_Click()
-    check(win.messages[-1].startswith("Copy mode joins videos with identical characteristics only") and runs == [] and win._render is None, "different videos: message, nothing started")
+    check(win.messages[-1].startswith("Copy mode joins videos with identical characteristics only") and runs == [] and win._render is None and names_asked == [], "different videos: message, nothing started, no question for the file name")
+    win.segments[:] = [whole, dataclasses.replace(whole)]
+    from runner import RunResult
+    win._render_fn = lambda *args, **kw: (open(result, "wb").write(b"x"), RunResult(0, False, 0.1, ""))[1]
+    win.mnuSaveMP4_Click()
+    check(len(names_asked) == 1 and len(win.messages) and win.messages[-1].startswith("File was saved"), f"a list that can be saved: the file name is asked for as usual: {names_asked}")
+    os.remove(result)
+    win._render_fn = lambda *args, **kw: runs.append(args)
     # --- batch: not in copy mode (as in VB6)
     check(win.check_job(win.make_job("/x.mp4")) is True, "copy mode: an invalid profile does not matter")
     win.mnuCopyMode.setChecked(False)

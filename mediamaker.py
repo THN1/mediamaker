@@ -876,6 +876,8 @@ class frmMain(frmMainBase):
         if not self.segments:
             self.msg("There are no segments in the list.")
             return
+        if self.mnuCopyMode.isChecked() and not self.copy_mode_possible():                  # said at once, before the name of the target file is asked for
+            return
         output = self.choose_output(kind)
         if output is None:
             return
@@ -981,6 +983,15 @@ class frmMain(frmMainBase):
     def render_failed(self, text: str) -> None:
         self.render_finished()
         self.msg(f"ffmpeg could not be run: {text}")
+
+    def copy_mode_possible(self) -> bool:
+        """Can the list be saved in copy mode? If not, the reason is told (see copymode.make_plan)."""
+        try:
+            copymode.make_plan(self.segments, self.options)
+        except copymode.CopyModeError as e:
+            self.msg(str(e))
+            return False
+        return True
 
     def mnuCopyMode_Click(self):
         """Edit => Copy mode: saving without re-encoding (see copymode.py). The check mark is switched by Qt before this runs; when it was switched
