@@ -39,6 +39,7 @@ import debugpack                                                      # noqa: E4
 import ffmpeg_cmd                                                     # noqa: E402
 from frames import grab_frame, grab_numbered, grab_scanlines        # noqa: E402
 import dedup                                                          # noqa: E402
+import copymode                                                       # noqa: E402
 import cropping                                                       # noqa: E402
 import timeline as tl                                                # noqa: E402
 import dialogs                                                       # noqa: E402
@@ -320,6 +321,7 @@ class frmMain(frmMainBase):
         self.setWindowTitle(f"MediaMaker {VERSION}")
         self.style_delogo_frame()
         self.add_debug_menu()
+        self.mnuCopyMode.setCheckable(True)                          # a switch that is not saved (the state is only in the menu)
         self.logo_tooltip = vbqt.ShiftToolTip(self.cmdCommand[6], "Open/close DeLogo dialog", "Open/close RemoveLogo dialog")
         self.migrate_settings()
         if self.fresh:
@@ -839,9 +841,7 @@ class frmMain(frmMainBase):
         """Is there anything the job cannot be made of? Shows the reason and returns False."""
         if not job.segments:
             self.msg("There are no segments in the list.")
-        elif self.mnuCopyMode.isChecked():
-            self.msg("Copy mode is not implemented yet; please switch it off.")
-        elif validate_profile(job.profile):
+        elif not self.mnuCopyMode.isChecked() and validate_profile(job.profile):             # (copy mode ignores the profile)
             self.msg("The profile is not valid:\n" + "\n".join(validate_profile(job.profile)))
         elif missing := sorted({s.path for s in job.segments if not os.path.exists(s.path)}):
             self.msg("Source file not found: " + ", ".join(missing))
@@ -864,14 +864,28 @@ class frmMain(frmMainBase):
         if not self.check_job(job):
             return
         work = tempfile.mkdtemp(prefix="mediamaker_")
+        plan = None
         try:
-            write_masks(job.segments, work)                           # removelogoNN.png for the filter
-            command = build_command(job)
+            if self.mnuCopyMode.isChecked():                          # copy mode: no filter, -c copy (see copymode.py)
+                plan = copymode.make_plan(job.segments, job.options)
+                list_path = os.path.join(work, "files.txt") if plan.kind == "concat" else None
+                if list_path:
+                    copymode.write_list(plan, list_path)
+                command = copymode.build_copy_command(plan, job, list_path)
+                expected, total = None, plan.seconds
+            else:
+                write_masks(job.segments, work)                       # removelogoNN.png for the filter
+                command = build_command(job)
+                expected, total = expected_frames(job), total_seconds(job)
+        except copymode.CopyModeError as e:
+            shutil.rmtree(work, ignore_errors=True)
+            self.msg(str(e))
+            return
         except Exception as e:                                        # e.g. NotImplementedError for subtitles
             shutil.rmtree(work, ignore_errors=True)
             self.msg(f"The job cannot be built: {e}")
             return
-        self._render = {"job": job, "output": output, "dir": work, "expected": expected_frames(job), "total": total_seconds(job)}
+        self._render = {"job": job, "output": output, "dir": work, "expected": expected, "total": total, "plan": plan}
         worker = RenderWorker(command, self._render["total"], work, self._render_fn)
         worker.progress.connect(self.render_progress)
         worker.done.connect(self.render_done)
@@ -910,10 +924,16 @@ class frmMain(frmMainBase):
             self.msg(f"ffmpeg reported an error (code {result.returncode}):\n{result.errors[-800:]}")
         else:
             try:
-                ok, actual, check = verify_output(output, info["expected"])
+                ok, actual, check = verify_output(output, info["expected"]) if info["expected"] is not None else (True, 0, "")
             except Exception:
                 ok, check = True, ""
             text = f"File was saved in {format_hms(result.elapsed)}."
+            plan = info.get("plan")
+            if plan is not None:                                      # copy mode
+                text += {"concat": f"\n\nCopy mode: {len(plan.files)} files joined in full length.", "cut": "\n\nCopy mode: cut at a keyframe (the start is the first keyframe "
+                         "that is not before the marker).", "copy": "\n\nCopy mode: copied as it is."}[plan.kind]
+                if plan.ignored:
+                    text += "\nNot taken into account in copy mode: " + ", ".join(plan.ignored) + "."
             if not ok:
                 text += "\n\n" + check
             getattr(QtWidgets.QApplication, "beep", lambda: None)()
@@ -922,6 +942,19 @@ class frmMain(frmMainBase):
     def render_failed(self, text: str) -> None:
         self.render_finished()
         self.msg(f"ffmpeg could not be run: {text}")
+
+    def mnuCopyMode_Click(self):
+        """Edit => Copy mode: saving without re-encoding (see copymode.py). The check mark is switched by Qt before this runs; when it was switched
+        ON the program warns first (as VB6 did) and switches it off again if the answer is No. The flag is neither saved in the options nor in the
+        batch script."""
+        if self.mnuCopyMode.isChecked() and not self.ask(
+                "'Copy mode' saves WITHOUT re-encoding (ffmpeg -c copy):\n\n"
+                "- ONE video with one segment is cut at a keyframe: the cut starts at the first keyframe that is not before marker A, and ends at marker B.\n"
+                "- SEVERAL videos are joined in full length; this only works for files with identical characteristics (size, frame rate, sound, codecs ...).\n\n"
+                "Cut markers (when joining), cropping, logo filters, rescaling and the settings of the output profile are ignored. Sound tracks and "
+                "subtitles are chosen by the options audio, multilanguage and subtitle. The 'Copy mode' flag is not saved in the options nor in the batch "
+                "script(s).\n\nContinue anyway?"):
+            self.mnuCopyMode.setChecked(False)
 
     def mnuCancel_Click(self):
         """Cancel save: ends ffmpeg (the progress is polled regularly, so this takes a moment)."""

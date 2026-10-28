@@ -2019,11 +2019,6 @@ def test_save_video(tmp, videos):
     win.mnuSaveMP4_Click()
     check("already being saved" in win.messages[-1] and len(fake_runs) == runs, "a second save while one is running is refused")
     win._render = None
-    win.mnuCopyMode.setChecked(True)
-    names = iter([os.path.join(out_dir, "copy.mp4")])
-    win.mnuSaveMP4_Click()
-    check("Copy mode is not implemented" in win.messages[-1] and len(fake_runs) == runs, "copy mode: message")
-    win.mnuCopyMode.setChecked(False)
     win.settings.set_profile({**win.settings.profile, "fps": "abc"})
     names = iter([os.path.join(out_dir, "profile.mp4")])
     win.mnuSaveMP4_Click()
@@ -4773,6 +4768,145 @@ def test_import_job(tmp, videos):
     print("Import of a job: OK (reading the script, choosing, taking over, local options, session, damaged jobs)")
 
 
+def test_copy_mode(tmp, videos):
+    """Copy mode: saving without re-encoding. One video is cut at a keyframe, several videos are joined in full length."""
+    import copymode
+    import numpy as np
+    from fractions import Fraction as F
+    from copymode import CopyModeError
+    from cutlist import Job
+    from ffmpeg_cmd import stream_times_of
+    from mediaprobe import first_frame_number, probe
+    win = seek_window(tmp, videos, ("sample2.ts", "sample3.ts"), workdir="copywin", first_fn=first_frame_number)
+    a, b = win.segments
+    a.start, a.end = a.first_frame + 56, a.first_frame + 126
+    b.start, b.end = b.first_frame + 20, b.first_frame + 90
+    options = dict(win.options)
+    # --- the plan
+    whole = dataclasses.replace(a, start=a.first_frame, end=a.total_frames)
+    plan = copymode.make_plan([whole], {"crop": "0"})
+    check(plan.kind == "copy" and plan.files == [a.path] and plan.ignored == [] and abs(plan.seconds - float(F(whole.frames) / whole.fps)) < 1e-9, f"one whole video: copied as it is: {plan}")
+    plan = copymode.make_plan([a], {"crop": "72"})
+    check(plan.kind == "cut" and plan.segment is a and plan.ignored == ["cropping"] and abs(plan.seconds - 70 / 25) < 1e-9, f"one video, one segment: cut; the global cropping is not taken into account: {plan}")
+    a.mask = "0.1 0.2 0.3 0.4"
+    check(copymode.make_plan([a], {"crop": "0"}).ignored == ["the logo filter"], "the logo filter is not taken into account")
+    a.mask = ""
+    try:
+        copymode.make_plan([a, dataclasses.replace(a, start=a.start + 100, end=a.end + 5)], options)
+        check(False, "two segments of one video are refused")
+    except CopyModeError as e:
+        check("2 segments of the same video" in str(e) and "cut only once" in str(e), f"two segments of one video: {e}")
+    try:
+        copymode.make_plan([], options)
+        check(False, "an empty list is refused")
+    except CopyModeError as e:
+        check(str(e) == "There are no segments in the list.", "empty list")
+    plan = copymode.make_plan([a, b, dataclasses.replace(a, start=a.start + 3)], {"crop": "0"})
+    check(plan.kind == "concat" and plan.files == [a.path, b.path] and plan.segment is None, f"several videos: every file once, in the order of the list: {plan.files}")
+    check(plan.ignored == ["the cut markers"] and abs(plan.seconds - ((a.total_frames - a.first_frame) + (b.total_frames - b.first_frame)) / 25) < 1e-9, f"joined in full length: {plan.seconds} s, ignored: {plan.ignored}")
+    b.crop_top = 5
+    check(copymode.make_plan([a, b], {"crop": "0"}).ignored == ["the cut markers", "cropping"], "also the cropping of a segment is not taken into account")
+    b.crop_top = 0
+    wide = dataclasses.replace(b, width=1280, fps=F(30), sample_rate=44100)
+    try:
+        copymode.make_plan([a, wide], options)
+        check(False, "different videos are refused")
+    except CopyModeError as e:
+        text = str(e)
+        check(text.startswith("Copy mode joins videos with identical characteristics only") and "sample3.ts: size 1280x576 (the first file: 720x576)" in text
+              and "frame rate 30.000" in text and "sample rate 44100" in text, f"different videos: {text}")
+    # --- the list of files for the concat demuxer
+    lst = os.path.join(tmp, "copywin", "files.txt")
+    copymode.write_list(copymode.CopyPlan("concat", ["/a/b.ts", "/c/it's.ts"], None, 1.0), lst)
+    check(open(lst).read() == "file '/a/b.ts'\nfile '/c/it'\\''s.ts'\n", f"list of files, a quote is escaped: {open(lst).read()!r}")
+    # --- stream selection
+    maps = copymode.stream_maps
+    check(maps({}, "a") == ["-map", "0:v:0", "-map", "0:a:0"] and maps({}, "a:1") == ["-map", "0:v:0", "-map", "0:a:1"], "sound track: the chosen one")
+    check(maps({"multilanguage": "True"}, "a:1") == ["-map", "0:v:0", "-map", "0:a"], "multilanguage: all sound tracks")
+    check(maps({"subtitle": "1, 3"}, "a") == ["-map", "0:v:0", "-map", "0:a:0", "-map", "0:s:0", "-map", "0:s:2"] and maps({"subtitle": "0"}, "a") == maps({}, "a"), "subtitles by number (1 is s:0), 0 = none")
+    # --- the command
+    job = Job(output="/out/film.mkv", profile=dict(win.profile), options=dict(options), segments=[a])
+    cmd = copymode.build_copy_command(copymode.make_plan([a], options), job, container_start=F("1.4"))
+    check(cmd == ["ffmpeg", "-y", "-hide_banner", "-copyts", "-seek_timestamp", "1", "-ss", "4.040", "-i", a.path, "-to", "6.840", "-map", "0:v:0", "-map", "0:a:0", "-c", "copy",
+                  "-avoid_negative_ts", "make_zero", "/out/film.mkv"], f"cut: absolute times, no filter: {cmd}")
+    cmd = copymode.build_copy_command(copymode.make_plan([whole], options), dataclasses.replace(job, segments=[whole]))
+    check(cmd == ["ffmpeg", "-y", "-hide_banner", "-i", a.path, "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "/out/film.mkv"], f"whole video: no cut: {cmd}")
+    job2 = Job(output="/out/film.mp4", profile=dict(win.profile), options={**options, "subtitle": "2"}, segments=[a, b])
+    cmd = copymode.build_copy_command(copymode.make_plan([a, b], options), job2, list_path="/tmp/files.txt", chapters_file="/tmp/chapters.txt")
+    check(cmd == ["ffmpeg", "-y", "-hide_banner", "-f", "concat", "-safe", "0", "-i", "/tmp/files.txt", "-i", "/tmp/chapters.txt", "-map_chapters", "1", "-map", "0:v:0", "-map", "0:a:0",
+                  "-map", "0:s:1", "-c", "copy", "-c:s", "mov_text", "/out/film.mp4"], f"concat with subtitles for mp4 and chapters: {cmd}")
+    check(not any(x in " ".join(cmd + copymode.build_copy_command(copymode.make_plan([a], options), job, container_start=F(1))) for x in ("filter_complex", "setsar", "-vf", "libx264")), "no filter, no encoding")
+    # --- the menu: switched on with a warning, not saved
+    check(win.mnuCopyMode.called("setCheckable")[-1] == (True,), "the menu entry can be checked")
+    asked = []
+    win.ask = lambda text: (asked.append(text), False)[1]
+    win.mnuCopyMode.setChecked(True)
+    win.mnuCopyMode_Click()
+    check(len(asked) == 1 and "WITHOUT re-encoding" in asked[0] and "not saved in the options nor in the batch" in asked[0] and asked[0].endswith("Continue anyway?") and not win.mnuCopyMode.isChecked(),
+          "switching on: the warning; No: it stays off")
+    win.ask = lambda text: (asked.append(text), True)[1]
+    win.mnuCopyMode.setChecked(True)
+    win.mnuCopyMode_Click()
+    check(win.mnuCopyMode.isChecked() and len(asked) == 2, "Yes: it is on")
+    win.mnuCopyMode.setChecked(False)
+    win.mnuCopyMode_Click()
+    check(not win.mnuCopyMode.isChecked() and len(asked) == 2, "switching off: no question")
+    check("copy" not in " ".join(open(win.settings.path, encoding="utf-8").read().lower().split("options=")[1].split("\n")[0:1]) and "copy" not in win.options, "not saved in the options")
+    # --- saving for real
+    win.mnuCopyMode.setChecked(True)
+    result = os.path.join(tmp, "copywin", "cut.mkv")
+    win.choose_output = lambda kind: result
+    win.segments[:] = [a]
+    win.settings.set_profile({**win.profile, "fps": "abc"})                    # the profile is ignored in copy mode, also an invalid one
+    win.mnuSaveMP4_Click()
+    info = probe(result)
+    c0, v0 = (float(x) for x in stream_times_of(a.path))
+    def frames_of(path):
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-map", "0:v:0", "-vf", "scale=64:48,format=gray", "-f", "rawvideo", "-"], capture_output=True, stdin=subprocess.DEVNULL).stdout
+        return np.frombuffer(raw, np.uint8).reshape(-1, 48, 64).astype(np.float32)
+    source, got = frames_of(a.path), frames_of(result)
+    index = lambda frame: int(np.argmin([np.abs(source[i] - frame).mean() for i in range(len(source))]))
+    keys = [float(l.split(",")[0]) for l in subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,flags", "-of", "csv=p=0", a.path],
+                                                          capture_output=True, text=True).stdout.split() if "K" in l.split(",")[1]]
+    target = c0 + a.start / 25
+    first_key = min(k for k in keys if k >= target - 0.001)
+    want_first, want_last = round((first_key - v0) * 25), round((c0 + a.end / 25 - v0) * 25)
+    check(index(got[0]) == want_first, f"cut: the first picture is the first keyframe that is not before marker A (source picture {want_first}): {index(got[0])}")
+    check(abs(index(got[-1]) - want_last) <= 2, f"cut: the last picture is at marker B (source picture {want_last}): {index(got[-1])}")
+    check(win.messages[-1].startswith("File was saved in") and "Copy mode: cut at a keyframe" in win.messages[-1] and "Not taken into account in copy mode: cropping." in win.messages[-1]
+          and "differs" not in win.messages[-1], f"message after saving: {win.messages[-1]!r}")
+    check(info.video.width == 720 and subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=sample_aspect_ratio", "-of", "csv=p=0", result],
+                                                       capture_output=True, text=True).stdout.split(",")[0].strip() == "64:45", "the aspect ratio of the source stays (no setsar=1)")
+    os.remove(result)
+    # several videos: joined in full length
+    win.segments[:] = [a, b]
+    win.settings.set_option("crop", "0")
+    result = os.path.join(tmp, "copywin", "joined.mkv")
+    win.choose_output = lambda kind: result
+    win.mnuSaveMP4_Click()
+    whole_frames = (a.total_frames - a.first_frame) + (b.total_frames - b.first_frame)
+    n = probe(result).video.frames
+    check(os.path.exists(result) and abs(n - whole_frames) <= 4, f"joined: {n} frames, both files in full length ({whole_frames})")
+    check("Copy mode: 2 files joined in full length." in win.messages[-1] and "Not taken into account in copy mode: the cut markers." in win.messages[-1], f"message: {win.messages[-1]!r}")
+    check(not [d for d in os.listdir(tempfile.gettempdir()) if d.startswith("mediamaker_") and os.path.isdir(os.path.join(tempfile.gettempdir(), d))], "the list of files is removed")
+    os.remove(result)
+    # --- refusals: nothing is started
+    runs = []
+    win._render_fn = lambda *args, **kw: runs.append(args)
+    win.segments[:] = [a, dataclasses.replace(a, start=a.start + 100, end=a.end + 5)]
+    win.mnuSaveMP4_Click()
+    check("2 segments of the same video" in win.messages[-1] and runs == [] and win._render is None and not os.path.exists(result), "two segments of one video: message, nothing started")
+    win.segments[:] = [a, wide]
+    wide.path = b.path
+    win.mnuSaveMP4_Click()
+    check(win.messages[-1].startswith("Copy mode joins videos with identical characteristics only") and runs == [] and win._render is None, "different videos: message, nothing started")
+    # --- batch: not in copy mode (as in VB6)
+    check(win.check_job(win.make_job("/x.mp4")) is True, "copy mode: an invalid profile does not matter")
+    win.mnuCopyMode.setChecked(False)
+    check(win.check_job(win.make_job("/x.mp4")) is False and "profile is not valid" in win.messages[-1], "without copy mode it does")
+    print("Copy mode: OK (plan, command, stream selection, menu, real cut at a keyframe, joining, refusals)")
+
+
 def test_wait_dialog(tmp, videos):
     """The wait window has room for several lines (before, the second line was cut off) and wraps long lines."""
     import dialogs
@@ -4850,6 +4984,7 @@ def main():
     test_renamed_option(tmp, sys.argv[1])
     test_crop_segment(tmp, sys.argv[1])
     test_import_job(tmp, sys.argv[1])
+    test_copy_mode(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])
     test_timeline(tmp, sys.argv[1])
     test_segments(tmp, sys.argv[1])

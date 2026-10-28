@@ -3,6 +3,20 @@
 ## 0.5 (in progress)
 
 - Version number set to 0.5-dev.
+- **Copy mode** (Edit => Copy mode, Ctrl+D; module `copymode.py`): saving WITHOUT re-encoding (`-c copy`, no `filter_complex`). The switch exists only in the menu, it is
+  not saved in the options nor in the batch script (as in VB6, which could only join files; the menu entry could not even be checked before). Switching it on
+  warns first (Continue anyway?). The decisive number is that of different SOURCE FILES in the list:
+  * **one video, one segment**: cut at a keyframe, without trim and without `setsar=1`, so the aspect ratio of the source stays. ffmpeg starts a copied
+    cut at the first keyframe that is NOT BEFORE the marker, never before it; the end is marker B. A segment that is the whole file is copied as it is.
+    (Measured with a TV recording: `-ss`/`-t` counted from the cut end up to 0.4 s early because of the lead of the sound; the command therefore uses
+    absolute times, `-copyts -seek_timestamp 1 -ss <start> -i <file> -to <end> ... -avoid_negative_ts make_zero`, container start + frame number / frame rate.)
+  * **several videos**: joined in full length with the concat demuxer (`-f concat -safe 0`), every file once in the order of its first appearance; cut markers,
+    cropping, logo filters, rescaling and the output profile are ignored (the message after saving says what was not taken into account). Files with different
+    size, frame rate or sample rate are refused with the list of differences.
+  * several segments of ONE video are refused (that would be cutting AND joining).
+  * the sound track (`audio`, all of them with `multilanguage`) and the subtitles (`subtitle`, numbers 1, 2 ...; for mp4 as `mov_text`) are chosen with `-map`;
+    what is not mapped is deleted; `build_copy_command` accepts a chapters file for the chapters function that is still to come. File => Batch is still refused
+    in copy mode.
 - After an **import** from the batch file or a **restore** of a session the first entry of the list is selected as a whole (all fields, as if it had been
   clicked; before only the number field showed the focus); the crop window is centred in the preview. It is now a PART of the main window, not a window of its own: under Wayland the compositor decides where a
   window goes, so the position could not be set (it came up in the middle of the main window). As in VB6 the rest of the main window cannot be used while it is
