@@ -1,5 +1,9 @@
 # Changes
 
+## 0.6 (in progress)
+
+- Version number set to 0.6-dev.
+
 ## 0.5
 
 Fifth frozen state: Copy mode (cut at a keyframe, or join in full length, without re-encoding), Chapters (editor, validity, batch file, import, sessions),
