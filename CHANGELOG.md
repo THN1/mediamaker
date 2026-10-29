@@ -31,7 +31,7 @@
   The file is only written when that changes something (no entry and "off" are the same), so the INI file of someone who never uses copy mode stays as it is. A new job
   (fresh start) begins without copy mode and writes "off". After restoring a session the state of the program counts, not the entry in the INI file that was put back. The note
   now reads: "Attention: copy mode is switched ON now (... was made in copy mode), hence activating output file creation without re-encoding. A single video can be cut at a keyframe or several are joined in full
-  length, with or without chapters; cropping, logo filters, rescaling and the output profile are ignored. To enable re-encoding, switch copy mode off in the Edit menu." (the wording of
+  length, with or without chapters; cropping, logo filters, rescaling and the output profile are ignored. To enable re-encoding, switch copy mode off in the Edit menu." (after a blank line; the wording of
   the user's own change in his clone, taken over so that the update does not clash with it).
 - **Copy mode in the batch file, in the import and in sessions**:
   * **File => Batch works in copy mode** now (it was refused, as in VB6): the script has the comment `# M=copy` (like J, P, T, C, K), writes the list of files for the concat demuxer

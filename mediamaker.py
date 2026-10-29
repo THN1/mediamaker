@@ -1029,7 +1029,7 @@ class frmMain(frmMainBase):
 
     COPY_NOTICE = ("Attention: copy mode is switched ON now ({what} was made in copy mode), hence activating output file creation without re-encoding. "
                    "A single video can be cut at a keyframe or several are joined in full length, with or without chapters; cropping, logo filters, rescaling "
-                   "and the output profile are ignored. To enable re-encoding, switch copy mode off in the Edit menu.")
+                   "and the output profile are ignored.\n\nTo enable re-encoding, switch copy mode off in the Edit menu.")
 
     def notice_box(self, text: str) -> bool:
         """The warning window with the check box "Show this warning next time" (ticked at first); True if it is still ticked."""
