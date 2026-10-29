@@ -3,6 +3,10 @@
 ## 0.6 (in progress)
 
 - Version number set to 0.6-dev.
+- **The copy mode warning has a check box "Show this warning next time"** (ticked at first, under the text), the same one for all three cases where copy mode comes back on: at the
+  start of the program, when a session is restored and when a job is imported from the batch file. Unticked, the new option `copy_mode_notice` (on|off, group Technical, also in the
+  options dialog) goes to off and the warning is not shown any more in any of the three cases; switch it on again in the options. When a session is restored the warning is in the
+  same window as the message about the restore (with the warning off only that message is shown). The warning itself is a window with an OK button (`dialogs.notice_with_checkbox`).
 - **Copy mode is remembered for the next start**: the state is written to the INI file as its own entry `copy_mode=on|off` in [settings] (not among the options, so not in the options
   dialog) at every change and once more when the program ends, and put back at the next start, with the same note as for an import or a session ("... (the last run was made in copy mode) ...").
   The file is only written when that changes something (no entry and "off" are the same), so the INI file of someone who never uses copy mode stays as it is. A new job

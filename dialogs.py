@@ -352,6 +352,25 @@ def confirm_with_checkbox(parent, text: str, checkbox_text: str) -> tuple:
         box.deleteLater()
 
 
+def notice_with_checkbox(parent, text: str, checkbox_text: str, checked: bool = True) -> bool:
+    """A warning with an OK button and a check box under the text (ticked at first). Returns whether the box is ticked when the window is closed."""
+    box = QtWidgets.QMessageBox(parent)
+    button = QtWidgets.QMessageBox.StandardButton
+    box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+    box.setWindowTitle("MediaMaker")
+    box.setText(text)
+    box.setStandardButtons(button.Ok)
+    box.setDefaultButton(button.Ok)
+    check = QtWidgets.QCheckBox(checkbox_text)
+    check.setChecked(checked)
+    box.setCheckBox(check)
+    try:
+        box.exec()
+        return bool(check.isChecked())
+    finally:
+        box.deleteLater()
+
+
 class OutputFileDialog(QtWidgets.QDialog):
     """Dialog for the target file: the folder in an editable selection list (the folders used recently) with a "Browse..." button, and the file name."""
 

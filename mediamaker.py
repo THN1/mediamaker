@@ -345,7 +345,7 @@ class frmMain(frmMainBase):
             self.save_copy_mode()
         elif self.settings.copy_mode:                               # the program was left in copy mode: it is on again, with the same note as for a job or session
             self.mnuCopyMode.setChecked(True)
-            QtCore.QTimer.singleShot(0, lambda: self.inform(self.COPY_NOTICE.format(what="the last run")))        # (when the window is there)
+            QtCore.QTimer.singleShot(0, lambda: self.copy_notice("the last run"))        # (when the window is there)
         self.setup_columns()
         self.picTimeline.paint_hook = self.timeline_paint
         self.picProgress.paint_hook = self.progress_paint
@@ -990,6 +990,22 @@ class frmMain(frmMainBase):
                    "A single video can be cut at a keyframe or several are joined in full length, with or without chapters; cropping, logo filters, rescaling "
                    "and the output profile are ignored. To enable re-encoding, switch copy mode off in the Edit menu.")
 
+    def notice_box(self, text: str) -> bool:
+        """The warning window with the check box "Show this warning next time" (ticked at first); True if it is still ticked."""
+        return dialogs.notice_with_checkbox(self, text, "Show this warning next time")
+
+    def copy_notice(self, what: str, before: str = "") -> None:
+        """The warning that copy mode has been switched ON again (at the start, after a session or an import), the same for all three. Under the text there is the check
+        box "Show this warning next time"; if it is unticked the option copy_mode_notice is set to off and the warning is not shown any more (in any of the three cases).
+        `before` is text that belongs in the same window (what a restored session was); it is shown alone when the warning is off."""
+        if self.options.get("copy_mode_notice", "on") == "off":
+            if before:
+                self.msg(before)
+            return
+        if not self.notice_box((before + "\n\n" if before else "") + self.COPY_NOTICE.format(what=what)):
+            self.settings.set_option("copy_mode_notice", "off")
+            self.settings.save()
+
     def apply_copy_mode(self, on: bool) -> bool:
         """Puts copy mode into the state it had (when a job or a session is taken back). True if it was switched ON just now (then the caller tells the user)."""
         was = self.mnuCopyMode.isChecked()
@@ -1226,7 +1242,7 @@ class frmMain(frmMainBase):
             self.remove_chapters_file()                             # they belonged to the list that is replaced
         self.reload_session()                                       # reads the files again, brings old lists up to date, shows everything
         if self.apply_copy_mode(job.copy_mode):                      # the job was made in copy mode: it is switched on again, with a note
-            self.inform(self.COPY_NOTICE.format(what="the job"))
+            self.copy_notice("the job")
 
     # ------------------------------------------------------------------ Information (overview of all segments)
     def mnuInfo_Click(self):
@@ -1873,10 +1889,12 @@ class frmMain(frmMainBase):
         self.reload_session()
         self.remember_restore_backup(backup)                         # (a restored INI file brings the value it had in the session)
         text = f"Session {info.stamp} has been restored." + (f" The state before is saved as session {before.stamp}." if before else "")
-        if "list" in parts and self.apply_copy_mode(info.copy_mode):                # copy mode belongs to the job, so it comes back with the list
-            text += "\n\n" + self.COPY_NOTICE.format(what="this session")
+        activated = "list" in parts and self.apply_copy_mode(info.copy_mode)       # copy mode belongs to the job, so it comes back with the list
         self.save_copy_mode()                                        # (a restored INI file has the entry it had in the session: the state of the program counts)
-        self.msg(text)
+        if activated:
+            self.copy_notice("this session", before=text)            # (one window: what was restored, and the warning)
+        else:
+            self.msg(text)
 
     def mnuDeleteSession_Click(self):
         """Deletes sessions (several can be selected)."""

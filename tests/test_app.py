@@ -105,6 +105,8 @@ def make_window(tmp, probe=None, fresh=False, thumb_fn=None, first_fn=None, **kw
     win.msg = win.messages.append
     win.inform = win.messages.append
     win.finish_message = lambda text, output: win.messages.append(text)        # (the real one asks "Play now?": test_play_now)
+    win.notice_keep = True                                                     # the check box "Show this warning next time" of the copy mode warning: stays ticked
+    win.notice_box = lambda text: (win.messages.append(text), win.notice_keep)[1]
     win.verify_first_frame = False                       # most tests give the first frame by hand (first_fn); test_first_frame_check switches it on
     win.references_shown = []
     win.show_reference = lambda text, rgb, ref: (win.messages.append(text), win.references_shown.append((text, rgb, ref)))
@@ -5504,7 +5506,7 @@ def test_copy_mode_remembered(tmp, videos):
     win = start(work)
     ini = win.settings.path
     before = open(ini, "rb").read()
-    check(win.settings.copy_mode is False and win.settings.set_copy_mode(False) is False and open(ini, "rb").read() == before and "copy_mode" not in text_of(ini),
+    check(win.settings.copy_mode is False and win.settings.set_copy_mode(False) is False and open(ini, "rb").read() == before and "\ncopy_mode=" not in text_of(ini),
           "nothing is written as long as copy mode is off and was never on: the INI file of someone who does not use it stays as it is")
     check(not win.mnuCopyMode.isChecked() and win.messages == [], "a start without the entry: off, no note")
     # --- switching on: remembered at once
@@ -5556,6 +5558,106 @@ def test_copy_mode_remembered(tmp, videos):
     win3.mnuRestoreSession_Click()
     check(not win3.mnuCopyMode.isChecked() and Settings(win3.settings.path).copy_mode is False, "the list is restored too: the session was made without copy mode, so it is off, and 'off' is written")
     print("Copy mode remembered: OK (written only on change, next start with the note, switching off, new job, end of program, sessions)")
+
+
+def test_copy_notice(tmp, videos):
+    """The warning that copy mode was switched on again has a check box "Show this warning next time" (ticked at first). Unticked, the option copy_mode_notice goes to off
+    and the warning is not shown any more: at the start, when a session is restored and when a job is imported."""
+    import batch
+    import copymode
+    import dialogs
+    from PySide6 import QtCore as QC, QtWidgets as W
+    from profiles import validate_options
+    from settings import DEFAULT_TOOLTIPS, default_options
+    from mediaprobe import first_frame_number
+    text_of = lambda path: open(path, encoding="utf-8").read()
+    # --- the window
+    W.QMessageBox.on_exec = None
+    W.QMessageBox.shown.clear()
+    check(dialogs.notice_with_checkbox(None, "Attention", "Show this warning next time") is True and W.QMessageBox.shown[-1] == "Attention", "the check box is ticked at first; OK: it is still ticked")
+    W.QMessageBox.on_exec = lambda box: box.called("setCheckBox")[-1][0].setChecked(False)
+    check(dialogs.notice_with_checkbox(None, "Attention", "Show this warning next time") is False, "unticked: False")
+    W.QMessageBox.on_exec = None
+    check(default_options()["copy_mode_notice"] == "on" and "copy_mode_notice" in DEFAULT_TOOLTIPS and validate_options({"copy_mode_notice": "off"}) == []
+          and len(validate_options({"copy_mode_notice": "maybe"})) == 1, "the option: on at first, a help text, only on or off")
+    # --- the real window (not the one of the tests that only notes the text): the box is made with the text of the warning and the right label
+    os.makedirs(os.path.join(tmp, "cnotice"), exist_ok=True)
+    win = make_window(os.path.join(tmp, "cnotice"))
+    check(mediamaker_notice_label(win) == ("Show this warning next time", True), "the real window: the label of the check box, ticked at first")
+    # --- the method: ticked stays on, unticked switches the warning off for good
+    win.notice_keep = True
+    win.copy_notice("the job")
+    check(win.messages == [win.COPY_NOTICE.format(what="the job")] and win.options.get("copy_mode_notice", "on") == "on", "ticked: the warning is shown, the option stays on")
+    win.messages.clear()
+    win.notice_keep = False
+    win.copy_notice("the job")
+    check(win.messages == [win.COPY_NOTICE.format(what="the job")] and win.options["copy_mode_notice"] == "off" and 'copy_mode_notice="off"' in text_of(win.settings.path),
+          "unticked: this time it is shown, and the option is off now, also in the INI file")
+    win.messages.clear()
+    win.copy_notice("the job")
+    win.copy_notice("this session")
+    win.copy_notice("the last run")
+    check(win.messages == [], "the warning is not shown any more")
+    win.copy_notice("this session", before="Session 2026.10.28 has been restored.")
+    check(win.messages == ["Session 2026.10.28 has been restored."], "what belongs to the same window (a restored session) is shown alone")
+    win.settings.set_option("copy_mode_notice", "on")
+    win.notice_keep = True
+    win.messages.clear()
+    win.copy_notice("this session", before="Session 2026.10.28 has been restored.")
+    check(win.messages == ["Session 2026.10.28 has been restored.\n\n" + win.COPY_NOTICE.format(what="this session")], "switched on again (in the options): shown again, in one window with the text before it")
+    # --- the three situations with the warning off
+    win.settings.set_option("copy_mode_notice", "off")
+    win.settings.save()
+    # (1) the start of the program
+    work = os.path.join(tmp, "cnotice")
+    ini = win.settings.path
+    win.settings.set("settings", "copy_mode", "on")
+    win.settings.save()
+    started = make_window(work)
+    QC.QTimer.pending.clear()
+    started.showEvent(None)
+    for ms, fn in list(QC.QTimer.pending):
+        fn()
+    QC.QTimer.pending.clear()
+    check(started.mnuCopyMode.isChecked() and started.messages == [], "start in copy mode with the warning off: copy mode is on, no warning")
+    # (2) a job from the batch file
+    w2 = seek_window(tmp, videos, ("sample2.ts", "sample3.ts"), workdir="cnotice2", first_fn=first_frame_number)
+    w2.settings.set_option("copy_mode_notice", "off")
+    w2.settings.set_option("crop", "0")
+    job = w2.make_job(os.path.join(tmp, "cnotice2", "x.mkv"))
+    plan = copymode.make_plan(job.segments, job.options)
+    open(w2.batch_path(), "w", encoding="utf-8").write(batch.build_script(job, ["ffmpeg", "x"], None, None, None, copymode.list_text(plan), True))
+    w2.choose_job = lambda jobs: jobs[0]
+    w2.ask = lambda text: True
+    w2.mnuCopyMode.setChecked(False)
+    w2.messages.clear()
+    w2.mnuImport_Click()
+    check(w2.mnuCopyMode.isChecked() and not [m for m in w2.messages if "switched ON" in m], "import of a copy mode job with the warning off: copy mode is on, no warning")
+    # (3) a session
+    w2.mnuCopyMode.setChecked(True)
+    on = w2.make_session("with copy mode")
+    w2.mnuCopyMode.setChecked(False)
+    w2.choose_session = lambda title, prompt, infos, multi=False, with_parts=False, with_backup=False, backup_default=True: ([on], ("list", "ini"), False)
+    w2.settings.set_option("copy_mode_notice", "off")
+    w2.settings.save()
+    w2.messages.clear()
+    w2.mnuRestoreSession_Click()
+    check(w2.mnuCopyMode.isChecked() and w2.messages and w2.messages[-1].startswith("Session ") and "has been restored." in w2.messages[-1] and "switched ON" not in w2.messages[-1],
+          f"restoring a session with the warning off: copy mode is on, only the message about the restore: {w2.messages[-1]!r}")
+    print("Copy mode warning: OK (check box, option, start, import, session)")
+
+
+def mediamaker_notice_label(win) -> tuple:
+    """(label, ticked at first) of the check box that the real notice_box gives its window (the test window has its own notice_box that only notes the text)."""
+    from PySide6 import QtWidgets as W
+    import mediamaker
+    seen = []
+    W.QMessageBox.on_exec = lambda box: seen.append(box.called("setCheckBox")[-1][0])
+    try:
+        mediamaker.frmMain.notice_box(win, "text")
+    finally:
+        W.QMessageBox.on_exec = None
+    return seen[-1]._args[0], seen[-1].called("setChecked")[-1][0]
 
 
 def test_counting_note(tmp, videos):
@@ -5724,6 +5826,7 @@ def main():
     test_chapters(tmp, sys.argv[1])
     test_copy_mode_batch(tmp, sys.argv[1])
     test_copy_mode_remembered(tmp, sys.argv[1])
+    test_copy_notice(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])

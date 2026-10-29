@@ -654,7 +654,7 @@ class QApplication(Base):
 
 
 class QMessageBox(Base):
-    StandardButton = EnumGroup("QMessageBox.StandardButton", {"Yes", "No"})
+    StandardButton = EnumGroup("QMessageBox.StandardButton", {"Yes", "No", "Ok"})
     Icon = EnumGroup("QMessageBox.Icon", {"Warning", "Information"})
     methods = {"setIcon", "setWindowTitle", "setText", "setStandardButtons", "setDefaultButton", "setCheckBox", "deleteLater", "exec"}
     shown = []
