@@ -1,8 +1,12 @@
 # Changes
 
-## 0.6 (in progress)
+## 0.6
 
-- Version number set to 0.6-dev.
+Sixth frozen state: one dialog "Save as" for mp4, mkv, avi and ts with the check of what each type can hold, copy mode in the batch file, in the import, in sessions and remembered for the
+next start (with a warning that can be switched off), pictures of the stopped film from ffmpeg (option `paused_preview`), the red line of the timeline behind the pictures, Reuse source A/V
+for the selected segment, Dedup scene on Ctrl+V, English shortcuts in the menus, a faster start with mp4 lists, and the smaller things below.
+Still to do: DVD mode, multilanguage, and more tests with several audio and subtitle tracks.
+
 - **Timeline: the red line is behind the pictures**. `timeline.draw_strip` painted it once more over the thumbnails (and over the grey placeholders); the form has the red control
   `Line1`, which lies behind the timeline like a line of VB6, so it now shows in the gap between the two pictures of the cut and above and below the strip, as it does when the
   timeline is empty.
