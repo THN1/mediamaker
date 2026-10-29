@@ -6,6 +6,13 @@
 - **Timeline: the red line is behind the pictures**. `timeline.draw_strip` painted it once more over the thumbnails (and over the grey placeholders); the form has the red control
   `Line1`, which lies behind the timeline like a line of VB6, so it now shows in the gap between the two pictures of the cut and above and below the strip, as it does when the
   timeline is empty.
+- **Reuse source A/V (Edit)** works with any number of segments in the list (VB6 and the first versions wanted exactly one): the values of the target profile (size, frame rate, bit
+  rates, sample rate) are taken from the segment that is SELECTED in the list. Messages: "There are no segments in the list." and, if none is selected, "Select the segment in the list
+  whose settings are to be taken over."
+- **Shortcuts**: Dedup scene is **Ctrl+V** now (was Ctrl+F8); Ctrl+V became free when "Save as AVI" went (the hidden entry has no shortcut any more, so it is not used twice). The menus
+  are English, but Qt writes the names of the keys in the language of the system ("Strg+S" on a German one): the text of the shortcut is written into the entry by hand ("Save as...<tab>Ctrl+S";
+  Qt adds its own only if the text has no tab; `vbqt.english_shortcuts`), so the menus show "Ctrl". Done when the window is built, the generated user interface is unchanged: for the
+  VB6 form set the shortcut of `mnuDeDup` to Ctrl+V and take it away from `mnuSaveAVI` if you want it there too. A test checks that no shortcut is used twice.
 - **Fix: the program did not start** after the previous change ("RuntimeError: libshiboken: '__init__' method of object's base class (frmMain) not called."). The object for the
   pictures of ffmpeg was made in the constructor of the main window BEFORE the base class was initialised, with the window as its parent, which Qt does not allow. It is made
   right after the base class now. The replacement for Qt in the tests did not check this; it raises the same error now when an object whose base class is not initialised is given as a
@@ -172,7 +179,7 @@ Still to do: copy mode, DVD mode, chapters, and more tests with several audio an
   resizing functions disabled".
 - **Wait window** ("..., please wait..."): it has room for three lines from the start and wraps long lines. Before, the second line ("reading the
   pictures...", "frame 135: border 72 ...") was cut off because the window kept the height of the first text.
-- **Edit => Dedup scene (Ctrl+F8)** (first "Overlap segments"), VB6 `mnuDeDup_Click` with `match()` and `far()` (new module `dedup.py`). The names and texts follow the
+- **Edit => Dedup scene (Ctrl+V; was Ctrl+F8 until 0.6)** (first "Overlap segments"), VB6 `mnuDeDup_Click` with `match()` and `far()` (new module `dedup.py`). The names and texts follow the
   changed VB6 form (`mnuDeDup`, "Dedup scene", "Duplicate scene removal failed: ..."); the generated user interface was made again from it (only the menu
   item changed). The option `overlap` is now `dedup` (like in the VB6 program): old INI files are taken over at the start (the value moves, the old help
   text goes; if both exist, `dedup` wins), the VB6 INI file with `dedup` is read as it is (`tests/sample_MediaMaker_dedup.ini`). If a recording repeats the end of one

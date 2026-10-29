@@ -11,7 +11,13 @@ class QIcon(Base):
 
 
 class QKeySequence(Base):
-    pass
+    SequenceFormat = EnumGroup("QKeySequence.SequenceFormat", {"PortableText", "NativeText"})
+
+    def isEmpty(self):
+        return not self._args or not self._args[0]
+
+    def toString(self, fmt=None):
+        return self._args[0] if self._args else ""
 
 
 class QPainter(Base):
@@ -37,8 +43,16 @@ class QPixmap(Base):
 
 
 class QAction(QObject):
-    methods = {"setShortcut", "setCheckable", "setChecked", "setEnabled", "setVisible", "setText", "isChecked"}
+    methods = {"setShortcut", "setCheckable", "setChecked", "setEnabled", "setVisible", "setText", "isChecked", "shortcut", "text"}
     signals = {"triggered", "toggled"}
+
+    def _ret_shortcut(self):
+        done = self.called("setShortcut")
+        return done[-1][0] if done else QKeySequence()
+
+    def _ret_text(self):
+        done = self.called("setText")
+        return done[-1][0] if done else (self._args[0] if self._args else "")
 
     def _ret_isChecked(self):
         args = self.called("setChecked")

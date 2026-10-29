@@ -346,6 +346,9 @@ class frmMain(frmMainBase):
         if not hasattr(self, "mnuSaveAs"):                           # the form still has "Save as MP4" and "Save as AVI": one entry is enough, the dialog offers all file types
             self.mnuSaveMP4.setText("&Save as...")
             self.mnuSaveAVI.setVisible(False)
+            self.mnuSaveAVI.setShortcut(QtGui.QKeySequence())        # (Ctrl+V of the hidden entry is free now)
+        self.mnuDeDup.setShortcut(QtGui.QKeySequence("Ctrl+V"))      # Dedup scene: Ctrl+V (was Ctrl+F8 in the form)
+        vbqt.english_shortcuts(self)                                 # the menus are English: "Ctrl+S", not "Strg+S" as Qt writes it on a German system
         self.logo_tooltip = vbqt.ShiftToolTip(self.cmdCommand[6], "Open/close DeLogo dialog", "Open/close RemoveLogo dialog")
         self.migrate_settings()
         if self.fresh:
@@ -555,11 +558,15 @@ class frmMain(frmMainBase):
             return
 
     def mnuReuse_Click(self):
-        """Take over values of the target file from the (single) loaded video and save them in the profile."""
-        if len(self.segments) != 1:
-            self.msg("This function should only be used when there is one and only one segment in the list.")
+        """Take over the values of the target file (profile) from the video that is selected in the list and save them in the profile. Any number of segments may be in
+        the list (VB6 wanted exactly one): the selected one counts."""
+        if not self.segments:
+            self.msg("There are no segments in the list.")
             return
-        seg = self.segments[0]
+        seg = self.segment
+        if seg is None:
+            self.msg("Select the segment in the list whose settings are to be taken over.")
+            return
         self.settings.update_profile(profile_from_segment(seg))
         self.settings.save()
         self.lblText_Upd()
@@ -2101,7 +2108,7 @@ class frmMain(frmMainBase):
         import dialogs
         dialogs.reference_logo_box(self, text, rgb, ref.rect, ref.edges)
 
-    # ------------------------------------------------------------------ Dedup scene (Ctrl+F8; formerly "Overlap segments")
+    # ------------------------------------------------------------------ Dedup scene (Ctrl+V; formerly "Overlap segments")
     def mnuDeDup_Click(self):
         """Edit => Dedup scene: if the recording repeats the last pictures of the selected segment at the start of the next one (a duplicate scene),
         marker B of the first and marker A of the second segment are moved towards each other until the same picture is found (see dedup.py)."""

@@ -435,3 +435,14 @@ def apply_light_theme(app) -> None:
     for role in (R.WindowText, R.Text, R.ButtonText):
         palette.setColor(G.Disabled, role, C(128, 128, 128))
     app.setPalette(palette)
+
+
+def english_shortcuts(owner) -> None:
+    """The menu entries show their shortcut in the language of the system ("Strg+S" on a German one), because Qt translates the names of the keys. The menus of the
+    program are English, so the text of the shortcut is written into the entry by hand ("Save as...<tab>Ctrl+S"): Qt adds its own text only if the text of the entry has no
+    tab (the shortcut itself works as before). All actions that the window holds as attributes (the form makes them as self.mnuXxx) are done."""
+    for action in [a for a in vars(owner).values() if isinstance(a, QtGui.QAction)]:
+        keys = action.shortcut()
+        if keys.isEmpty():
+            continue
+        action.setText(action.text().split("\t")[0] + "\t" + keys.toString(QtGui.QKeySequence.SequenceFormat.PortableText))

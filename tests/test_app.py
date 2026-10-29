@@ -438,7 +438,7 @@ def test_profiles(tmp, videos):
     check(len(win.messages) == msgs + 1, "invalid profile name")
     # sample video: copy values of the target file
     win.mnuReuse_Click()
-    check("one and only one" in win.messages[-1], "reuse without segment")
+    check(win.messages[-1] == "There are no segments in the list.", "reuse without segment")
     win.OpenVideo(os.path.join(videos, "sample2.ts"))
     before_reuse = dict(win.profile)
     win.mnuReuse_Click()
@@ -451,7 +451,17 @@ def test_profiles(tmp, videos):
     # estimate bit rates
     win.OpenVideo(os.path.join(videos, "sample3.ts"))
     win.mnuReuse_Click()
-    check("one and only one" in win.messages[-1], "reuse with two segments")
+    check('copied from "sample3.ts"' in win.messages[-1] and win.profile["bv"] == f"{win.segments[1].vbitrate_kbit}k" and win.profile["ba"] == f"{win.segments[1].abitrate_kbit}k",
+          f"reuse with two segments in the list: the selected one (the one opened last) counts: {win.messages[-1][:60]}")
+    win.lvwSegments.select_row(0)
+    win.lvwSegments_Click()
+    win.mnuReuse_Click()
+    check('copied from "sample2.ts"' in win.messages[-1] and win.profile["bv"] == f"{win.segments[0].vbitrate_kbit}k", "another one selected: the values of that one")
+    win.current = -1
+    win.mnuReuse_Click()
+    check(win.messages[-1] == "Select the segment in the list whose settings are to be taken over.", "none selected: told")
+    win.lvwSegments.select_row(1)
+    win.lvwSegments_Click()
     win.segments[0].vbitrate_kbit, win.segments[1].vbitrate_kbit = 4000, 2000
     avg = weighted_bitrate(win.segments, "video")
     asked = []
@@ -5805,7 +5815,7 @@ def test_containers(tmp, videos):
     mkv = copymode.build_copy_command(plan, dataclasses.replace(job, output="/o/film.mkv"))
     check(mp4[mp4.index("-c:s") + 1] == "mov_text" and "-c:s" not in mkv and mp4[mp4.index("-map") + 5] == "0:s:0", f"mp4: -c:s mov_text; mkv: a plain copy: {mp4}")
     # --- one menu entry
-    check(win.mnuSaveMP4.called("setText")[-1] == ("&Save as...",) and win.mnuSaveAVI.called("setVisible")[-1] == (False,), "the form still has two entries: one is called 'Save as...', the other is hidden")
+    check(win.mnuSaveMP4.called("setText")[-2] == ("&Save as...",) and win.mnuSaveMP4.called("setText")[-1] == ("&Save as...\tCtrl+S",) and win.mnuSaveAVI.called("setVisible")[-1] == (False,), "the form still has two entries: one is called 'Save as...', the other is hidden")
     asked_kinds = []
     win.save_video = lambda kind=None: asked_kinds.append(kind)
     win.mnuSaveAs_Click()
@@ -5911,6 +5921,26 @@ def test_paused_preview(tmp, videos):
     live.request(os.path.join(videos, "sample2.ts"), 30, F(25))
     check(real == [(30, (720, 576))], f"ffmpeg delivers the picture in the size of the film: {real}")
     print("Paused preview: OK (VLC as before, pictures from ffmpeg, Play, coalescing, other player, real picture)")
+
+
+def test_shortcuts(tmp, videos):
+    """The shortcuts of the menus: Dedup scene has Ctrl+V (the hidden Save as AVI gave it up), no shortcut is used twice, and the menus show them in English (Ctrl, not Strg)."""
+    from PySide6 import QtGui
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="shortcutwin")
+    actions = {name: a for name, a in vars(win).items() if isinstance(a, QtGui.QAction)}
+    keys = {name: a.shortcut().toString() for name, a in actions.items() if not a.shortcut().isEmpty()}
+    check(keys["mnuDeDup"] == "Ctrl+V" and "mnuSaveAVI" not in keys and keys["mnuSaveMP4"] == "Ctrl+S", f"Dedup scene Ctrl+V, the hidden Save as AVI has none, Save as Ctrl+S: {keys.get('mnuDeDup')}")
+    used = {}
+    for name, key in keys.items():
+        used.setdefault(key, []).append(name)
+    check(all(len(names) == 1 for names in used.values()), f"no shortcut is used by two entries: {[n for n in used.values() if len(n) > 1]}")
+    check(all(a.text().endswith("\t" + keys[name]) and a.text().count("\t") == 1 and "Strg" not in a.text() for name, a in actions.items() if name in keys),
+          f"every entry with a shortcut shows it in English by hand: {[a.text() for n, a in actions.items() if n in keys][:3]}")
+    check(actions["mnuDeDup"].text() == "Dedup scene\tCtrl+V" and actions["mnuOpen"].text().split("\t")[1] == "Ctrl+O", "(for example)")
+    import vbqt
+    vbqt.english_shortcuts(win)
+    check(actions["mnuDeDup"].text() == "Dedup scene\tCtrl+V", "a second run does not add the text again")
+    print("Shortcuts: OK (Dedup scene Ctrl+V, none twice, English)")
 
 
 def test_counting_note(tmp, videos):
@@ -6084,6 +6114,7 @@ def main():
     test_copy_notice(tmp, sys.argv[1])
     test_containers(tmp, sys.argv[1])
     test_paused_preview(tmp, sys.argv[1])
+    test_shortcuts(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])
