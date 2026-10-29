@@ -52,6 +52,18 @@ class Qt:
     ScrollBarPolicy = EnumGroup("Qt.ScrollBarPolicy", {"ScrollBarAlwaysOff", "ScrollBarAsNeeded", "ScrollBarAlwaysOn"})
 
 
+class QSize(Base):
+    def __init__(self, width=0, height=0):
+        super().__init__(width, height)
+        self._w, self._h = width, height
+
+    def width(self):
+        return self._w
+
+    def height(self):
+        return self._h
+
+
 class QPoint(Base):
     def __init__(self, x=0, y=0):
         self._x, self._y = x, y

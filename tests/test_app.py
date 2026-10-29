@@ -5943,6 +5943,14 @@ def test_shortcuts(tmp, videos):
     print("Shortcuts: OK (Dedup scene Ctrl+V, none twice, English)")
 
 
+def test_command_icons(tmp, videos):
+    """The symbols of the column of buttons are larger than Qt's default (VB6 drew them nearly as large as the button)."""
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="iconwin")
+    sizes = [(b.called("setIconSize")[-1][0].width(), b.called("setIconSize")[-1][0].height()) for b in win.cmdCommand]
+    check(len(sizes) == 7 and set(sizes) == {(22, 22)} and win.COMMAND_ICON_SIZE < 25, f"all 7 buttons (25 x 25 px) show their symbol at 22 x 22 px: {sizes}")
+    print("Symbols of the buttons: OK (22 x 22)")
+
+
 def test_counting_note(tmp, videos):
     """The note "counting frames" in the title goes away whenever a counting ends: with a result, cancelled, with an error, or when the file cannot be read."""
     import mediamaker
@@ -6115,6 +6123,7 @@ def main():
     test_containers(tmp, sys.argv[1])
     test_paused_preview(tmp, sys.argv[1])
     test_shortcuts(tmp, sys.argv[1])
+    test_command_icons(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])

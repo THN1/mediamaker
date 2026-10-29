@@ -3,6 +3,8 @@
 ## 0.7 (in progress)
 
 - Version number set to 0.7-dev.
+- **Larger symbols in the column of buttons** (remove, move, ..., crop, DeLogo, clear): 22 x 22 px (`frmMain.COMMAND_ICON_SIZE`). Qt took its default of about 16 px, VB6 drew the symbols
+  nearly as large as the 25 x 25 px buttons. The pictures of the form (32 and 24 px) are scaled; the size is set when the window is built, the generated user interface is unchanged.
 
 ## 0.6
 

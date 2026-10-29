@@ -342,6 +342,8 @@ class frmMain(frmMainBase):
         self.setWindowTitle(f"MediaMaker {VERSION}")
         self.style_delogo_frame()
         self.add_debug_menu()
+        for button in self.cmdCommand:                               # the symbols of the column of buttons: Qt takes about 16 px, VB6 drew them nearly as large as the button (25 px)
+            button.setIconSize(QtCore.QSize(self.COMMAND_ICON_SIZE, self.COMMAND_ICON_SIZE))
         self.mnuCopyMode.setCheckable(True)                          # a switch; its state is remembered for the next start (see below and save_copy_mode)
         if not hasattr(self, "mnuSaveAs"):                           # the form still has "Save as MP4" and "Save as AVI": one entry is enough, the dialog offers all file types
             self.mnuSaveMP4.setText("&Save as...")
@@ -1076,6 +1078,8 @@ class frmMain(frmMainBase):
     def render_failed(self, text: str) -> None:
         self.render_finished()
         self.msg(f"ffmpeg could not be run: {text}")
+
+    COMMAND_ICON_SIZE = 22                                           # pixels (the buttons are 25 x 25); the pictures of the form are 32 and 24 px and are scaled
 
     COPY_NOTICE = ("Attention: copy mode is switched ON now ({what} was made in copy mode), hence activating output file creation without re-encoding. "
                    "A single video can be cut at a keyframe or several are joined in full length, with or without chapters; cropping, logo filters, rescaling "
