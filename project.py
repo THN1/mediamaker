@@ -21,8 +21,7 @@ def segment_to_dict(s: Segment) -> dict:
         "fps": f"{s.fps.numerator}/{s.fps.denominator}", "width": s.width, "height": s.height,
         "video_kbit": s.vbitrate_kbit, "audio_kbit": s.abitrate_kbit, "audio_stream": s.audio_sel,
         "crop": [s.crop_top, s.crop_bottom, s.crop_left, s.crop_right], "sample_rate": s.sample_rate, "mask": s.mask,
-        "first_frame": s.first_frame,
-    }
+    } | ({} if s.first_unknown else {"first_frame": s.first_frame})                      # (without the entry the list says: not known yet)
 
 
 def segment_from_dict(d: dict, index: int) -> Segment:
@@ -34,7 +33,7 @@ def segment_from_dict(d: dict, index: int) -> Segment:
         vbitrate_kbit=int(d.get("video_kbit", 0)), abitrate_kbit=int(d.get("audio_kbit", 0)),
         audio_sel=d.get("audio_stream", "a"), crop_top=int(top), crop_bottom=int(bottom), crop_left=int(left),
         crop_right=int(right), sample_rate=int(d.get("sample_rate", 0)), mask=d.get("mask", ""),
-        first_frame=int(d.get("first_frame", 0)))
+        first_frame=int(d.get("first_frame", 0)), first_unknown="first_frame" not in d)
 
 
 def save_segments(path: str, segments: list[Segment]) -> None:

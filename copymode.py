@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Optional
 
+import containers
 from cutlist import Job, Segment
 from ffmpeg_cmd import fmt_seconds, stream_times_of
 
@@ -140,8 +141,8 @@ def build_copy_command(plan: CopyPlan, job: Job, list_path: Optional[str] = None
     audio_sel = (plan.segment or job.segments[0]).audio_sel
     maps = stream_maps(options, audio_sel)
     codecs = ["-c", "copy"]
-    if subtitle_numbers(options) and out.lower().endswith(".mp4"):
-        codecs += ["-c:s", "mov_text"]                         # (text subtitles; bitmap subtitles can be copied into mkv only)
+    if subtitle_numbers(options) and containers.subtitle_codec(out):
+        codecs += ["-c:s", containers.subtitle_codec(out)]    # (mp4: mov_text, for text subtitles only; mkv copies every kind; see containers.py)
     args = [ffmpeg, "-y", "-hide_banner"]
     if plan.kind == "concat":
         args += ["-f", "concat", "-safe", "0", "-i", list_path]

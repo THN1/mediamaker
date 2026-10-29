@@ -146,6 +146,12 @@ def format_duration(path: str, ffprobe: str = "ffprobe") -> float:
     return _float(data.get("format", {}).get("duration"))
 
 
+def subtitle_codecs(path: str, ffprobe: str = "ffprobe") -> list:
+    """The codec names of the subtitle tracks of the file, in their order (track 1 of the option subtitle is the first one). Fast: only the stream list is read."""
+    data = _run_ffprobe(["-select_streams", "s", "-show_entries", "stream=codec_name", path], ffprobe)
+    return [str(s.get("codec_name", "")) for s in data.get("streams", [])]
+
+
 def display_aspect(path: str, ffprobe: str = "ffprobe") -> Optional[float]:
     """Proportions (width / height) of the first video stream as a player shows it (see aspect_from_stream); None if unknown."""
     try:

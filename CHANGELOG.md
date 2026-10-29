@@ -3,6 +3,25 @@
 ## 0.6 (in progress)
 
 - Version number set to 0.6-dev.
+- **Save as: ONE dialog for all file types** (`containers.py`). "Save as MP4" and "Save as AVI" are one entry "Save as..." (the form still has the two; at the start the first one is
+  renamed and the second hidden, so the VB6 form can be changed later: an entry `mnuSaveAs` in the form is used as it is, `mnuSaveAs_Click` exists). The dialog offers mp4, mkv, avi and ts
+  (and All files), the type chosen last in this run at the top. The extension of the name decides the file type; without one, or with something that is no file type of the program (the dot
+  in "Dr. No"), the type selected in the dialog (or at the top) is added. Before, ".avi" typed in the MP4 dialog became "x.avi.mp4".
+  * **What each type can hold is checked before anything is made** (`containers.check`), measured with ffmpeg 6.1.1: all the usual codecs (h264, mpeg2video, mpeg4, hevc with aac, mp2,
+    mp3, ac3, pcm) are accepted by all four containers, so codecs are NOT checked. What differs: chapters (mp4 and mkv; avi and ts leave them out without a word), subtitles (mkv copies
+    every kind; mp4 only text subtitles, with `-c:s mov_text` - a plain copy is an ffmpeg error, bitmap subtitles cannot be converted; avi: error "Not yet implemented in FFmpeg"; ts holds the
+    DVB ones of a recording, a text subtitle becomes "private data" that no player knows), `-movflags` (mp4 only, not used by the program).
+  * **Chapters in a file type that cannot hold them**: the question "A .avi file cannot hold chapters: they are left out ... Save anyway?" comes BEFORE saving (the note afterwards is gone).
+  * **Subtitles in copy mode** (option `subtitle`): the codecs of the tracks are read (`mediaprobe.subtitle_codecs`); a type that cannot hold them, a bitmap subtitle for mp4 or a track
+    that is not there is an error told before anything starts. `-c:s` comes from the container (`containers.subtitle_codec`).
+  * File => Batch makes the same check (the extension ts is allowed there too, a name without a type gets the type of the last Save as).
+- **No beep of our own after saving**: two melodies were heard at "Play now?" (the explicit beep and the sound that the window of the question makes by itself).
+- **Faster start with lists whose first frame is 0** (an mp4 file): the start read every segment of such a list again, for every start (ffprobe, about 1.3 s per segment on a local disk, much more
+  on a network drive; measured the same in all versions back to 0.3, so it was no new slowdown but only showed with mp4 lists). A list now says whether it knows the first frame
+  (the entry `first_frame` is in the segment; `Segment.first_unknown`): only lists from VB6, older versions or imported jobs are looked up, once per FILE (not per segment), and then
+  the entry is written. The same file three times in the list is read once.
+- **Copy mode question**: the line about joining several videos ends with "However, the definition of chapters is still possible."; the old sentence "The 'Copy mode' flag is not saved in the
+  options nor in the batch script(s)" is replaced (it was wrong since the state is remembered).
 - **The copy mode warning has a check box "Show this warning next time"** (ticked at first, under the text), the same one for all three cases where copy mode comes back on: at the
   start of the program, when a session is restored and when a job is imported from the batch file. Unticked, the new option `copy_mode_notice` (on|off, group Technical, also in the
   options dialog) goes to off and the warning is not shown any more in any of the three cases; switch it on again in the options. When a session is restored the warning is in the

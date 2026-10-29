@@ -12,6 +12,8 @@ import base64
 import binascii
 import os
 import re
+
+import containers
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
@@ -22,7 +24,7 @@ from settings import format_kv
 SHEBANG = "#!/bin/bash"
 LINE = 72                                    # characters of encoded text per line
 CLEANUP = "rm removelogo??.png 2>/dev/null"
-OUTPUT_EXTENSIONS = ("mp4", "mkv", "avi")
+OUTPUT_EXTENSIONS = containers.EXTENSIONS
 SAFE = re.compile(r"^[A-Za-z0-9_@%+=:,./-]+$")
 
 

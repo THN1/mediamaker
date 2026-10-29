@@ -1132,9 +1132,9 @@ def test_marker_start(tmp, videos):
     # --- old list (without first_frame): update on loading
     work = os.path.join(tmp, "legacywin")
     os.makedirs(work, exist_ok=True)
-    legacy = [Segment(1, s2, "sample2.ts", 0, 148, 148, Fraction(25), 720, 576, 3000, 192, "a", 0, 0, 0, 0, 48000, ""),
-              Segment(2, s2, "sample2.ts", 50, 148, 148, Fraction(25), 720, 576, 3000, 192, "a", 0, 0, 0, 0, 48000, ""),
-              Segment(3, s2, "sample2.ts", 20, 90, 148, Fraction(25), 720, 576, 3000, 192, "a", 0, 0, 0, 0, 48000, "")]
+    legacy = [Segment(1, s2, "sample2.ts", 0, 148, 148, Fraction(25), 720, 576, 3000, 192, "a", 0, 0, 0, 0, 48000, "", first_unknown=True),
+              Segment(2, s2, "sample2.ts", 50, 148, 148, Fraction(25), 720, 576, 3000, 192, "a", 0, 0, 0, 0, 48000, "", first_unknown=True),
+              Segment(3, s2, "sample2.ts", 20, 90, 148, Fraction(25), 720, 576, 3000, 192, "a", 0, 0, 0, 0, 48000, "", first_unknown=True)]
     save_segments(os.path.join(work, "MediaMaker.json"), legacy)
     win = make_window(work, thumb_fn=quick_thumbs, first_fn=lambda path, fps: 10)
     win.showEvent(None)
@@ -1144,6 +1144,31 @@ def test_marker_start(tmp, videos):
     win2 = make_window(work, thumb_fn=quick_thumbs, first_fn=lambda path, fps: 99)           # do not convert again
     win2.showEvent(None)
     check([(s.first_frame, s.total_frames) for s in win2.segments] == [(10, 158)] * 3, "already converted list stays unchanged")
+    # --- the start does not read the files again when the list says that it knows the first frame (also when it is 0: an mp4 file); an old list is read once per FILE
+    probed = []
+    def counting_first(path, fps):
+        probed.append(path)
+        return 0
+    work_mp4 = os.path.join(tmp, "legacywin_mp4")
+    os.makedirs(work_mp4, exist_ok=True)
+    known = [dataclasses.replace(legacy[0], first_unknown=False, first_frame=0, index=i + 1) for i in range(3)]
+    save_segments(os.path.join(work_mp4, "MediaMaker.json"), known)
+    check('"first_frame": 0' in open(os.path.join(work_mp4, "MediaMaker.json"), encoding="utf-8").read(), "a list that knows the first frame writes the entry, also when it is 0")
+    started = make_window(work_mp4, thumb_fn=quick_thumbs, first_fn=counting_first)
+    started.showEvent(None)
+    check(probed == [] and all(not s.first_unknown for s in started.segments), f"list saved by this version, first frame 0: nothing is read at the start: {probed}")
+    work_old = os.path.join(tmp, "legacywin_old")
+    os.makedirs(work_old, exist_ok=True)
+    save_segments(os.path.join(work_old, "MediaMaker.json"), [dataclasses.replace(legacy[0], first_unknown=True, index=i + 1) for i in range(3)])
+    check('"first_frame"' not in open(os.path.join(work_old, "MediaMaker.json"), encoding="utf-8").read(), "an old list is saved without the entry (it stays 'not known yet')")
+    older = make_window(work_old, thumb_fn=quick_thumbs, first_fn=counting_first)
+    older.showEvent(None)
+    check(probed == [s2] and all(not s.first_unknown for s in older.segments), f"old list: the file is read ONCE for three segments of the same file: {probed}")
+    check('"first_frame": 0' in open(os.path.join(work_old, "MediaMaker.json"), encoding="utf-8").read(), "and the entry is written, even though the result was 0")
+    probed.clear()
+    again = make_window(work_old, thumb_fn=quick_thumbs, first_fn=counting_first)
+    again.showEvent(None)
+    check(probed == [], f"the next start does not read it again: {probed}")
     # --- clicking: display at marker A, not at the start of the file
     win2.lvwSegments.select_row(1)
     win2.lvwSegments_Click()
@@ -1924,7 +1949,9 @@ def test_save_video(tmp, videos):
     win.mnuSaveMP4_Click()
     result = os.path.join(out_dir, "film.mp4")
     expected = expected_frames(win.make_job(result))
-    check(asked[0][0] == "Save as MP4" and "mp4" in asked[0][2] and "mkv" in asked[0][2], f"file dialog for MP4: {asked[0]}")
+    import containers
+    check(asked[0][0] == "Save as" and asked[0][2] == containers.filters("mp4") and asked[0][2].startswith("MP4 video file (*.mp4);;") and all(f"(*.{e})" in asked[0][2] for e in ("mkv", "avi", "ts")),
+          f"ONE file dialog for all file types, mp4 at the top: {asked[0]}")
     check(asked[0][1] == os.path.join(videos, "output.mp4"), f"several source files: suggestion output.mp4 in the folder of the last file: {asked[0][1]}")
     check(os.path.exists(result) and abs(probe(result).video.frames - expected) <= 1, f"result file with the expected {expected} frames: {probe(result).video.frames if os.path.exists(result) else None}")
     check(win.messages[-1].startswith("File was saved in 00:00:") and "differs" not in win.messages[-1], f"message after saving: {win.messages[-1]!r}")
@@ -1949,7 +1976,8 @@ def test_save_video(tmp, videos):
     win._render_fn = fake
     ask_calls = []
     win.ask3 = lambda text: (ask_calls.append(text), answers["ask3"].pop(0))[1]
-    win.ask_save_file = lambda title, suggestion, filters: (asked.append(suggestion), next(names))[1]
+    filters_seen = []
+    win.ask_save_file = lambda title, suggestion, filters: (asked.append(suggestion), filters_seen.append(filters), next(names))[-1]
     names = iter([result])
     win.mnuSaveMP4_Click()
     check(fake_runs[-1][0][-1] == result and ask_calls == [], "existing file chosen with its extension (dialog confirmed): saved without asking again")
@@ -1972,14 +2000,34 @@ def test_save_video(tmp, videos):
     answers["ask3"] = ["yes"]
     win.mnuSaveMP4_Click()
     check(len(fake_runs) == runs + 1 and fake_runs[-1][0][-1] == result, "extension added and that file exists, Yes: saved")
-    # --- extensions: mkv is allowed for MP4, AVI adds .avi
+    # --- file types: the extension of the name decides; without one the type that is selected in the dialog (or at the top) is added
     names = iter([os.path.join(out_dir, "a.mkv")])
     win.mnuSaveMP4_Click()
-    check(fake_runs[-1][0][-1] == os.path.join(out_dir, "a.mkv"), "MP4 dialog: .mkv is kept")
+    check(fake_runs[-1][0][-1] == os.path.join(out_dir, "a.mkv") and win._save_type == "mkv", "the name says .mkv: mkv is saved, and mkv is the type of the next dialog")
     names = iter([os.path.join(out_dir, "b.mp4")])
     win.mnuSaveAVI_Click()
-    check(fake_runs[-1][0][-1] == os.path.join(out_dir, "b.mp4.avi") and win.messages[-1].startswith("File was saved"), "AVI: the extension .avi is added")
-    check(win.mnuSaveAVI is not None and any(a[0][0] == "Save as AVI" for a in [(x,) for x in [(asked_title,) for asked_title in ["Save as AVI"]]]), "(dialog title checked below)")
+    check(fake_runs[-1][0][-1] == os.path.join(out_dir, "b.mp4") and win.messages[-1].startswith("File was saved") and filters_seen[-1].startswith("A/V Interleave file (*.avi);;"),
+          f"the AVI entry puts avi at the top, but the name says .mp4: mp4 is saved: {fake_runs[-1][0][-1]}")
+    names = iter([os.path.join(out_dir, "film2")])
+    win.mnuSaveAVI_Click()
+    check(fake_runs[-1][0][-1] == os.path.join(out_dir, "film2.avi"), "no extension: the type at the top is added (.avi)")
+    names = iter([os.path.join(out_dir, "film2b")])
+    win.mnuSaveMP4_Click()
+    check(filters_seen[-1].startswith("A/V Interleave file (*.avi);;") and fake_runs[-1][0][-1] == os.path.join(out_dir, "film2b.avi"),
+          "the entry of the form shows the type of the last time at the top (avi was the last one), and adds it")
+    def pick_filter(title, suggestion, filters):
+        win._save_filter = "MPEG transport stream (*.ts)"
+        return os.path.join(out_dir, "film3")
+    win.ask_save_file = pick_filter
+    win.mnuSaveMP4_Click()
+    check(fake_runs[-1][0][-1] == os.path.join(out_dir, "film3.ts"), "no extension: the type that was selected in the dialog is added (.ts)")
+    names = iter([os.path.join(out_dir, "Mr. Smith"), os.path.join(out_dir, "x")])
+    win.ask_save_file = lambda title, suggestion, filters: (filters_seen.append(filters), next(names))[-1]
+    win._save_type = "mp4"
+    win.mnuSaveMP4_Click()
+    check(fake_runs[-1][0][-1] == os.path.join(out_dir, "Mr. Smith.mp4"), "a dot in the name is no extension of a file type: .mp4 is added")
+    win.mnuSaveMP4_Click()
+    check(fake_runs[-1][0][-1] == os.path.join(out_dir, "x.mp4"), "and the type is still mp4")
     # --- the temporary working folder holds the masks during the run
     win.segments[0].mask = "0.1 0.2 0.3 0.4"
     from cutlist import parse_batch_header
@@ -3322,6 +3370,7 @@ def test_save_dialog(tmp, videos):
         def setSidebarUrls(self, urls): log.append(("sidebar", urls))
         def exec(self): return FakeDialog.result
         def selectedFiles(self): return FakeDialog.chosen
+        def selectedNameFilter(self): return "A/V Interleave file (*.avi)"
         def deleteLater(self): log.append(("deleteLater",))
         @staticmethod
         def getSaveFileName(*args):
@@ -4889,7 +4938,8 @@ def test_copy_mode(tmp, videos):
     win.ask = lambda text: (asked.append(text), False)[1]
     win.mnuCopyMode.setChecked(True)
     win.mnuCopyMode_Click()
-    check(len(asked) == 1 and "WITHOUT re-encoding" in asked[0] and "not saved in the options nor in the batch" in asked[0] and asked[0].endswith("Continue anyway?") and not win.mnuCopyMode.isChecked(),
+    check(len(asked) == 1 and "WITHOUT re-encoding" in asked[0] and "However, the definition of chapters is still possible." in asked[0]
+          and "The state of copy mode is remembered for the next start and is kept in batch scripts and sessions." in asked[0] and "not saved" not in asked[0] and asked[0].endswith("Continue anyway?") and not win.mnuCopyMode.isChecked(),
           "switching on: the warning; No: it stays off")
     win.ask = lambda text: (asked.append(text), True)[1]
     win.mnuCopyMode.setChecked(True)
@@ -5265,14 +5315,21 @@ def test_chapters(tmp, videos):
     check([t for t, _, _ in got] == ["Part a", "Part b", "Part c"] and abs(got[1][1] - len_a) < 0.01 and abs(got[2][1] - 2 * len_a) < 0.01 and abs(got[2][2] - 3 * len_a) < 0.01
           and "Copy mode: 3 files joined in full length." in win.messages[-1] and "wrong" not in win.messages[-1], f"copy mode, the same whole file three times: three parts, three chapters: {got}")
     os.remove(os.path.join(tmp, "chapterwin", "film.mkv"))
-    # a file type that cannot hold chapters (avi): said, not silently left out
+    # a file type that cannot hold chapters (avi): said BEFORE saving, not silently left out; No: nothing is made
     win.segments[:] = [whole_a, whole_b]
     chapters.write(path, ["First file", "Second file"], win.segments)
     win.choose_output = lambda kind: os.path.join(tmp, "chapterwin", "film.avi")
+    questions = []
+    win.ask = lambda text: (questions.append(text), False)[1]
     win.mnuSaveMP4_Click()
-    check(os.path.exists(os.path.join(tmp, "chapterwin", "film.avi")) and ffprobe_chapters(os.path.join(tmp, "chapterwin", "film.avi")) == []
-          and "Attention: the chapters were NOT saved: a .avi file cannot hold chapters (use mp4 or mkv)." in win.messages[-1], f"avi: no chapters, and the message says why: {win.messages[-1]!r}")
+    check(questions == ["A .avi file cannot hold chapters: they are left out (mp4 and mkv can hold them).\n\nSave anyway?"] and not os.path.exists(os.path.join(tmp, "chapterwin", "film.avi"))
+          and win._render is None, f"avi with chapters: the question comes first; No: nothing is saved: {questions}")
+    win.ask = lambda text: (questions.append(text), True)[1]
+    win.mnuSaveMP4_Click()
+    check(os.path.exists(os.path.join(tmp, "chapterwin", "film.avi")) and ffprobe_chapters(os.path.join(tmp, "chapterwin", "film.avi")) == [] and len(questions) == 2,
+          "Yes: saved without chapters")
     os.remove(os.path.join(tmp, "chapterwin", "film.avi"))
+    win.ask = lambda text: True
     check(chapters.holds_chapters("/x/a.MP4") and chapters.holds_chapters("a.mkv") and not chapters.holds_chapters("a.avi") and not chapters.holds_chapters("a.ts"), "the file types that can hold chapters")
     win.choose_output = lambda kind: os.path.join(tmp, "chapterwin", "film.mkv")
     win.segments[:] = [a, b]                                        # (the cut segments again for the following steps)
@@ -5660,6 +5717,103 @@ def mediamaker_notice_label(win) -> tuple:
     return seen[-1]._args[0], seen[-1].called("setChecked")[-1][0]
 
 
+def test_containers(tmp, videos):
+    """The file types of Save as: what each one can hold (chapters, subtitles), checked BEFORE saving; ONE entry in the menu."""
+    import containers
+    import copymode
+    import mediaprobe
+    import chapters
+    from cutlist import Job
+    from mediaprobe import first_frame_number
+    # --- the table
+    check(containers.EXTENSIONS == ("mp4", "mkv", "avi", "ts") and containers.info("/x/Film.MKV").ext == "mkv" and containers.info("film") is None and containers.info("/x/a.mov") is None
+          and containers.info("Mr. Smith") is None, "the file types, found by the extension")
+    check(containers.filters("avi") == "A/V Interleave file (*.avi);;MP4 video file (*.mp4);;Matroska video file (*.mkv);;MPEG transport stream (*.ts);;All files (*)"
+          and containers.filters().startswith("MP4 video file (*.mp4);;"), "the list for the dialog: the chosen type at the top")
+    check(containers.extension_of_filter("MPEG transport stream (*.ts)") == "ts" and containers.extension_of_filter("All files (*)") is None and containers.extension_of_filter("") is None,
+          "the type that the dialog says is selected")
+    check(chapters.holds_chapters("/x/a.MP4") and chapters.holds_chapters("a.mkv") and not chapters.holds_chapters("a.avi") and not chapters.holds_chapters("a.ts")
+          and not chapters.holds_chapters("a.mov"), "chapters: mp4 and mkv")
+    check(containers.subtitle_codec("a.mp4") == "mov_text" and containers.subtitle_codec("a.mkv") == "" and containers.subtitle_codec("a.avi") == "", "-c:s: mov_text for mp4, a plain copy for mkv")
+    # --- the check: (errors, warnings)
+    check(containers.check("a.mkv", True, ["subrip", "hdmv_pgs_subtitle"]) == ([], []) and containers.check("a.mp4", True, ["subrip", "ass"]) == ([], []), "mkv holds everything, mp4 text subtitles")
+    check(containers.check("a.avi", True) == ([], ["A .avi file cannot hold chapters: they are left out (mp4 and mkv can hold them)."]) and containers.check("a.ts", True)[1] == containers.check("a.avi", True)[1][:0] + ["A .ts file cannot hold chapters: they are left out (mp4 and mkv can hold them)."],
+          "chapters in avi or ts: a warning, they are left out")
+    check(containers.check("a.avi", False, ["subrip"])[0] == ["A .avi file cannot hold subtitles (mkv can; mp4 only text subtitles)."], "subtitles in avi: an error")
+    check(containers.check("a.mp4", False, ["dvb_subtitle"])[0] == ["A .mp4 file can hold only text subtitles, the chosen track is dvb_subtitle (mkv can hold it)."], "a bitmap subtitle in mp4: an error")
+    check(containers.check("a.ts", False, ["dvb_subtitle"]) == ([], []) and containers.check("a.ts", False, ["subrip"])[0], "ts holds DVB subtitles, not text ones")
+    check(containers.check("a.xyz")[0] == ["The file type .xyz is not supported: use one of .mp4, .mkv, .avi, .ts."], "an unknown type")
+    # --- a source with a subtitle track (made here), real ffmpeg
+    work = os.path.join(tmp, "contsrc")
+    os.makedirs(work, exist_ok=True)
+    srt = os.path.join(work, "s.srt")
+    open(srt, "w").write("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
+    src = os.path.join(work, "src.mkv")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25:d=3", "-f", "lavfi", "-i", "sine=d=3", "-i", srt, "-c:v", "mpeg4", "-c:a", "aac", "-c:s", "srt", src],
+                   capture_output=True, stdin=subprocess.DEVNULL)
+    check(mediaprobe.subtitle_codecs(src) == ["subrip"] and mediaprobe.subtitle_codecs(os.path.join(videos, "sample2.ts")) == [], "the subtitle tracks of a file")
+    win = seek_window(tmp, work, ("src.mkv",), workdir="contwin", first_fn=first_frame_number)
+    win.settings.set_option("crop", "0")
+    win.mnuCopyMode.setChecked(True)
+    win.settings.set_option("subtitle", "1")
+    out = lambda ext: os.path.join(tmp, "contwin", f"out.{ext}")
+    asked_files = []
+    win.ask = lambda text: True
+    def save(ext):
+        win.choose_output = lambda kind: (asked_files.append(kind), out(ext))[1]
+        win.messages.clear()
+        win.mnuSaveMP4_Click()
+        return win.messages[-1] if win.messages else ""
+    for ext in ("mp4", "mkv"):
+        if os.path.exists(out(ext)):
+            os.remove(out(ext))
+        message = save(ext)
+        streams = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name", "-of", "csv=p=0", out(ext)], capture_output=True, text=True).stdout.split()
+        check(message.startswith("File was saved") and streams == [{"mp4": "mov_text", "mkv": "subrip"}[ext]], f"copy mode, subtitle 1 into .{ext}: saved, the subtitle track is {streams}")
+    runs = []
+    win._render_fn = lambda *args, **kw: runs.append(args)
+    for ext, why in (("avi", "A .avi file cannot hold subtitles (mkv can; mp4 only text subtitles)."),
+                     ("ts", "A .ts file can hold only the DVB subtitles of a recording, the chosen track is subrip (mkv can hold it).")):
+        message = save(ext)
+        check(message == why and runs == [] and win._render is None, f".{ext}: the error is told before anything is started: {message!r}")
+    win.settings.set_option("subtitle", "2")
+    message = save("mp4")
+    check(message == "The option subtitle names track 2, but the file has 1 subtitle track." and runs == [], f"a track that is not there: {message!r}")
+    real = mediaprobe.subtitle_codecs
+    mediaprobe.subtitle_codecs = lambda path, *a: ["dvb_subtitle"]
+    win.settings.set_option("subtitle", "1")
+    try:
+        check(save("mp4") == "A .mp4 file can hold only text subtitles, the chosen track is dvb_subtitle (mkv can hold it)." and runs == [], "a bitmap subtitle into mp4")
+    finally:
+        mediaprobe.subtitle_codecs = real
+    # no subtitle chosen: avi is fine (copy mode, no subtitles)
+    win.settings.set_option("subtitle", "0")
+    win._render_fn = run_ffmpeg_real
+    if os.path.exists(out("avi")):
+        os.remove(out("avi"))
+    check(save("avi").startswith("File was saved") and os.path.exists(out("avi")), "without subtitles an avi file is made")
+    # --- the command: -c:s from the container
+    job = Job(output="/o/film.mp4", profile={}, options={**win.options, "subtitle": "1"}, segments=win.segments)
+    plan = copymode.make_plan(win.segments, job.options)
+    mp4 = copymode.build_copy_command(plan, job)
+    mkv = copymode.build_copy_command(plan, dataclasses.replace(job, output="/o/film.mkv"))
+    check(mp4[mp4.index("-c:s") + 1] == "mov_text" and "-c:s" not in mkv and mp4[mp4.index("-map") + 5] == "0:s:0", f"mp4: -c:s mov_text; mkv: a plain copy: {mp4}")
+    # --- one menu entry
+    check(win.mnuSaveMP4.called("setText")[-1] == ("&Save as...",) and win.mnuSaveAVI.called("setVisible")[-1] == (False,), "the form still has two entries: one is called 'Save as...', the other is hidden")
+    asked_kinds = []
+    win.save_video = lambda kind=None: asked_kinds.append(kind)
+    win.mnuSaveAs_Click()
+    win.mnuSaveMP4_Click()
+    win.mnuSaveAVI_Click()
+    check(asked_kinds == [None, None, "avi"], f"Save as and the entry of the form: the type of the last time; the old AVI shortcut: avi at the top: {asked_kinds}")
+    print("File types: OK (table, checks, subtitles with real ffmpeg, one dialog)")
+
+
+def run_ffmpeg_real(cmd, total, on_progress, cwd=None, cancel=None):
+    from runner import run_ffmpeg
+    return run_ffmpeg(cmd, total, on_progress, cwd=cwd, cancel=cancel)
+
+
 def test_counting_note(tmp, videos):
     """The note "counting frames" in the title goes away whenever a counting ends: with a result, cancelled, with an error, or when the file cannot be read."""
     import mediamaker
@@ -5735,8 +5889,10 @@ def test_play_now(tmp, videos):
     win._render = {"job": None, "output": os.path.join(tmp, "playnow", "x.mp4"), "dir": tempfile.mkdtemp(prefix="mediamaker_"), "expected": None, "total": 1.0, "plan": None, "chapters": False}
     open(win._render["output"], "wb").write(b"x")
     from runner import RunResult
+    beeps = QtWidgets.QApplication.log.count("beep")
     win.render_done(RunResult(0, False, 3.0, ""))
     check(len(calls) == 1 and calls[0][0].startswith("File was saved in 00:00:03") and calls[0][1] == os.path.join(tmp, "playnow", "x.mp4"), f"after a successful save: {calls}")
+    check(QtWidgets.QApplication.log.count("beep") == beeps, "no beep of our own: the window with the question makes the sound of the system (two melodies were heard)")
     calls.clear()
     win._render = {"job": None, "output": os.path.join(tmp, "playnow", "y.mp4"), "dir": tempfile.mkdtemp(prefix="mediamaker_"), "expected": None, "total": 1.0, "plan": None, "chapters": False}
     win.render_done(RunResult(1, False, 3.0, "boom"))
@@ -5827,6 +5983,7 @@ def main():
     test_copy_mode_batch(tmp, sys.argv[1])
     test_copy_mode_remembered(tmp, sys.argv[1])
     test_copy_notice(tmp, sys.argv[1])
+    test_containers(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])

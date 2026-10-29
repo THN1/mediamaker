@@ -26,11 +26,13 @@ from typing import Iterable, Optional
 HEADER = ";FFMETADATA1"
 MARK = ";MEDIAMAKER chapters signature="
 STYLES = ("Enumerated", "Named", "Named (short)", "Previous", "From Batch")
-CONTAINERS = (".mp4", ".m4v", ".mov", ".mkv", ".webm")          # file types that can hold chapters (avi and ts cannot: ffmpeg leaves them out without a word)
 
 
 def holds_chapters(path: str) -> bool:
-    return path.lower().endswith(CONTAINERS)
+    """Can the file type of the target file hold chapters (containers.py: mp4 and mkv; avi and ts leave them out without a word)?"""
+    import containers
+    c = containers.info(path)
+    return bool(c and c.chapters)
 
 
 def signature(segments: Iterable) -> str:

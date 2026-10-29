@@ -40,6 +40,7 @@ import ffmpeg_cmd                                                     # noqa: E4
 from frames import grab_frame, grab_numbered, grab_scanlines        # noqa: E402
 import dedup                                                          # noqa: E402
 import copymode                                                       # noqa: E402
+import containers                                                     # noqa: E402
 import mediaprobe                                                     # noqa: E402
 import chapters                                                       # noqa: E402
 import cropping                                                       # noqa: E402
@@ -140,6 +141,8 @@ class frmMain(frmMainBase):
         self._last_search: dict = {}                   # what the last search for a commercial did (debug package)
         self._modal_child = None                       # the crop window while it is open
         self._open_filter = ""                         # the file type last chosen in the Open dialog (only for this run of the program)
+        self._save_type = "mp4"                        # the file type last chosen in the dialog of Save as (only for this run of the program)
+        self._save_filter = ""                         # what the file dialog of Save as said was selected
         self.ref_origin: dict = {}                     # mask -> where the reference logo came from (frame, picture, preview), for the debug package
         self._verify_first: set = set()                # files opened just now: the first picture of the thumbnails confirms the first frame
         self.verify_first_frame = True                 # False: take the first frame from the stream data as it is (tests)
@@ -213,7 +216,7 @@ class frmMain(frmMainBase):
         question whether to replace it), and the folders used recently are in its list of places. With file_dialog = native the dialog of the
         desktop is used; in some KDE setups a double click on an existing file did nothing there."""
         if self.options.get("file_dialog", "qt") == "native":
-            name, _ = QtWidgets.QFileDialog.getSaveFileName(self, title, suggestion, filters)
+            name, self._save_filter = QtWidgets.QFileDialog.getSaveFileName(self, title, suggestion, filters)
             return name
         dialog = QtWidgets.QFileDialog(self, title, os.path.dirname(suggestion), filters)
         dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptMode.AcceptSave)
@@ -225,7 +228,10 @@ class frmMain(frmMainBase):
             dialog.setHistory(recent)
             dialog.setSidebarUrls([QtCore.QUrl.fromLocalFile(d) for d in recent])
         try:
-            return dialog.selectedFiles()[0] if dialog.exec() and dialog.selectedFiles() else ""
+            if dialog.exec() and dialog.selectedFiles():
+                self._save_filter = dialog.selectedNameFilter()
+                return dialog.selectedFiles()[0]
+            return ""
         finally:
             dialog.deleteLater()
 
@@ -333,6 +339,9 @@ class frmMain(frmMainBase):
         self.style_delogo_frame()
         self.add_debug_menu()
         self.mnuCopyMode.setCheckable(True)                          # a switch; its state is remembered for the next start (see below and save_copy_mode)
+        if not hasattr(self, "mnuSaveAs"):                           # the form still has "Save as MP4" and "Save as AVI": one entry is enough, the dialog offers all file types
+            self.mnuSaveMP4.setText("&Save as...")
+            self.mnuSaveAVI.setVisible(False)
         self.logo_tooltip = vbqt.ShiftToolTip(self.cmdCommand[6], "Open/close DeLogo dialog", "Open/close RemoveLogo dialog")
         self.migrate_settings()
         if self.fresh:
@@ -383,13 +392,20 @@ class frmMain(frmMainBase):
                 It is added here: determine the number of the first frame, increase total and end by that amount (the markers
                 themselves stay where they are, only a start before the first frame moves to it). Only the first packets are read."""
         changed = False
+        found: dict = {}                                            # file -> first frame: every file is read once, not once per segment
         for seg in segments:
+            if not seg.first_unknown:                               # saved by this version: the first frame is known, also when it is 0 (an mp4 file)
+                continue
+            seg.first_unknown = False                               # (the entry is written with the next save: this is not repeated at the next start)
+            changed = True
             if seg.first_frame != 0 or not os.path.exists(seg.path):
                 continue
-            try:
-                first = self._first_fn(seg.path, seg.fps)
-            except Exception:
-                continue
+            if seg.path not in found:
+                try:
+                    found[seg.path] = self._first_fn(seg.path, seg.fps)
+                except Exception:
+                    found[seg.path] = 0
+            first = found[seg.path]
             if first <= 0:
                 continue
             old_total = seg.total_frames
@@ -398,7 +414,6 @@ class frmMain(frmMainBase):
             seg.end = seg.total_frames if seg.end == old_total else seg.end
             seg.start = max(seg.start, first)
             seg.end = max(seg.end, seg.start + 1)
-            changed = True
         return changed
 
     def refresh_list(self) -> None:
@@ -825,30 +840,35 @@ class frmMain(frmMainBase):
         self.Slider1.setFocus()
 
     # ------------------------------------------------------------------ Saving with ffmpeg, progress, batch file
-    SAVE_KINDS = {"mp4": ("Save as MP4", "MP4 Video File (*.mp4);;MKV Video File (*.mkv);;All files (*)", ("mp4", "mkv")),
-                  "avi": ("Save as AVI", "AVI Video File (*.avi);;All files (*)", ("avi",))}
-
     def last_file(self) -> str:
         return self.settings.last or (self.segments[-1].path if self.segments else "")
 
-    def mnuSaveMP4_Click(self):
-        self.save_video("mp4")
+    def mnuSaveAs_Click(self):
+        self.save_video()
+
+    def mnuSaveMP4_Click(self):                                  # (the two old menu entries of the form: the same dialog; AVI has this type at the top)
+        self.save_video()
 
     def mnuSaveAVI_Click(self):
         self.save_video("avi")
 
-    def choose_output(self, kind: str) -> Optional[str]:
-        """File dialog with the suggested name. None = cancelled.
+    def choose_output(self, kind: Optional[str] = None) -> Optional[str]:
+        """The file dialog of Save as with the suggested name. None = cancelled. ONE dialog for all file types (mp4, mkv, avi, ts): the one in the list at the
+        top is `kind` or the one chosen last in this run. The extension of the name decides the file type; without one (or with one that is no file type of the
+        program, like the dot in "Dr. No") the type selected in the dialog is added.
 
-        The dialog asks itself before an existing file is overwritten. Only if the extension had to be added here, the file the
-        dialog saw is not the one that is written, so an existing file of that name is asked about (No: choose again)."""
-        title, filters, allowed = self.SAVE_KINDS[kind]
-        suggestion = batch.suggest_name(self.last_file(), kind, self.multiple())
+        The dialog asks itself before an existing file is overwritten. Only if the extension had to be added here, the file the dialog saw is not the one
+        that is written, so an existing file of that name is asked about (No: choose again)."""
+        first = kind or self._save_type
+        suggestion = batch.suggest_name(self.last_file(), first, self.multiple())
         while True:
-            chosen = self.ask_save_file(title, suggestion, filters)
+            self._save_filter = ""
+            chosen = self.ask_save_file("Save as", suggestion, containers.filters(first))
             if not chosen:
                 return None
-            name = batch.with_extension(chosen, allowed, kind)
+            name = chosen
+            if containers.info(chosen) is None:
+                name = chosen + "." + (containers.extension_of_filter(self._save_filter) or first)
             if name != chosen and os.path.exists(name):
                 answer = self.ask3(f"{name} already exists.\n\nOverwrite?")
                 if answer == "no":
@@ -856,8 +876,32 @@ class frmMain(frmMainBase):
                     continue
                 if answer == "cancel":
                     return None
+            self._save_type = containers.info(name).ext
             self.remember_dir(name)                                   # offered again in the list of the Batch dialog
             return name
+
+    def container_ok(self, output: str, copy: bool) -> bool:
+        """Does the file type of the target file allow what is to be saved (containers.check)? An error is told and stops; if only something is left out (chapters
+        in an avi file) it is asked whether to save anyway."""
+        numbers = copymode.subtitle_numbers(self.options) if copy else []
+        subtitles = []
+        errors = []
+        if numbers and self.segments:
+            try:
+                codecs = mediaprobe.subtitle_codecs(self.segments[0].path)
+            except Exception:
+                codecs = []
+            for n in numbers:
+                if n > len(codecs):
+                    errors.append(f"The option subtitle names track {n}, but the file has {len(codecs)} subtitle track{'s' if len(codecs) != 1 else ''}.")
+                else:
+                    subtitles.append(codecs[n - 1])
+        found, warnings = containers.check(output, self.chapters_valid(), subtitles, copy)
+        errors += found
+        if errors:
+            self.msg("\n".join(errors))
+            return False
+        return not warnings or self.ask("\n\n".join(warnings) + "\n\nSave anyway?")
 
     def make_job(self, output: str) -> Job:
         return Job(output=output, profile=dict(self.profile), options=dict(self.options),
@@ -875,8 +919,8 @@ class frmMain(frmMainBase):
             return True
         return False
 
-    def save_video(self, kind: str) -> None:
-        """Save as MP4 / AVI: the container follows from the extension of the target file, ffmpeg chooses it."""
+    def save_video(self, kind: Optional[str] = None) -> None:
+        """Save as: the container follows from the extension of the target file, ffmpeg chooses it (see containers.py for what each one can hold)."""
         if self._render is not None:
             self.msg("A file is already being saved.")
             return
@@ -889,7 +933,7 @@ class frmMain(frmMainBase):
         if output is None:
             return
         job = self.make_job(output)
-        if not self.check_job(job):
+        if not self.check_job(job) or not self.container_ok(output, self.mnuCopyMode.isChecked()):
             return
         work = tempfile.mkdtemp(prefix="mediamaker_")
         plan = None
@@ -966,12 +1010,9 @@ class frmMain(frmMainBase):
             plan = info.get("plan")
             if plan is not None:                                      # copy mode
                 text += "\n\n" + self.copy_summary(plan)
-            if info.get("chapters") and not chapters.holds_chapters(output):
-                text += f"\n\nAttention: the chapters were NOT saved: a {os.path.splitext(output)[1] or 'file'} file cannot hold chapters (use mp4 or mkv)."
             if not ok:
                 text += "\n\n" + check
-            getattr(QtWidgets.QApplication, "beep", lambda: None)()
-            self.finish_message(text, output)
+            self.finish_message(text, output)                        # (no beep of our own: the window of the question makes the sound of the system, two were heard)
 
     def finish_message(self, text: str, output: str) -> None:
         """The message after a successful save, with the question whether to play the result now (with the program that the system has for it)."""
@@ -1052,10 +1093,11 @@ class frmMain(frmMainBase):
         if self.mnuCopyMode.isChecked() and not self.ask(
                 "'Copy mode' saves WITHOUT re-encoding (ffmpeg -c copy):\n\n"
                 "- ONE video with one segment is cut at a keyframe: the cut starts at the first keyframe that is not before marker A, and ends at marker B.\n"
-                "- SEVERAL videos are joined in full length; this only works for files with identical characteristics (size, frame rate, sound, codecs ...).\n\n"
+                "- SEVERAL videos are joined in full length; this only works for files with identical characteristics (size, frame rate, sound, codecs ...). "
+                "However, the definition of chapters is still possible.\n\n"
                 "Cut markers (when joining), cropping, logo filters, rescaling and the settings of the output profile are ignored. Sound tracks and "
-                "subtitles are chosen by the options audio, multilanguage and subtitle. The 'Copy mode' flag is not saved in the options nor in the batch "
-                "script(s).\n\nContinue anyway?"):
+                "subtitles are chosen by the options audio, multilanguage and subtitle. The state of copy mode is remembered for the next start and is kept in "
+                "batch scripts and sessions.\n\nContinue anyway?"):
             self.mnuCopyMode.setChecked(False)
         elif not self.mnuCopyMode.isChecked():
             self.inform("Copy mode is switched off.")
@@ -1099,10 +1141,10 @@ class frmMain(frmMainBase):
         name = self.ask_output("Batch", batch.suggest_name(self.last_file(), "mp4", self.multiple()))
         if not name:
             return
-        name = batch.with_extension(name, batch.OUTPUT_EXTENSIONS, "mp4")
+        name = batch.with_extension(name, batch.OUTPUT_EXTENSIONS, self._save_type)
         self.remember_dir(name)
         job = self.make_job(name)
-        if not self.check_job(job):
+        if not self.check_job(job) or not self.container_ok(name, copy):
             return
         chapter_text = self.chapters_text() if self.chapters_valid() else None          # the script writes the file itself when it runs
         rules = batch.parse_path_map(job.options.get("path_map", ""))

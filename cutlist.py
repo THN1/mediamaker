@@ -52,6 +52,7 @@ class Segment:
     sample_rate: int
     mask: str = ""              # Base64 PNG (removelogo) or "x y w h" as fractions (delogo)
     first_frame: int = 0        # number of the first video frame of the file (counted from the container start; 0 for old lists)
+    first_unknown: bool = False  # True: first_frame is not known yet (a list from VB6 or an older version, an imported job); it is looked up once (upgrade_legacy)
 
     @property
     def frames(self) -> int:
@@ -87,7 +88,7 @@ def parse_segments(csv_text: str) -> list[Segment]:
             vbitrate_kbit=int(r[10] or 0), abitrate_kbit=int(r[11] or 0), audio_sel=r[12],
             crop_top=int(r[13] or 0), crop_bottom=int(r[14] or 0),
             crop_left=int(r[15] or 0), crop_right=int(r[16] or 0),
-            sample_rate=int(r[17] or 0), mask=r[18]))
+            sample_rate=int(r[17] or 0), mask=r[18], first_unknown=True))        # (the CSV does not know the first frame)
     return segs
 
 
