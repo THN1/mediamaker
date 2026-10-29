@@ -60,6 +60,9 @@ class Base:
         return out
 
     def __init__(self, *args, **kwargs):
+        for given in (*args, *kwargs.values()):                 # like Qt (shiboken): an object whose base class is not initialised yet cannot be a parent or argument
+            if isinstance(given, Base) and "_args" not in vars(given):
+                raise RuntimeError(f"libshiboken: '__init__' method of object's base class ({type(given).__name__}) not called.")
         self._args = args
         self.calls = []
         self._signals = {}

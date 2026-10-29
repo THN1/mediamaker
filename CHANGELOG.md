@@ -6,6 +6,10 @@
 - **Timeline: the red line is behind the pictures**. `timeline.draw_strip` painted it once more over the thumbnails (and over the grey placeholders); the form has the red control
   `Line1`, which lies behind the timeline like a line of VB6, so it now shows in the gap between the two pictures of the cut and above and below the strip, as it does when the
   timeline is empty.
+- **Fix: the program did not start** after the previous change ("RuntimeError: libshiboken: '__init__' method of object's base class (frmMain) not called."). The object for the
+  pictures of ffmpeg was made in the constructor of the main window BEFORE the base class was initialised, with the window as its parent, which Qt does not allow. It is made
+  right after the base class now. The replacement for Qt in the tests did not check this; it raises the same error now when an object whose base class is not initialised is given as a
+  parent or argument (the old code fails with it, the new one runs).
 - **Preview while the film is stopped: pictures from ffmpeg (option `paused_preview`, vlc|ffmpeg, default vlc, group Technical, applies at once; `player = memory` only)**. With VLC the
   preview followed the slider only about ten times in the stopped state and then got stuck (while the film runs it does not). With `ffmpeg` every picture of the stopped film is read
   by ffmpeg (`stills.py`, one process at a time; newer requests replace each other while one is read, so the picture follows the slider with a short delay and the last one counts) and

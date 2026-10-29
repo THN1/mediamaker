@@ -148,8 +148,6 @@ class frmMain(frmMainBase):
         self._verify_first: set = set()                # files opened just now: the first picture of the thumbnails confirms the first frame
         self.verify_first_frame = True                 # False: take the first frame from the stream data as it is (tests)
         self._frame_fn = frame_fn
-        self.stills = StillPreview(frame_fn, self)      # single pictures from ffmpeg for the preview while the film is stopped (option paused_preview)
-        self.stills.ready.connect(self.still_ready)
         self._still_frame = None                        # the frame whose picture ffmpeg put into the preview (None: VLC shows the picture)
         self._aspect_fn = display_aspect               # proportions of the picture as a player shows it
         self._aspects: dict = {}
@@ -184,6 +182,8 @@ class frmMain(frmMainBase):
         self.timeline_mode: Optional[str] = None  # "A" or "B" (marker the timeline is attached to)
         self._bold_row = -1
         super().__init__(parent)
+        self.stills = StillPreview(frame_fn, self)                    # single pictures from ffmpeg for the preview while the film is stopped (option paused_preview);
+        self.stills.ready.connect(self.still_ready)                   # made only HERE: with `self` as parent it needs the base class to be initialised
         vbqt.on_click(self.lblInfo, self.lblInfo_Click)               # VB6 had no event for this
         self.lblInfo.setToolTip("Click to jump to a frame number")
         player.attach(self.VLC)
