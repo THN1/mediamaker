@@ -272,7 +272,7 @@ def default_options() -> dict:
             "pause": "160", "detect": "0", "aflags": "", "subtitle": "0", "multilanguage": "False",
             "step_end": "40", "step_next": "240", "border_tol": "3", "cut_window": "5",
             "logo_edge": "18", "logo_conf": "0.2", "cut_diff": "30", "path_map": "",
-            "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "file_dialog": "qt", "sessions_dir": "", "avidemux": "", "vlc": "", "cutpoint_filters": "on", "restore_backup": "on", "copy_mode_notice": "on"}
+            "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "file_dialog": "qt", "sessions_dir": "", "avidemux": "", "vlc": "", "cutpoint_filters": "on", "restore_backup": "on", "copy_mode_notice": "on", "paused_preview": "vlc"}
 
 
 # explanations for keys that are still missing in the INI file (section [ToolTipText])
@@ -300,6 +300,9 @@ DEFAULT_TOOLTIPS = {
     'subtitle': 'Add subtitles from the given track(s) number(s), separated by ",", or zero (0) to disable subtitling (use Ctrl-K or menu Edit => Media info)',
     'multilanguage': 'False (default) or True; allows to add secondary language stream(s), if present in source video (EXPERIMENTAL)',
     # options added in the Python version
+    "paused_preview": "Preview while the film is stopped (player = memory only): vlc = VLC jumps to the slider position (it can get stuck after about ten jumps); ffmpeg = the pictures are "
+                      "read by ffmpeg (frame exact, with the same frame numbers as the thumbnails; a little slower, a picture follows the slider with a short delay); Play then jumps VLC to "
+                      "the shown position; applies at once",
     "copy_mode_notice": "Copy mode: on = the warning that copy mode has been switched on again (at the start of the program, when a session is restored and when a job is imported "
                         "from the batch file) is shown, with the check box \"Show this warning next time\"; off = it is not shown any more (the check box switches this off); applies at once",
     "restore_backup": "Restore session: on = the check box \"Save the current state as a session first\" is ticked when the window opens; the program remembers "

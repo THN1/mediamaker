@@ -41,6 +41,7 @@ from frames import grab_frame, grab_numbered, grab_scanlines        # noqa: E402
 import dedup                                                          # noqa: E402
 import copymode                                                       # noqa: E402
 import containers                                                     # noqa: E402
+from stills import StillPreview                                       # noqa: E402
 import mediaprobe                                                     # noqa: E402
 import chapters                                                       # noqa: E402
 import cropping                                                       # noqa: E402
@@ -147,6 +148,9 @@ class frmMain(frmMainBase):
         self._verify_first: set = set()                # files opened just now: the first picture of the thumbnails confirms the first frame
         self.verify_first_frame = True                 # False: take the first frame from the stream data as it is (tests)
         self._frame_fn = frame_fn
+        self.stills = StillPreview(frame_fn, self)      # single pictures from ffmpeg for the preview while the film is stopped (option paused_preview)
+        self.stills.ready.connect(self.still_ready)
+        self._still_frame = None                        # the frame whose picture ffmpeg put into the preview (None: VLC shows the picture)
         self._aspect_fn = display_aspect               # proportions of the picture as a player shows it
         self._aspects: dict = {}
         self._border_fn = border_fn
@@ -429,6 +433,7 @@ class frmMain(frmMainBase):
         if self._modal_child is not None:                            # the crop window is open: cancel it
             self._modal_child.reject()
         self.save_copy_mode()                                        # (it is saved at every change too; this is for safety)
+        self.stills.shutdown()
         workers = (self._counters + self._thumb_loaders + ([self._seek_worker] if self._seek_worker else [])
                    + ([self._render_worker] if self._render_worker else []))
         for worker in workers:
@@ -713,6 +718,8 @@ class frmMain(frmMainBase):
         self.current = row
         seg = self.segment
         self.fraCrop[0].hide()                                        # a rectangle that was being placed belongs to the previous segment
+        self._still_frame = None
+        self.stills.cancel()
         self.player.stop()
         self.highlight()
         self.timeline_mode = self.timeline_center = None
@@ -761,7 +768,10 @@ class frmMain(frmMainBase):
         if self.segment is None:
             return
         value = self.Slider1.value()
-        self.player.set_time(self.f2t(value))
+        if self.still_mode():
+            self.show_still(value)                                  # the film is stopped: the picture comes from ffmpeg, VLC is not asked
+        else:
+            self.player.set_time(self.f2t(value))
         self._show_frame_info(value)
 
     def vscVolume_Scroll(self):
@@ -772,7 +782,39 @@ class frmMain(frmMainBase):
         """Show a still picture at `frame`. The time messages VLC still sends from the old position when starting
                 would otherwise reset the display and the slider to that position."""
         self._ignore_time_until = self._clock() + 1.5
-        self.player.show_at(self.f2t(frame))
+        self.display_frame(frame)
+
+    def still_mode(self) -> bool:
+        """Does the picture come from ffmpeg now? Option paused_preview = ffmpeg, the film is stopped (not running) after its first picture, and the player can show our pictures."""
+        return (self.options.get("paused_preview", "vlc") == "ffmpeg" and self.segment is not None and self.player.supports_images
+                and self.player.is_started and not self.player.is_playing)
+
+    def display_frame(self, frame: int) -> None:
+        """The picture at `frame` while the film is stopped: from ffmpeg (still_mode) or by a jump of VLC."""
+        if self.still_mode():
+            self.show_still(frame)
+        else:
+            self._still_frame = None
+            self.player.show_at(self.f2t(frame))
+
+    def show_still(self, frame: int) -> None:
+        self._still_frame = frame
+        seg = self.segment
+        self.stills.request(seg.path, frame, seg.fps)
+
+    def still_ready(self, path: str, frame: int, image) -> None:
+        """A picture from ffmpeg has arrived (a little behind the slider while it is being moved). Shown only if it still belongs here."""
+        seg = self.segment
+        if seg is None or seg.path != path or self._still_frame is None or self.player.is_playing:
+            return
+        self.player.show_image(image)
+
+    def leave_still(self) -> None:
+        """VLC was not asked while the pictures came from ffmpeg: before it plays it is told where the picture is."""
+        if self._still_frame is not None and self.segment is not None:
+            frame, self._still_frame = self._still_frame, None
+            self.stills.cancel()
+            self.player.set_time(self.f2t(frame))
 
     def _go(self, frame: int) -> None:
         self.Slider1.setValue(max(self.Slider1.minimum(), min(self.Slider1.maximum(), int(frame))))
@@ -794,6 +836,7 @@ class frmMain(frmMainBase):
                 self.player.pause()
             elif self.player.has_media:
                 self._ignore_time_until = 0.0                         # the user starts: time messages count again
+                self.leave_still()
                 self.player.play()
         elif index == 4:
             self._go(slider.value() + 1)
@@ -2331,7 +2374,7 @@ class frmMain(frmMainBase):
             return
         frame = max(seg.first_frame, min(seg.total_frames, frame))
         self._go(frame)
-        self.player.show_at(self.f2t(frame))
+        self.display_frame(frame)
         self._show_frame_info(frame)
 
     # ------------------------------------------------------------------ Timeline

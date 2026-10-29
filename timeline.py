@@ -73,8 +73,8 @@ def draw_strip(painter, rect, cells: list) -> None:
             painter.setPen(red)
             painter.drawLine(x0, top, x0 + cw, top + height)
             painter.drawLine(x0, top + height, x0 + cw, top)
-    line_x = rect.x() + (len(cells) // 2) * cw
-    painter.fillRect(line_x - LINE_WIDTH // 2, top, LINE_WIDTH, height, red)
+    # (the red line is NOT drawn here: it is the control Line1 of the form, which lies BEHIND the timeline like a line of VB6, so it shows in the gap between the two
+    # pictures of the cut and above and below the strip, but not over the pictures)
 
 
 class ThumbLoader(QtCore.QThread):

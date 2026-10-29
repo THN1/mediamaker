@@ -797,7 +797,7 @@ def test_timeline(tmp, videos):
     painter = Painter()
     win.timeline_paint(painter, Rect(2, 2, 1085, 45))
     check(len(painter.images) == 20 and painter.images[0] == (2, 2) and painter.images[10] == (2 + 10 * cw, 2)
-          and painter.lines == [] and painter.fills == [(2 + 10 * cw - 1, 2, 3, 45)], f"drawing: {painter.fills}")
+          and painter.lines == [] and painter.fills == [], f"drawing: 20 pictures, and the red line is NOT painted over them: {painter.fills}")
     seg.start = 0
     win.cmdPos_Click(9)
     painter = Painter()
@@ -1050,7 +1050,12 @@ def test_thumbnail_errors(tmp, videos):
     painter = Painter()
     tl.draw_strip(painter, __import__("PySide6.QtWidgets", fromlist=["Rect"]).Rect(2, 2, 1085, 45),
                   [("pending", None)] * 20)
-    check(len(painter.fills) == 21 and painter.lines == [], f"20 grey placeholders and the line: {len(painter.fills)}")
+    check(len(painter.fills) == 20 and painter.lines == [], f"20 grey placeholders, and NO red line over them: {len(painter.fills)}")
+    painter2 = Painter()
+    tl.draw_strip(painter2, __import__("PySide6.QtWidgets", fromlist=["Rect"]).Rect(2, 2, 1085, 45), [("image", None)] * 20)
+    check(painter2.fills == [] and painter2.lines == [], "pictures: nothing is painted over them")
+    kids = win.Line1.parent_.children_
+    check(kids.index(win.Line1) < kids.index(win.picTimeline), "the red line of the form lies behind the timeline (it is created before it): it shows between the pictures and above and below the strip")
     print("Thumbnail errors: OK (start times without value, error message, once, title, placeholders)")
 
 
@@ -5815,6 +5820,99 @@ def run_ffmpeg_real(cmd, total, on_progress, cwd=None, cancel=None):
     return run_ffmpeg(cmd, total, on_progress, cwd=cwd, cancel=cancel)
 
 
+def test_paused_preview(tmp, videos):
+    """While the film is stopped the pictures of the preview can come from ffmpeg (option paused_preview = ffmpeg) instead of jumps of VLC, which can get stuck."""
+    import numpy as np
+    from fractions import Fraction as F
+    from PySide6 import QtCore
+    from mediaprobe import first_frame_number
+    from player import FakePlayer
+    from stills import StillPreview
+    fetched = []
+
+    def fake_frame(path, frame, fps):
+        fetched.append(frame)
+        return np.full((12, 16, 3), frame % 256, np.uint8)
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="stillwin", first_fn=first_frame_number, frame_fn=fake_frame)
+    player, seg = win.player, win.segments[0]
+    images = lambda: player.log.count("image")
+    # --- the default (vlc): jumps of VLC, no pictures from ffmpeg
+    check(win.options["paused_preview"] == "vlc" and not win.still_mode(), "default: VLC")
+    fetched.clear()
+    win._go(seg.first_frame + 40)
+    check(player.time == win.f2t(seg.first_frame + 40) and fetched == [] and images() == 0, "VLC: the slider makes VLC jump, ffmpeg is not asked")
+    # --- ffmpeg while the film is stopped
+    win.settings.set_option("paused_preview", "ffmpeg")
+    check(win.still_mode() and player.is_started and not player.is_playing, "the film is stopped after its first picture: the pictures come from ffmpeg")
+    fetched.clear()
+    time_before = player.time
+    win._go(seg.first_frame + 60)
+    check(fetched == [seg.first_frame + 60] and images() == 1 and player.time == time_before and win._still_frame == seg.first_frame + 60
+          and win.lblInfo.text() == "Frame 60", f"the slider: ffmpeg is asked, the picture is shown, VLC is NOT asked: {fetched}, {images()}")
+    check(player.preview.shape == (12, 16, 3) if hasattr(player.preview, "shape") else player.preview._args[1:3] == (16, 12), "(the picture is the one of ffmpeg: QImage 16 x 12)")
+    for frame in (seg.first_frame + 61, seg.first_frame + 62, seg.first_frame + 63):
+        win._go(frame)
+    check(fetched[-3:] == [seg.first_frame + 61, seg.first_frame + 62, seg.first_frame + 63] and player.time == time_before, "many jumps in a row: VLC is never asked (it can get stuck after about ten)")
+    # --- a picture of another film or one that arrives late is not shown
+    shown = images()
+    win.still_ready("/other/film.ts", 5, "x")
+    check(images() == shown, "a picture of another film is ignored")
+    # --- Play: VLC is told where the picture is, then it plays
+    win.cmdPos_Click(3)
+    check(player.log[-2:] == ["play"] or player.log[-1] == "play", f"Play starts the player: {player.log[-3:]}")
+    check(player.time >= win.f2t(seg.first_frame + 63) and win._still_frame is None and player.is_playing, f"VLC was told the position of the picture before it played: {player.time}")
+    win._go(seg.first_frame + 90)                                 # while the film runs the slider makes VLC jump (as before)
+    check(player.time == win.f2t(seg.first_frame + 90) and fetched[-1] == seg.first_frame + 63 and not win.still_mode(), "playing: VLC jumps, no picture from ffmpeg")
+    win.cmdPos_Click(3)                                           # pause
+    win._go(seg.first_frame + 100)
+    check(fetched[-1] == seg.first_frame + 100 and win._still_frame == seg.first_frame + 100, "stopped again: pictures from ffmpeg again")
+    # --- jumps of the program (marker, search result) while stopped
+    fetched.clear()
+    win.seek_done(seg.first_frame + 120)
+    check(fetched[-1:] == [seg.first_frame + 120], "a result of a search is shown from ffmpeg too")
+    # --- a player that cannot show our pictures (embed): VLC as before
+    player.supports_images = False
+    time_before = player.time
+    win._go(seg.first_frame + 20)
+    check(not win.still_mode() and player.time == win.f2t(seg.first_frame + 20) and player.time != time_before, "player = embed: no pictures from ffmpeg, VLC jumps")
+    player.supports_images = True
+    # --- a new film: no old picture, the first picture comes from VLC (it is not started yet)
+    win.lvwSegments.select_row(0)
+    player.stop()
+    shown, fetched_before = images(), len(fetched)
+    check(not win.still_mode(), "a film that is not started yet: VLC shows the first picture")
+    # --- StillPreview: while a picture is read newer requests replace each other
+    reads, got = [], []
+    holder = {}
+
+    def slow_grab(path, frame, fps):
+        reads.append(frame)
+        if frame == 10:                                           # while the picture 10 is being read the slider moves on
+            holder["p"].request(path, 11, fps)
+            holder["p"].request(path, 12, fps)
+        return np.zeros((6, 8, 3), np.uint8)
+    preview = StillPreview(slow_grab)
+    holder["p"] = preview
+    preview.ready.connect(lambda path, frame, image: got.append(frame))
+    preview.request("/x.ts", 10, F(25))
+    check(reads == [10, 12] and got == [10, 12] and not preview.busy, f"11 is skipped, the newest request is read next: {reads}, shown {got}")
+    preview.cancel()
+    got.clear()
+    preview.request("/x.ts", 20, F(25))
+    check(got == [20], "after cancel new requests work")
+    failing = StillPreview(lambda path, frame, fps: (_ for _ in ()).throw(RuntimeError("no picture")))
+    failing.request("/x.ts", 1, F(25))
+    check(not failing.busy, "a picture that cannot be read: nothing shown, nothing hangs")
+    # --- a real picture from ffmpeg
+    from frames import grab_frame
+    real = []
+    live = StillPreview(grab_frame)
+    live.ready.connect(lambda path, frame, image: real.append((frame, image._args[1:3])))
+    live.request(os.path.join(videos, "sample2.ts"), 30, F(25))
+    check(real == [(30, (720, 576))], f"ffmpeg delivers the picture in the size of the film: {real}")
+    print("Paused preview: OK (VLC as before, pictures from ffmpeg, Play, coalescing, other player, real picture)")
+
+
 def test_counting_note(tmp, videos):
     """The note "counting frames" in the title goes away whenever a counting ends: with a result, cancelled, with an error, or when the file cannot be read."""
     import mediamaker
@@ -5985,6 +6083,7 @@ def main():
     test_copy_mode_remembered(tmp, sys.argv[1])
     test_copy_notice(tmp, sys.argv[1])
     test_containers(tmp, sys.argv[1])
+    test_paused_preview(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])

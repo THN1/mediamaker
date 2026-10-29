@@ -3,6 +3,15 @@
 ## 0.6 (in progress)
 
 - Version number set to 0.6-dev.
+- **Timeline: the red line is behind the pictures**. `timeline.draw_strip` painted it once more over the thumbnails (and over the grey placeholders); the form has the red control
+  `Line1`, which lies behind the timeline like a line of VB6, so it now shows in the gap between the two pictures of the cut and above and below the strip, as it does when the
+  timeline is empty.
+- **Preview while the film is stopped: pictures from ffmpeg (option `paused_preview`, vlc|ffmpeg, default vlc, group Technical, applies at once; `player = memory` only)**. With VLC the
+  preview followed the slider only about ten times in the stopped state and then got stuck (while the film runs it does not). With `ffmpeg` every picture of the stopped film is read
+  by ffmpeg (`stills.py`, one process at a time; newer requests replace each other while one is read, so the picture follows the slider with a short delay and the last one counts) and
+  put into the preview (`Player.show_image`); VLC is not asked at all. Pressing Play tells VLC the position of the picture first (`leave_still`), then it plays; while the film runs
+  the slider makes VLC jump as before. The first picture of a film (it is not started yet) still comes from VLC. The pictures have the frame numbers of the thumbnails and the cut (VLC
+  was seen to show a picture 17 frames later). Not tried with a real libvlc here (there is none): the logic is tested with the replacement player and a real ffmpeg picture.
 - **Save as: ONE dialog for all file types** (`containers.py`). "Save as MP4" and "Save as AVI" are one entry "Save as..." (the form still has the two; at the start the first one is
   renamed and the second hidden, so the VB6 form can be changed later: an entry `mnuSaveAs` in the form is used as it is, `mnuSaveAs_Click` exists). The dialog offers mp4, mkv, avi and ts
   (and All files), the type chosen last in this run at the top. The extension of the name decides the file type; without one, or with something that is no file type of the program (the dot

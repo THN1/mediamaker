@@ -58,6 +58,16 @@ class Player(QtCore.QObject):
         """Shows the picture at `ms` in the paused state (briefly start playback, jump, pause)."""
         raise NotImplementedError
 
+    supports_images = False                                  # can the program put its own pictures into the preview (show_image)? Only the memory player.
+
+    def show_image(self, image) -> None:
+        """Shows a picture (QImage) from outside in the preview (the still pictures of ffmpeg, see stills.py)."""
+
+    @property
+    def is_started(self) -> bool:
+        """Is a film started in the player (running or paused at a position), so that it can be told to jump? Before that the first picture comes via show_at."""
+        return False
+
     @property
     def is_playing(self) -> bool:
         raise NotImplementedError
@@ -163,6 +173,16 @@ class FakePlayer(Player):
 
     def preview_image(self):
         return getattr(self, "preview", None)
+
+    supports_images = True
+
+    def show_image(self, image) -> None:
+        self.log.append("image")
+        self.preview = image
+
+    @property
+    def is_started(self) -> bool:
+        return self._state in ("playing", "paused")
 
     def show_at(self, ms: int) -> None:
         self.log.append(f"show_at {ms}")
@@ -631,6 +651,17 @@ class MemoryVlcPlayer(VlcPlayer):
     def preview_image(self):
         image = self.surface.image if self.surface is not None else None
         return image.copy() if image is not None and hasattr(image, "copy") else image
+
+    supports_images = True
+
+    def show_image(self, image) -> None:
+        if self.surface is not None and not self._closed:
+            self.surface.set_image(image)
+
+    @property
+    def is_started(self) -> bool:
+        State = self._vlc.State
+        return not self._closed and self._awaiting_position is None and self.mp.get_state() in (State.Playing, State.Paused)
 
     def load(self, path: str, size: Optional[tuple] = None) -> None:
         self.stop()                                              # change the memory only without running playback

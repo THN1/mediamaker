@@ -28,6 +28,7 @@ PRESETS = {
     "cutpoint_filters": ["on", "off"],
     "restore_backup": ["on", "off"],
     "copy_mode_notice": ["on", "off"],
+    "paused_preview": ["vlc", "ffmpeg"],
 }
 
 
@@ -85,7 +86,7 @@ OPTION_GROUPS = (
     ("Logo", ("overlay_opacity",)),
     ("Audio/Subtitles", ("audio", "multilanguage", "subtitle", "aflags")),
     ("Batch", ("path_map", "batch")),
-    ("Technical", ("floor", "detect", "player", "vlc_args", "hide_messages", "dialog_style", "file_dialog", "sessions_dir", "restore_backup", "copy_mode_notice", "cutpoint_filters")),
+    ("Technical", ("floor", "detect", "player", "vlc_args", "hide_messages", "dialog_style", "file_dialog", "sessions_dir", "restore_backup", "copy_mode_notice", "paused_preview", "cutpoint_filters")),
     ("Tools", ("avidemux", "vlc")),
 )
 
@@ -128,6 +129,8 @@ def validate_options(o: dict) -> list[str]:
             errors.append(f'"{key}" must not contain double quotes.')
     if "player" in o and o["player"] not in ("memory", "embed"):
         errors.append('"player" must be memory or embed.')
+    if "paused_preview" in o and o["paused_preview"] not in ("vlc", "ffmpeg"):
+        errors.append('"paused_preview" must be vlc or ffmpeg.')
     if "copy_mode_notice" in o and o["copy_mode_notice"] not in ("on", "off"):
         errors.append('"copy_mode_notice" must be on or off.')
     if "restore_backup" in o and o["restore_backup"] not in ("on", "off"):
