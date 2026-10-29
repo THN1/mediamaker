@@ -1,5 +1,9 @@
 # Changes
 
+## 0.7 (in progress)
+
+- Version number set to 0.7-dev.
+
 ## 0.6
 
 Sixth frozen state: one dialog "Save as" for mp4, mkv, avi and ts with the check of what each type can hold, copy mode in the batch file, in the import, in sessions and remembered for the
