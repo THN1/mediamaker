@@ -58,6 +58,12 @@ class Player(QtCore.QObject):
         """Shows the picture at `ms` in the paused state (briefly start playback, jump, pause)."""
         raise NotImplementedError
 
+    @property
+    def settled(self) -> bool:
+        """Has the preview shown its picture and stopped? (VLC plays for a moment when it is sent to a new place: show_at.) Things that start work at the same time
+        wait for this, so that a picture running by does not confuse."""
+        return True
+
     supports_images = False                                  # can the program put its own pictures into the preview (show_image)? Only the memory player.
 
     def show_image(self, image) -> None:
@@ -175,6 +181,11 @@ class FakePlayer(Player):
         return getattr(self, "preview", None)
 
     supports_images = True
+    _settled = True                                              # in the test: False while the "preview" is still running
+
+    @property
+    def settled(self) -> bool:
+        return self._settled
 
     def show_image(self, image) -> None:
         self.log.append("image")
@@ -653,6 +664,11 @@ class MemoryVlcPlayer(VlcPlayer):
         return image.copy() if image is not None and hasattr(image, "copy") else image
 
     supports_images = True
+
+    @property
+    def settled(self) -> bool:
+        """Not waiting for the picture of show_at (position not reached, not yet paused) and not playing."""
+        return self._closed or (self._awaiting_position is None and self._pending_show is None and not self.mp.is_playing())
 
     def show_image(self, image) -> None:
         if self.surface is not None and not self._closed:

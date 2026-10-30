@@ -6339,6 +6339,63 @@ def test_batch_run_now(tmp, videos):
     print("Batch, Run now?: OK (home folder, terminal commands, question, errors)")
 
 
+def test_duplicate_waits(tmp, videos):
+    """After duplicating a segment the search for the end of the commercial starts only when the preview (VLC plays the new segment for a moment) has stopped again."""
+    from PySide6 import QtCore as QC
+    from mediaprobe import first_frame_number
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="dupwait", first_fn=first_frame_number)
+    win.segments[0].end = 60
+    calls = []
+    win.mnuEnd_Click = lambda: calls.append("end")
+    player = win.player
+
+    def run_timers():
+        items = list(QC.QTimer.pending)
+        QC.QTimer.pending.clear()
+        for ms, fn in items:
+            fn()
+        return len(items)
+    QC.QTimer.pending.clear()
+    # --- the preview is quiet: the search starts at once
+    win.cmdCommand_Click(4)
+    check(calls == ["end"] and len(win.segments) == 2, f"preview quiet: the search starts at once: {calls}")
+    # --- VLC still plays the new segment: nothing yet, it is looked at again and again
+    calls.clear()
+    player._settled = False
+    win.segments[-1].end = 60
+    win.current = len(win.segments) - 1
+    win.cmdCommand_Click(4)
+    check(calls == [] and len(QC.QTimer.pending) == 1 and QC.QTimer.pending[0][0] == 100, f"preview busy: the search waits, a timer of 100 ms: {calls} {QC.QTimer.pending}")
+    run_timers()
+    run_timers()
+    check(calls == [] and len(QC.QTimer.pending) == 1, "still busy: still waiting")
+    player._settled = True
+    run_timers()
+    check(calls == ["end"] and not QC.QTimer.pending, f"the preview has stopped: the search starts (once): {calls}")
+    # --- the preview never settles: after 5 seconds the search starts anyway
+    calls.clear()
+    player._settled = False
+    win.segments[-1].end = 60
+    win.current = len(win.segments) - 1
+    win.cmdCommand_Click(4)
+    rounds = 0
+    while QC.QTimer.pending and rounds < 100:
+        run_timers()
+        rounds += 1
+    check(calls == ["end"] and rounds == 50, f"never quiet: the search starts after 5 s ({rounds} rounds): {calls}")
+    # --- the program is being closed: nothing is started
+    calls.clear()
+    player._settled = False
+    win.segments[-1].end = 60
+    win.current = len(win.segments) - 1
+    win.cmdCommand_Click(4)
+    win._closing = True
+    run_timers()
+    check(calls == [] and not QC.QTimer.pending, "closing: the search is not started")
+    player._settled = True
+    print("Duplicate and search: OK (waits for the preview, gives up after 5 s, not when closing)")
+
+
 def test_counting_note(tmp, videos):
     """The note "counting frames" in the title goes away whenever a counting ends: with a result, cancelled, with an error, or when the file cannot be read."""
     import mediamaker
@@ -6515,6 +6572,7 @@ def main():
     test_multitrack(tmp, sys.argv[1])
     test_multitrack_window(tmp, sys.argv[1])
     test_batch_run_now(tmp, sys.argv[1])
+    test_duplicate_waits(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])

@@ -151,6 +151,7 @@ class frmMain(frmMainBase):
         self.verify_first_frame = True                 # False: take the first frame from the stream data as it is (tests)
         self._frame_fn = frame_fn
         self._track_fn = track_fn                        # the audio and subtitle tracks of a file (for the multitrack dialog)
+        self._closing = False                           # the program is being closed: nothing is started any more
         self.track_choice = None                        # the last choice of the multitrack dialog (tracks.Choice), None: Cancel or never asked
         self._still_frame = None                        # the frame whose picture ffmpeg put into the preview (None: VLC shows the picture)
         self._aspect_fn = display_aspect               # proportions of the picture as a player shows it
@@ -443,6 +444,7 @@ class frmMain(frmMainBase):
             self.highlight()
 
     def Form_Unload(self):
+        self._closing = True
         """Window is being closed: cancel counting and end playback cleanly before Qt tears down the video area.
                 (A thread that is still running at exit would crash the program.)"""
         if self._modal_child is not None:                            # the crop window is open: cancel it
@@ -2150,7 +2152,19 @@ class frmMain(frmMainBase):
         # are still in the list (e.g. from earlier tests), that should not prevent the new
         # segment from finding its movie start.
         debug_log(f"duplicate: searching for the start of the movie from frame {self.shown(target)} (several sources: {self.multiple()})")
-        self.mnuEnd_Click()
+        self.after_preview_settled(self.mnuEnd_Click)                # not while VLC still plays the new segment for a moment: that confuses
+
+    PREVIEW_WAIT_MS = 5000                                            # how long to wait for the preview at most
+
+    def after_preview_settled(self, action, waited_ms: int = 0) -> None:
+        """Runs `action` when the preview has shown its picture and stopped again (when a new segment is shown, VLC plays it for a moment); gives up waiting after
+        PREVIEW_WAIT_MS (then the action runs anyway), and does nothing if the program is being closed."""
+        if self._closing:
+            return
+        if self.player.settled or waited_ms >= self.PREVIEW_WAIT_MS:
+            action()
+            return
+        QtCore.QTimer.singleShot(100, lambda: self.after_preview_settled(action, waited_ms + 100))
 
     # ------------------------------------------------------------------ Seeking movie and commercials
     def logo_reference(self, seg: Segment):

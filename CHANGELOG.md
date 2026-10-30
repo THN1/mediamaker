@@ -3,6 +3,9 @@
 ## 0.7 (in progress)
 
 - Version number set to 0.7-dev.
+- **Duplicate segment: the search for the end of the commercial waits for the preview.** When a segment is duplicated, VLC plays the new segment for a moment (it is sent to the new place and
+  paused again) while the search already ran; that was confusing. The search now starts when the preview has stopped (`Player.settled`; the memory player: no jump to a position and no
+  pause pending, not playing), checked every 100 ms; after 5 seconds it starts anyway, and not at all if the program is being closed (`frmMain.after_preview_settled`).
 - **README.md rewritten** (it is the text that GitHub shows under the files): what the program does (cutting, picture, tracks and chapters, saving and automation), the supported input and
   output formats (with what each output type can hold), requirements, start, options, tests.
 - **Help text of `batch`**: the old default text ("... empty: next to the INI file, with the extension .sh ...") in an INI file is replaced by the current one (`settings.OUTDATED_TOOLTIPS`;
