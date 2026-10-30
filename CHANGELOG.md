@@ -4,8 +4,12 @@
 
 - Version number set to 0.7-dev.
 - **Duplicate segment: the search for the end of the commercial waits for the preview.** When a segment is duplicated, VLC plays the new segment for a moment (it is sent to the new place and
-  paused again) while the search already ran; that was confusing. The search now starts when the preview has stopped (`Player.settled`; the memory player: no jump to a position and no
-  pause pending, not playing), checked every 100 ms; after 5 seconds it starts anyway, and not at all if the program is being closed (`frmMain.after_preview_settled`).
+  paused again) while the search already ran; that was confusing. The first version only asked the player (`Player.settled`: no jump or pause pending, not playing) and did not help in a real
+  run (the flags of the player do not show every case: after `stop()` libvlc can still report the state of the old medium, then a jump looks like one in a running medium and no flag is set).
+  Now the preview is also WATCHED (`frmMain.after_preview_settled`, every 100 ms): the search starts when the player says it is quiet (the memory player also needs a state of VLC that is
+  not Opening, Buffering or Playing), at least 500 ms have passed (VLC needs a moment) and the TIME of the preview has not moved since the look before; after 5 seconds it starts anyway, and
+  not at all if the program is being closed. Tested with the replacement player and with the real `MemoryVlcPlayer` on a simulated VLC (its states, a stale state without flags, a moving time).
+  Every look is written to the debug log (`MEDIAMAKER_DEBUG=1`: "waiting for the preview: ...").
 - **README.md rewritten** (it is the text that GitHub shows under the files): what the program does (cutting, picture, tracks and chapters, saving and automation), the supported input and
   output formats (with what each output type can hold), requirements, start, options, tests.
 - **Help text of `batch`**: the old default text ("... empty: next to the INI file, with the extension .sh ...") in an INI file is replaced by the current one (`settings.OUTDATED_TOOLTIPS`;

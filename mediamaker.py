@@ -2154,17 +2154,24 @@ class frmMain(frmMainBase):
         debug_log(f"duplicate: searching for the start of the movie from frame {self.shown(target)} (several sources: {self.multiple()})")
         self.after_preview_settled(self.mnuEnd_Click)                # not while VLC still plays the new segment for a moment: that confuses
 
+    PREVIEW_MIN_MS = 500                                              # the preview is looked at only after this time (VLC needs a moment to start)
     PREVIEW_WAIT_MS = 5000                                            # how long to wait for the preview at most
 
-    def after_preview_settled(self, action, waited_ms: int = 0) -> None:
-        """Runs `action` when the preview has shown its picture and stopped again (when a new segment is shown, VLC plays it for a moment); gives up waiting after
-        PREVIEW_WAIT_MS (then the action runs anyway), and does nothing if the program is being closed."""
+    def after_preview_settled(self, action, waited_ms: int = 0, last_time=None) -> None:
+        """Runs `action` when the preview has shown its picture and stopped again (when a new segment is shown, VLC plays it for a moment).
+
+        VLC cannot be trusted to say when that is (after stop() its state can still be the old one for a while, so a jump looks like one in a running medium), so the
+        preview is also WATCHED: it counts as quiet when the player says so (Player.settled), at least PREVIEW_MIN_MS have passed, and its time has not moved since the
+        last look (100 ms before). After PREVIEW_WAIT_MS the action runs anyway; if the program is being closed, it does not run."""
         if self._closing:
             return
-        if self.player.settled or waited_ms >= self.PREVIEW_WAIT_MS:
+        now = self.player.get_time() if self.player.has_media else None
+        quiet = self.player.settled and now == last_time
+        debug_log(f"waiting for the preview: {waited_ms} ms, settled={self.player.settled}, time={now} (before: {last_time})")
+        if (waited_ms >= self.PREVIEW_MIN_MS and quiet) or waited_ms >= self.PREVIEW_WAIT_MS:
             action()
             return
-        QtCore.QTimer.singleShot(100, lambda: self.after_preview_settled(action, waited_ms + 100))
+        QtCore.QTimer.singleShot(100, lambda: self.after_preview_settled(action, waited_ms + 100, now))
 
     # ------------------------------------------------------------------ Seeking movie and commercials
     def logo_reference(self, seg: Segment):

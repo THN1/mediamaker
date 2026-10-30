@@ -668,7 +668,11 @@ class MemoryVlcPlayer(VlcPlayer):
     @property
     def settled(self) -> bool:
         """Not waiting for the picture of show_at (position not reached, not yet paused) and not playing."""
-        return self._closed or (self._awaiting_position is None and self._pending_show is None and not self.mp.is_playing())
+        if self._closed:
+            return True
+        State = self._vlc.State
+        quiet = (State.NothingSpecial, State.Paused, State.Stopped, State.Ended, State.Error)           # not Opening, Buffering or Playing
+        return self._awaiting_position is None and self._pending_show is None and self.mp.get_state() in quiet and not self.mp.is_playing()
 
     def show_image(self, image) -> None:
         if self.surface is not None and not self._closed:
