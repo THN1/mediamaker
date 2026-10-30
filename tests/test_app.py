@@ -6392,6 +6392,9 @@ def test_duplicate_waits(tmp, videos):
     duplicate()
     shows = [l for l in player.log if l.startswith("show_at")]
     check(len(shows) == 1 and len(win.segments) >= 2 and win.current == len(win.segments) - 1 and win.Slider1.value() > win.segments[-1].start, f"duplicating shows the file once: {shows}")
+    check(win.timeline_mode == "A" and win.picTimeline.called("setToolTip")[-1] == ("Click timeline to adjust left (low) segment limit",),
+          f"the timeline shows the cut point at marker A (as when marker A was shown): {win.timeline_mode}")
+    check(win.timeline_center == win.segments[-1].start, f"the timeline is centred on marker A of the new segment (frame {win.segments[-1].start}): {win.timeline_center}")
     # --- the preview is quiet: the search starts after the minimum time (500 ms), not at once
     duplicate()
     check(calls == [] and len(QC.QTimer.pending) == 1 and QC.QTimer.pending[0][0] == 100, f"even a quiet preview is looked at for 500 ms first: {calls} {QC.QTimer.pending}")

@@ -763,6 +763,9 @@ class frmMain(frmMainBase):
         self.vscVolume_Scroll()
         if show_marker:
             self.cmdPos_Click(9)                                      # to marker A; shows the picture and pauses
+        else:
+            self.set_timeline_marker("A")                             # (the timeline shows the cut point at marker A all the same: the pictures around it are fetched)
+            self.timeline_refresh()
 
     def lblInfo_Click(self):
         """Click on the frame number: input of a frame number to jump to."""
@@ -848,6 +851,12 @@ class frmMain(frmMainBase):
     def _go(self, frame: int) -> None:
         self.Slider1.setValue(max(self.Slider1.minimum(), min(self.Slider1.maximum(), int(frame))))
 
+    def set_timeline_marker(self, which: str) -> None:
+        """The timeline shows the pictures around marker A or B (the cut point) and its click moves that marker."""
+        self.timeline_mode = which
+        self._timeline_hint = ("Click timeline to adjust left (low) segment limit" if which == "A" else "Click timeline to adjust right (high) segment limit")
+        self.picTimeline.setToolTip(self._timeline_hint)
+
     def cmdPos_Click(self, index: int):
         seg = self.segment
         if seg is None:
@@ -893,10 +902,7 @@ class frmMain(frmMainBase):
                 self.cmdPos_Click(10)
         elif index in (9, 10):
             frame = seg.start if index == 9 else seg.end
-            self.timeline_mode = "A" if index == 9 else "B"
-            self._timeline_hint = ("Click timeline to adjust left (low) segment limit" if index == 9
-                                   else "Click timeline to adjust right (high) segment limit")
-            self.picTimeline.setToolTip(self._timeline_hint)
+            self.set_timeline_marker("A" if index == 9 else "B")
             if self.Slider1.value() == frame:
                 self.show_frame(frame)                                # show the picture even if the value does not change
                 self._show_frame_info(frame)

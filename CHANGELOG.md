@@ -9,6 +9,9 @@
   `select_segment(True)`), and the memory player notes when its last picture arrived (`picture_idle_ms`): the search starts only when no new picture has come for 300 ms
   (`PREVIEW_IDLE_MS`), besides the state, the unmoving time and the 500 ms. The wait dialog (blue) and the search are made in the same call (`_run_job`), so the dialog can not appear
   before the search starts; the log confirms it ("border search from frame ..." follows the last look at once).
+  * **Fix of a side effect found in the next debug log:** `cmdPos_Click(9)`, which duplicating no longer calls, also puts the TIMELINE on marker A (`timeline_mode`, tooltip, `timeline_refresh`), so the
+    pictures around the cut point were missing after duplicating ("thumbnails ..." was gone from the log). `select_segment(False)` does that part now (`set_timeline_marker`, `timeline_refresh`); the test
+    checks the mode, the tooltip and the centre of the timeline, and fails without it.
 - **More in the debug log** (`MEDIAMAKER_DEBUG=1`, file `mediamaker_debug.log` in the program folder): the time has milliseconds now (`log_line`), and the steps of the preview are logged:
   `display frame` (picture from ffmpeg or `show_at`), `show_at` (also the way without flags: "the medium is started already"), "VLC plays: pausing", "position ... reached", "duplicate: ...
   now waiting for the preview", every look of "waiting for the preview" and "search started", each with `Player.describe()` (state, playing, time, flags of VLC). The description is only made
