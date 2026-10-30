@@ -3,6 +3,7 @@
 ## 0.7 (in progress)
 
 - Version number set to 0.7-dev.
+- **Help text of `multitrack`** begins with "When set to on, ...". An INI file that still has the first default text gets the new one (`settings.OUTDATED_TOOLTIPS`); a text that was edited stays.
 - **Multitrack: several audio tracks and subtitles in the new file** (option `multitrack`, on|off, default off, group Audio/Subtitles; replaces the options `multilanguage` and
   `subtitle`, which are removed: an old INI file or job with `multilanguage=True` or a `subtitle` other than 0 gets `multitrack=on`). With the option on, a dialog with two tabs
   (Audio, Subtitles; `tracks_dialog.py`) opens after the name of the file has been chosen (Save as and Batch), but only if the source has more than one audio track or any

@@ -248,7 +248,7 @@ class Settings:
             self.set_options(options)
         return changed
 
-    def sync_tooltips(self, wanted: dict, obsolete: tuple = ()) -> bool:
+    def sync_tooltips(self, wanted: dict, obsolete: tuple = (), outdated: Optional[dict] = None) -> bool:
         """Makes the section [ToolTipText] complete: every key of `wanted` (key -> text) that is missing is appended (texts that are there, also
         edited ones, stay), keys in `obsolete` are removed. The section is created if there is none. True if something changed."""
         changed = False
@@ -262,7 +262,13 @@ class Settings:
             if key.lower() not in present:
                 self.set("ToolTipText", key, text)
                 changed = True
+            elif outdated and self.get("ToolTipText", key) in outdated.get(key, ()):      # still exactly an OLD default text: the new one replaces it (an edited text stays)
+                self.set("ToolTipText", key, text)
+                changed = True
         return changed
+
+
+OUTDATED_TOOLTIPS = {"multitrack": ("When the box is ticked, a multitrack selection dialog opens after the name of the file has been chosen (only if the source has more than one audio track or any subtitle track), allowing to choose and configure how the audio and/or subtitle track(s) should be processed.",)}      # earlier default texts: replaced by the current one if they are still in the INI file unchanged
 
 
 def default_options() -> dict:
@@ -297,7 +303,7 @@ DEFAULT_TOOLTIPS = {
     'pause': 'Min. length (in seconds) of pause caused by commercials in between movie segments (for TV recordings)',
     'detect': 'Detect audio streams after moving n milliseconds into the source file; useful for streamed recordings (.ts)',
     'aflags': 'Flags for ffmpeg when extracting audio (like +igndts+genpts); useful when audio is broken',
-    'multitrack': 'When the box is ticked, a multitrack selection dialog opens after the name of the file has been chosen (only if the source has more than one audio track or any '
+    'multitrack': 'When set to on, a multitrack selection dialog opens after the name of the file has been chosen (only if the source has more than one audio track or any '
                   'subtitle track), allowing to choose and configure how the audio and/or subtitle track(s) should be processed.',
     # options added in the Python version
     "paused_preview": "Preview while the film is stopped (player = memory only): vlc = VLC jumps to the slider position (it can get stuck after about ten jumps); ffmpeg = the pictures are "

@@ -67,7 +67,7 @@ from profiles import (multitrack_from_old, GROUP_TEXTS, HIDDEN_OPTIONS, OPTION_G
                       ordered_profile, profile_from_segment, valid_profile_name, validate_options, validate_profile,
                       weighted_bitrate)
 from project import format_hms, load_segments, save_segments, segment_row, timeof  # noqa: E402
-from settings import DEFAULT_TOOLTIPS, Settings, default_options, format_kv   # noqa: E402
+from settings import OUTDATED_TOOLTIPS, DEFAULT_TOOLTIPS, Settings, default_options, format_kv   # noqa: E402
 import vbqt                                                          # noqa: E402
 from ui_frmMain import frmMainBase                                   # noqa: E402
 
@@ -326,7 +326,7 @@ class frmMain(frmMainBase):
                 del raw[old]
                 changed = True
         wanted = {key: DEFAULT_TOOLTIPS[key] for key in tooltip_keys() if key in DEFAULT_TOOLTIPS}
-        changed = self.settings.sync_tooltips(wanted, tuple(REMOVED_OPTIONS - set(PROFILE_KEYS)) + tuple(RENAMED_OPTIONS)) or changed     # [ToolTipText]: every parameter
+        changed = self.settings.sync_tooltips(wanted, tuple(REMOVED_OPTIONS - set(PROFILE_KEYS)) + tuple(RENAMED_OPTIONS), OUTDATED_TOOLTIPS) or changed     # [ToolTipText]: every parameter
         if changed:
             self.settings.set_options(raw)
             self.settings.save()

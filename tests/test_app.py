@@ -6155,7 +6155,7 @@ def test_multitrack_window(tmp, videos):
     src = make_multitrack_source(tmp)
     # --- the option
     check(default_options()["multitrack"] == "off" and "multilanguage" not in default_options() and "subtitle" not in default_options() and dict(OPTION_GROUPS)["Audio/Subtitles"] == ("audio", "multitrack", "aflags")
-          and DEFAULT_TOOLTIPS["multitrack"].startswith("When the box is ticked, a multitrack selection dialog opens after the name of the file has been chosen") and "multilanguage" not in DEFAULT_TOOLTIPS
+          and DEFAULT_TOOLTIPS["multitrack"].startswith("When set to on, a multitrack selection dialog opens after the name of the file has been chosen") and "multilanguage" not in DEFAULT_TOOLTIPS
           and validate_options({"multitrack": "on"}) == [] and len(validate_options({"multitrack": "yes"})) == 1, "the option multitrack replaces multilanguage and subtitle")
     win = seek_window(tmp, os.path.dirname(src), ("multi.mkv",), workdir="mtwin", first_fn=first_frame_number)
     work = os.path.join(tmp, "mtwin")
@@ -6259,6 +6259,15 @@ def test_multitrack_window(tmp, videos):
         make_window(w).showEvent(None)
         raw = Settings(ini).options
         check(raw.get("multitrack") == expected and "multilanguage" not in raw and "subtitle" not in raw and raw["crop"] == "72", f"old INI ({old}): multitrack is {raw.get('multitrack')}, the old options are gone")
+    # --- the help text: the old default text in an INI file is replaced, an edited one stays
+    from settings import OUTDATED_TOOLTIPS
+    for number, text, expected in ((4, OUTDATED_TOOLTIPS["multitrack"][0], DEFAULT_TOOLTIPS["multitrack"]), (5, "my own words", "my own words")):
+        w = os.path.join(tmp, f"mttip{number}")
+        os.makedirs(w, exist_ok=True)
+        ini = os.path.join(w, "MediaMaker.ini")
+        open(ini, "w", encoding="utf-8").write(f"[settings]\noptions=crop=\"72\"\n[ToolTipText]\nmultitrack={text}\n")
+        make_window(w).showEvent(None)
+        check(Settings(ini).get("ToolTipText", "multitrack") == expected, f"help text in the INI file: {'old default replaced' if number == 4 else 'edited text stays'}")
     print("Multitrack in the window: OK (dialog, Cancel, job, batch file with bash, import, sessions, old options)")
 
 
