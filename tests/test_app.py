@@ -6387,6 +6387,11 @@ def test_duplicate_waits(tmp, videos):
         win.segments[-1].end = 60
         win.current = len(win.segments) - 1
         win.cmdCommand_Click(4)
+    # --- the new segment is shown ONCE (the place after the pause), VLC does not open the file twice
+    player.log.clear()
+    duplicate()
+    shows = [l for l in player.log if l.startswith("show_at")]
+    check(len(shows) == 1 and len(win.segments) >= 2 and win.current == len(win.segments) - 1 and win.Slider1.value() > win.segments[-1].start, f"duplicating shows the file once: {shows}")
     # --- the preview is quiet: the search starts after the minimum time (500 ms), not at once
     duplicate()
     check(calls == [] and len(QC.QTimer.pending) == 1 and QC.QTimer.pending[0][0] == 100, f"even a quiet preview is looked at for 500 ms first: {calls} {QC.QTimer.pending}")
@@ -6419,6 +6424,19 @@ def test_duplicate_waits(tmp, videos):
     rounds = rounds_until_done()
     check(calls == ["end"] and ticks["n"] > 12, f"the time stands: now it starts: {calls} ({ticks['n']} looks)")
     del player.get_time
+    # --- a picture was delivered a moment ago (VLC delivers one late after the last jump): wait until none has come for 300 ms
+    player._settled = True
+    state = {"idle": 50}
+    player.picture_idle_ms = lambda: state["idle"]
+    duplicate()
+    for _ in range(10):
+        run_timers()
+        state["idle"] = 50
+    check(calls == [], f"pictures keep arriving: the search does not start: {calls}")
+    state["idle"] = 400
+    rounds = rounds_until_done()
+    check(calls == ["end"] and rounds <= 2, f"no picture for 400 ms: the search starts: {calls} after {rounds} looks")
+    del player.picture_idle_ms
     # --- the preview never settles: after 5 seconds the search starts anyway
     player._settled = False
     duplicate()
@@ -6549,6 +6567,23 @@ def test_duplicate_real_player(tmp, videos):
         for _ in range(20):
             run_timers()
         check(calls == ["end"] and clock["n"] > 15, f"the time stands: the search starts: {calls} (looks: {clock['n']})")
+        # --- the position was reached, VLC is paused and quiet, but the picture of the last jump arrives late: the display callback sets the time of the last picture
+        import time as _time
+        calls.clear()
+        mp.get_time = lambda: 600
+        real._last_picture_at = _time.monotonic()
+        check(real.picture_idle_ms() < 100, "the player knows how long ago the last picture came")
+        win.segments[-1].end = 60
+        win.current = len(win.segments) - 1
+        win.cmdCommand_Click(4)
+        for _ in range(12):
+            run_timers()
+            real._last_picture_at = _time.monotonic()                          # (pictures keep coming)
+        check(calls == [], f"pictures keep arriving: the search waits: {calls}")
+        real._last_picture_at = _time.monotonic() - 1.0
+        for _ in range(5):
+            run_timers()
+        check(calls == ["end"] and real.picture_idle_ms() >= 300, f"no picture for a second: the search starts: {calls}")
     finally:
         if old_vlc is not None:
             sys.modules["vlc"] = old_vlc

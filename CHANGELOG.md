@@ -3,6 +3,12 @@
 ## 0.7 (in progress)
 
 - Version number set to 0.7-dev.
+- **Duplicate segment, second step: the file is opened once, and the search also waits for the pictures.** A debug log of the user showed: `show_at` ran TWICE (first marker A of the new segment,
+  at once the place after the pause), so VLC opened the file on the network drive twice; and after VLC had paused, the memory player jumps once more (`_position_reached` calls `set_time`
+  so that a picture for the position arrives), whose picture comes late. Now `select_segment(show_marker=False)` loads the preview without showing marker A (`lvwSegments_Click` is
+  `select_segment(True)`), and the memory player notes when its last picture arrived (`picture_idle_ms`): the search starts only when no new picture has come for 300 ms
+  (`PREVIEW_IDLE_MS`), besides the state, the unmoving time and the 500 ms. The wait dialog (blue) and the search are made in the same call (`_run_job`), so the dialog can not appear
+  before the search starts; the log confirms it ("border search from frame ..." follows the last look at once).
 - **More in the debug log** (`MEDIAMAKER_DEBUG=1`, file `mediamaker_debug.log` in the program folder): the time has milliseconds now (`log_line`), and the steps of the preview are logged:
   `display frame` (picture from ffmpeg or `show_at`), `show_at` (also the way without flags: "the medium is started already"), "VLC plays: pausing", "position ... reached", "duplicate: ...
   now waiting for the preview", every look of "waiting for the preview" and "search started", each with `Player.describe()` (state, playing, time, flags of VLC). The description is only made

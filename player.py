@@ -62,6 +62,10 @@ class Player(QtCore.QObject):
         """What the player knows about itself, for the debug log."""
         return ""
 
+    def picture_idle_ms(self):
+        """How long ago the last picture arrived in the preview (ms); None: there is no information (the player does not know, or no picture came yet)."""
+        return None
+
     @property
     def settled(self) -> bool:
         """Has the preview shown its picture and stopped? (VLC plays for a moment when it is sent to a new place: show_at.) Things that start work at the same time
@@ -193,6 +197,10 @@ class FakePlayer(Player):
 
     supports_images = True
     _settled = True                                              # in the test: False while the "preview" is still running
+    _idle_ms = None                                              # in the test: how long ago the last picture arrived (None: unknown)
+
+    def picture_idle_ms(self):
+        return self._idle_ms
 
     @property
     def settled(self) -> bool:
@@ -617,6 +625,7 @@ class MemoryVlcPlayer(VlcPlayer):
         @deco.VideoDisplayCb
         def display(opaque, picture):                            # runs in the VLC thread: pass a copy on to Qt
             if not self._closed:
+                self._last_picture_at = time.monotonic()         # (a number is set: safe between threads)
                 self.frame_ready.emit((bytes(buf), width, height))
 
         self._video_callbacks.append((lock, display, buf))
@@ -624,6 +633,11 @@ class MemoryVlcPlayer(VlcPlayer):
         self.mp.video_set_format("RV32", width, height, width * 4)
         self.mp.video_set_aspect_ratio(f"{width}:{height}")      # picture fills the memory area without black borders of its own
         debug_log(f"memory output {width}x{height}")
+
+    _last_picture_at = None                                      # time.monotonic() of the last picture that VLC delivered
+
+    def picture_idle_ms(self):
+        return None if self._last_picture_at is None else int((time.monotonic() - self._last_picture_at) * 1000)
 
     def _after_recover(self) -> None:
         size, self._size = self._size, (0, 0)                    # the new media player knows nothing yet: install the video callbacks again

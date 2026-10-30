@@ -733,6 +733,11 @@ class frmMain(frmMainBase):
 
     # ------------------------------------------------------------------ Selection and preview
     def lvwSegments_Click(self):
+        self.select_segment(True)
+
+    def select_segment(self, show_marker: bool) -> None:
+        """The segment that is selected in the list becomes the current one: preview loaded, slider set. show_marker: also show the picture at marker A (VLC then opens the
+        file); duplicating a segment shows another place at once and does not open the file twice."""
         row = self.lvwSegments.current_row()
         if row < 0 or row >= len(self.segments):
             return
@@ -756,7 +761,8 @@ class frmMain(frmMainBase):
         self.Slider1.blockSignals(False)
         self._show_frame_info(seg.first_frame)
         self.vscVolume_Scroll()
-        self.cmdPos_Click(9)                                          # to marker A; shows the picture and pauses
+        if show_marker:
+            self.cmdPos_Click(9)                                      # to marker A; shows the picture and pauses
 
     def lblInfo_Click(self):
         """Click on the frame number: input of a frame number to jump to."""
@@ -2145,7 +2151,7 @@ class frmMain(frmMainBase):
         self._save()
         self.lblText_Upd()
         self.lvwSegments.select_row(self.current)
-        self.lvwSegments_Click()                                     # load the preview, show marker A
+        self.select_segment(False)                                   # load the preview; marker A is not shown (the place after the pause comes at once: VLC opens the file only once)
         pause = int(self.options.get("pause", 160))
         target = min(new.total_frames, new.start + round(pause * float(new.fps)))
         self._go(target)
@@ -2158,19 +2164,21 @@ class frmMain(frmMainBase):
         self.after_preview_settled(self.mnuEnd_Click)                # not while VLC still plays the new segment for a moment: that confuses
 
     PREVIEW_MIN_MS = 500                                              # the preview is looked at only after this time (VLC needs a moment to start)
+    PREVIEW_IDLE_MS = 300                                             # and no new picture may have arrived for this long (after the jump VLC delivers one late)
     PREVIEW_WAIT_MS = 5000                                            # how long to wait for the preview at most
 
     def after_preview_settled(self, action, waited_ms: int = 0, last_time=None) -> None:
         """Runs `action` when the preview has shown its picture and stopped again (when a new segment is shown, VLC plays it for a moment).
 
         VLC cannot be trusted to say when that is (after stop() its state can still be the old one for a while, so a jump looks like one in a running medium), so the
-        preview is also WATCHED: it counts as quiet when the player says so (Player.settled), at least PREVIEW_MIN_MS have passed, and its time has not moved since the
-        last look (100 ms before). After PREVIEW_WAIT_MS the action runs anyway; if the program is being closed, it does not run."""
+        preview is also WATCHED: it counts as quiet when the player says so (Player.settled), at least PREVIEW_MIN_MS have passed, its time has not moved since the
+        last look (100 ms before) and no new PICTURE has arrived for PREVIEW_IDLE_MS (VLC delivers one late after the last jump, on a network drive). After PREVIEW_WAIT_MS the action runs anyway; if the program is being closed, it does not run."""
         if self._closing:
             return
         now = self.player.get_time() if self.player.has_media else None
-        quiet = self.player.settled and now == last_time
-        debug_log(lambda: f"waiting for the preview: {waited_ms} ms, settled={self.player.settled}, time={now} (before: {last_time}) {self.player.describe()}")
+        idle = self.player.picture_idle_ms()
+        quiet = self.player.settled and now == last_time and (idle is None or idle >= self.PREVIEW_IDLE_MS)
+        debug_log(lambda: f"waiting for the preview: {waited_ms} ms, settled={self.player.settled}, time={now} (before: {last_time}), last picture {idle} ms ago, {self.player.describe()}")
         if (waited_ms >= self.PREVIEW_MIN_MS and quiet) or waited_ms >= self.PREVIEW_WAIT_MS:
             action()
             return
