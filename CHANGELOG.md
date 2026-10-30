@@ -3,6 +3,11 @@
 ## 0.7 (in progress)
 
 - Version number set to 0.7-dev.
+- **Batch: the script goes to the home folder, and Run now?** Without the option `batch` the script is `~/MediaMaker.sh` (the name of the INI file; before: next to the INI file); an option that
+  is set keeps its place. The dialog at the end ("Batch file was updated ...") ends with **Run now?**: Yes runs the script in a window of its own, a terminal program (`external.terminal_command`:
+  konsole, gnome-terminal, xfce4-terminal, mate-terminal, lxterminal, kitty, alacritty or xterm, the first one that is installed) that stays open until Enter is pressed so that the result can be read.
+  New option `terminal` (group Tools): a command of your own (e.g. `konsole --separate -e`; the script is appended). No terminal program or one that cannot be started: it is told, with the command
+  to run the script by hand. The test environment sets HOME to the folder of the window, so no test writes to the real home folder.
 - **Help text of `multitrack`** begins with "When set to on, ...". An INI file that still has the first default text gets the new one (`settings.OUTDATED_TOOLTIPS`); a text that was edited stays.
 - **Multitrack: several audio tracks and subtitles in the new file** (option `multitrack`, on|off, default off, group Audio/Subtitles; replaces the options `multilanguage` and
   `subtitle`, which are removed: an old INI file or job with `multilanguage=True` or a `subtitle` other than 0 gets `multitrack=on`). With the option on, a dialog with two tabs

@@ -32,7 +32,7 @@ _add_ui_paths()
 from PySide6 import QtCore, QtGui, QtWidgets                         # noqa: E402
 
 from cutlist import Job, Segment, parse_kv, parse_segments, resolve_source   # noqa: E402
-from external import ExternalWorker, run_external                         # noqa: E402
+from external import ExternalWorker, run_external, terminal_command                         # noqa: E402
 import sessions                                                       # noqa: E402
 from sidecars import sidecar_files                                    # noqa: E402
 import debugpack                                                      # noqa: E402
@@ -1238,13 +1238,13 @@ class frmMain(frmMainBase):
         draw_bar(painter, rect, *self._bar)
 
     def batch_path(self) -> str:
-        """Where the batch script is written: the option `batch` (a leading ~ is the home folder), otherwise next to the INI file with
-        the extension .sh."""
+        """Where the batch script is written: the option `batch` (a leading ~ is the home folder), otherwise the home folder, with the name of the INI file and
+        the extension .sh (MediaMaker.sh)."""
         custom = (self.options.get("batch", "") or "").strip()
-        return os.path.expanduser(custom) if custom else os.path.splitext(self.settings.path)[0] + ".sh"
+        return os.path.expanduser(custom) if custom else os.path.join(os.path.expanduser("~"), os.path.splitext(os.path.basename(self.settings.path))[0] + ".sh")
 
     def mnuBatch_Click(self):
-        """Writes the job as a shell script next to the INI file; its comments carry the job for a later import."""
+        """Writes the job as a shell script (by default MediaMaker.sh in the home folder); its comments carry the job for a later import. At the end: Run now?"""
         if not self.segments:
             return
         copy = self.mnuCopyMode.isChecked()
@@ -1296,7 +1296,20 @@ class frmMain(frmMainBase):
         with open(script, "w", encoding="utf-8", newline="\n") as f:
             f.write(batch.build_script(job, command, old, chapter_text, chapters_run, copy_list, copy, extra))
         os.chmod(script, 0o755)
-        self.inform(f"Batch file was updated and can be run from the command line:\n{script}" + (f"\n\n{self.copy_summary(plan)}" if plan is not None else ""))
+        self.batch_message(f"Batch file was updated and can be run from the command line:\n{script}" + (f"\n\n{self.copy_summary(plan)}" if plan is not None else ""), script)
+
+    def batch_message(self, text: str, script: str) -> None:
+        """The message at the end of Batch, with the question whether to run the script now (in a terminal window of its own)."""
+        if self.ask(text + "\n\nRun now?"):
+            self.run_script(script)
+
+    def run_script(self, script: str) -> None:
+        """Runs a shell script in a window of its own (a terminal program, see external.terminal_command); the window stays open until Enter is pressed."""
+        command = terminal_command(script, (self.options.get("terminal", "") or "").strip())
+        if command is None:
+            self.msg(f"There is no terminal program (konsole, gnome-terminal, xfce4-terminal, ... or the option terminal). Run the script yourself:\nbash {script}")
+            return
+        self.start_external(command, lambda rc, err: self.msg(f"The terminal could not be started ({command[0]}): {err or rc}\n\nRun the script yourself:\nbash {script}") if rc == -1 else None)
 
     # ------------------------------------------------------------------ Chapters (Edit => Chapters; module chapters.py, dialog chapters_dialog.py)
     def chapters_path(self) -> str:
@@ -1357,7 +1370,7 @@ class frmMain(frmMainBase):
         dialog.deleteLater()
 
     # ------------------------------------------------------------------ Import of a job from the batch file (File => Import, Ctrl+M)
-    LOCAL_OPTIONS = {"batch", "player", "dialog_style", "vlc_args", "hide_messages", "overlay_opacity", "file_dialog", "sessions_dir", "avidemux", "vlc",
+    LOCAL_OPTIONS = {"batch", "player", "dialog_style", "vlc_args", "hide_messages", "overlay_opacity", "file_dialog", "sessions_dir", "avidemux", "vlc", "terminal",
                      "path_map", "cutpoint_filters"}          # of this computer and of this installation: not taken from a job
 
     def choose_job(self, jobs: list):

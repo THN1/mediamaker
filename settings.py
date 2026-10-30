@@ -278,7 +278,7 @@ def default_options() -> dict:
             "pause": "160", "detect": "0", "aflags": "", "multitrack": "off",
             "step_end": "40", "step_next": "240", "border_tol": "3", "cut_window": "5",
             "logo_edge": "18", "logo_conf": "0.2", "cut_diff": "30", "path_map": "",
-            "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "file_dialog": "qt", "sessions_dir": "", "avidemux": "", "vlc": "", "cutpoint_filters": "on", "restore_backup": "on", "copy_mode_notice": "on", "paused_preview": "vlc"}
+            "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "file_dialog": "qt", "sessions_dir": "", "avidemux": "", "vlc": "", "terminal": "", "cutpoint_filters": "on", "restore_backup": "on", "copy_mode_notice": "on", "paused_preview": "vlc"}
 
 
 # explanations for keys that are still missing in the INI file (section [ToolTipText])
@@ -315,6 +315,8 @@ DEFAULT_TOOLTIPS = {
                       "your last choice here (the other two check boxes are ticked every time); applies at once",
     "cutpoint_filters": "Analyze cut point: on = the clip is made with all the filters that Save As applies (cropping, scaling, DeLogo, RemoveLogo); "
                         "off = without cropping and logo filters (only scaled to the profile), with a note in the picture; applies at once",
+    "terminal": "Tools: command that opens a terminal window for Run now? of the batch script (the script is appended), e.g. konsole --separate -e; empty: konsole, gnome-terminal, "
+                "xfce4-terminal, mate-terminal, lxterminal, kitty, alacritty or xterm is used, whichever is installed; applies at once",
     "avidemux": "Tools: path of Avidemux (e.g. an AppImage; it must be executable) for Edit => Analyze cut point; empty: searched in the PATH; applies at once",
     "vlc": "Tools: path of the VLC program that plays the clip of Edit => Analyze cut point; empty: searched in the PATH, then the standard player of the desktop; applies at once",
     "pad": "If True, source videos will be padded with (minimal) black border(s), else they will be stretched to the target scale",
@@ -333,8 +335,7 @@ DEFAULT_TOOLTIPS = {
                    "file did nothing there); applies at once",
     "sessions_dir": "Sessions (File => Backup session): folder with the saved sessions; a leading ~ is your home folder (empty: the folder "
                     "'sessions' next to the INI file); applies at once",
-    "batch": "Batch: file the batch script is written to; a leading ~ is your home folder (empty: next to the INI file, "
-             "with the extension .sh); applies at once",
+    "batch": "Batch: file the batch script is written to; a leading ~ is your home folder (empty: MediaMaker.sh in your home folder); applies at once",
     "player": "Preview: memory = VLC decodes into memory and Qt draws the pictures (runs natively under Wayland), "
               "embed = VLC draws into its own X11 window (XWayland); takes effect at the next start",
     "vlc_args": "Preview: additional arguments for libvlc, separated by spaces, e.g. --vout=xcb_x11; takes effect at the next start",

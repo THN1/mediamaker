@@ -95,6 +95,7 @@ def test_project(tmp):
 # ----------------------------------------------------------------------------- Main logic
 def make_window(tmp, probe=None, fresh=False, thumb_fn=None, first_fn=None, **kwargs):
     import mediamaker
+    os.environ["HOME"] = tmp                                     # the home folder of the test is the folder of the window: the batch script goes there (and never into the real one)
     ini = os.path.join(tmp, "MediaMaker.ini")
     if not os.path.exists(ini):
         shutil.copy(os.path.join(HERE, "sample_MediaMaker.ini"), ini)
@@ -105,6 +106,7 @@ def make_window(tmp, probe=None, fresh=False, thumb_fn=None, first_fn=None, **kw
     win.msg = win.messages.append
     win.inform = win.messages.append
     win.finish_message = lambda text, output: win.messages.append(text)        # (the real one asks "Play now?": test_play_now)
+    win.batch_message = lambda text, script: win.messages.append(text)         # (the real one asks "Run now?" and opens a terminal window: test_batch_run_now)
     win.notice_keep = True                                                     # the check box "Show this warning next time" of the copy mode warning: stays ticked
     win.notice_box = lambda text: (win.messages.append(text), win.notice_keep)[1]
     win.verify_first_frame = False                       # most tests give the first frame by hand (first_fn); test_first_frame_check switches it on
@@ -1871,7 +1873,7 @@ def test_batch_file(tmp, videos):
           and any(l == "# " + batch.command_line(command) for l in text3.splitlines()), "only the newest ffmpeg call is active, the old one is commented out")
     check(not any(l and not l.startswith("#") and "base64 -d" in l for l in text3.splitlines()[: text3.index("# J=/tmp/out/Zweit.mp4") and 0 or 1]) , "header line")
     # --- menu Batch
-    script_ui = os.path.splitext(win.settings.path)[0] + ".sh"
+    script_ui = win.batch_path()                                  # the home folder (in the test: the folder of the window), MediaMaker.sh
     answers = {"text": "/tmp/out/Film", "ask3": "yes"}
     win.ask_output = lambda title, suggestion: answers["text"]
     win.ask3 = lambda text: answers["ask3"]
@@ -4155,7 +4157,7 @@ def test_ini_tooltips_and_tools(tmp, videos):
     st.set_options({"avidemux": "~/ad/avidemux", "vlc": ""})
     check(st.tool("avidemux") == os.path.expanduser("~/ad/avidemux") and st.tool("vlc") == sh.which("vlc") and st.tool("nonexistent_program") is None, "tool(): the option (with ~), otherwise the PATH")
     # --- the group Tools
-    check(dict(OPTION_GROUPS)["Tools"] == ("avidemux", "vlc") and default_options()["avidemux"] == "" and validate_options(default_options()) == [], "group Tools")
+    check(dict(OPTION_GROUPS)["Tools"] == ("avidemux", "vlc", "terminal") and default_options()["avidemux"] == "" and default_options()["terminal"] == "" and validate_options(default_options()) == [], "group Tools")
     from profiles import GROUP_TEXTS
     check("PATH" in GROUP_TEXTS["Tools"], "text of the group")
     # --- an old INI file with the dropped option logo_rewind: option and help text are removed at the start
@@ -6276,6 +6278,63 @@ def sessions_list(win):
     return sessions.list_sessions(win.sessions_directory())
 
 
+def mediamaker_batch_message(win, text, script):
+    import mediamaker
+    return mediamaker.frmMain.batch_message(win, text, script)
+
+
+def test_batch_run_now(tmp, videos):
+    """Batch: the script is written to the home folder by default; at the end of the dialog: Run now? (a terminal window of its own)."""
+    import external
+    from mediaprobe import first_frame_number
+    # --- the terminal command
+    which = lambda found: (lambda name: "/usr/bin/" + name if name in found else None)
+    script = "/home/me/My Scripts/MediaMaker.sh"
+    cmd = external.terminal_command(script, which=which({"xterm", "konsole"}))
+    check(cmd[:3] == ["konsole", "-e", "bash"] and cmd[3] == "-c" and "bash '/home/me/My Scripts/MediaMaker.sh'" in cmd[4] and "Press Enter" in cmd[4], f"konsole first, the path with a space quoted: {cmd}")
+    check(external.terminal_command(script, which=which({"xterm"}))[:2] == ["xterm", "-e"] and external.terminal_command(script, which=which({"gnome-terminal"}))[:2] == ["gnome-terminal", "--"]
+          and external.terminal_command(script, which=which(set())) is None, "the others, and None if there is no terminal program")
+    check(external.terminal_command(script, "myterm --hold -e", which=which(set()))[:4] == ["myterm", "--hold", "-e", "bash"], "the option terminal: its command, the script appended")
+    # --- the window
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="runnow", first_fn=first_frame_number)
+    home = os.path.join(tmp, "runnow")
+    check(win.batch_path() == os.path.join(home, "MediaMaker.sh") and os.path.expanduser("~") == home, "default: MediaMaker.sh in the home folder")
+    win.settings.set_option("batch", "~/jobs/b.sh")
+    check(win.batch_path() == os.path.join(home, "jobs", "b.sh"), "the option batch: a leading ~ is the home folder")
+    win.settings.set_option("batch", "")
+    win.ask_output = lambda title, suggestion: os.path.join(home, "out.mp4")
+    win.ask3 = lambda text: "no"
+    win.batch_message = lambda text, script: mediamaker_batch_message(win, text, script)             # the real one
+    asked, external_calls = [], []
+    win.ask = lambda text: (asked.append(text), answer["run"])[1]
+    answer = {"run": False}
+    win._external_fn = lambda cmd: (external_calls.append(cmd), (0, ""))[1]
+    win.settings.set_option("terminal", "myterm -e")
+    win.mnuBatch_Click()
+    script = os.path.join(home, "MediaMaker.sh")
+    check(os.path.exists(script) and len(asked) == 1 and asked[0].startswith(f"Batch file was updated and can be run from the command line:\n{script}") and asked[0].endswith("\n\nRun now?")
+          and external_calls == [], f"the question at the end of the dialog; No: nothing is started: {asked}")
+    answer["run"] = True
+    asked.clear()
+    win.mnuBatch_Click()
+    check(len(external_calls) == 1 and external_calls[0][:3] == ["myterm", "-e", "bash"] and f"bash {script}" in external_calls[0][4], f"Yes: the script runs in a terminal window of its own: {external_calls}")
+    # --- the terminal cannot be started / there is none
+    win._external_fn = lambda cmd: (-1, "No such file or directory")
+    win.messages.clear()
+    win.mnuBatch_Click()
+    check(len(win.messages) == 1 and win.messages[0].startswith("The terminal could not be started (myterm)") and f"bash {script}" in win.messages[0], f"a terminal that does not start: told: {win.messages}")
+    win.settings.set_option("terminal", "")
+    real_which = external.shutil.which
+    external.shutil.which = lambda name: None
+    try:
+        win.messages.clear()
+        win.mnuBatch_Click()
+    finally:
+        external.shutil.which = real_which
+    check(len(win.messages) == 1 and win.messages[0].startswith("There is no terminal program") and f"bash {script}" in win.messages[0], f"no terminal program at all: told: {win.messages}")
+    print("Batch, Run now?: OK (home folder, terminal commands, question, errors)")
+
+
 def test_counting_note(tmp, videos):
     """The note "counting frames" in the title goes away whenever a counting ends: with a result, cancelled, with an error, or when the file cannot be read."""
     import mediamaker
@@ -6451,6 +6510,7 @@ def main():
     test_command_icons(tmp, sys.argv[1])
     test_multitrack(tmp, sys.argv[1])
     test_multitrack_window(tmp, sys.argv[1])
+    test_batch_run_now(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])

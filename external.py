@@ -1,8 +1,10 @@
 """Helper programs outside of MediaMaker (VLC, Avidemux): started in the background, the main window stays usable."""
 from __future__ import annotations
 
+import shlex
+import shutil
 import subprocess
-from typing import Callable
+from typing import Callable, Optional
 
 from PySide6 import QtCore
 
@@ -28,3 +30,20 @@ class ExternalWorker(QtCore.QThread):
 
     def run(self) -> None:
         self.completed.emit(*self.run_fn(self.cmd))
+
+
+TERMINALS = (("konsole", ["-e"]), ("gnome-terminal", ["--"]), ("xfce4-terminal", ["-x"]), ("mate-terminal", ["-x"]), ("lxterminal", ["-e"]),
+             ("kitty", []), ("alacritty", ["-e"]), ("xterm", ["-e"]))
+
+
+def terminal_command(script: str, custom: str = "", which: Callable = shutil.which) -> Optional[list]:
+    """The command that runs a shell script in a window of its own (a terminal program): the first one of TERMINALS that is installed, or the command of the option
+    `terminal` (e.g. "konsole --separate -e"; the script is appended). The window stays open after the script has ended until Enter is pressed, so the result can be read.
+    None if there is no terminal program."""
+    wrapper = f"bash {shlex.quote(script)}; echo; read -r -p 'Finished. Press Enter to close this window. ' _"
+    if custom.strip():
+        return shlex.split(custom) + ["bash", "-c", wrapper]
+    for name, args in TERMINALS:
+        if which(name):
+            return [name, *args, "bash", "-c", wrapper]
+    return None
