@@ -813,9 +813,11 @@ class frmMain(frmMainBase):
     def display_frame(self, frame: int) -> None:
         """The picture at `frame` while the film is stopped: from ffmpeg (still_mode) or by a jump of VLC."""
         if self.still_mode():
+            debug_log(f"display frame {frame}: picture from ffmpeg")
             self.show_still(frame)
         else:
             self._still_frame = None
+            debug_log(lambda: f"display frame {frame}: show_at {self.f2t(frame)} ms ({self.player.describe()})")
             self.player.show_at(self.f2t(frame))
 
     def show_still(self, frame: int) -> None:
@@ -2152,6 +2154,7 @@ class frmMain(frmMainBase):
         # are still in the list (e.g. from earlier tests), that should not prevent the new
         # segment from finding its movie start.
         debug_log(f"duplicate: searching for the start of the movie from frame {self.shown(target)} (several sources: {self.multiple()})")
+        debug_log(lambda: f"duplicate: the new segment is shown, now waiting for the preview ({self.player.describe()})")
         self.after_preview_settled(self.mnuEnd_Click)                # not while VLC still plays the new segment for a moment: that confuses
 
     PREVIEW_MIN_MS = 500                                              # the preview is looked at only after this time (VLC needs a moment to start)
@@ -2167,7 +2170,7 @@ class frmMain(frmMainBase):
             return
         now = self.player.get_time() if self.player.has_media else None
         quiet = self.player.settled and now == last_time
-        debug_log(f"waiting for the preview: {waited_ms} ms, settled={self.player.settled}, time={now} (before: {last_time})")
+        debug_log(lambda: f"waiting for the preview: {waited_ms} ms, settled={self.player.settled}, time={now} (before: {last_time}) {self.player.describe()}")
         if (waited_ms >= self.PREVIEW_MIN_MS and quiet) or waited_ms >= self.PREVIEW_WAIT_MS:
             action()
             return
@@ -2391,6 +2394,7 @@ class frmMain(frmMainBase):
         seg = self.segment
         if seg is None:
             return
+        debug_log(lambda: f"search started ({'end of commercial' if end else 'next commercial'}), preview: {self.player.describe()}")
         if self.player.is_playing:
             self.player.pause()
         opts = self.options

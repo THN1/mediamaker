@@ -58,6 +58,10 @@ class Player(QtCore.QObject):
         """Shows the picture at `ms` in the paused state (briefly start playback, jump, pause)."""
         raise NotImplementedError
 
+    def describe(self) -> str:
+        """What the player knows about itself, for the debug log."""
+        return ""
+
     @property
     def settled(self) -> bool:
         """Has the preview shown its picture and stopped? (VLC plays for a moment when it is sent to a new place: show_at.) Things that start work at the same time
@@ -125,11 +129,18 @@ class SeekThrottle(QtCore.QObject):
             self.timer.start(self.interval)
 
 
-def debug_log(text: str) -> None:
-    """With MEDIAMAKER_DEBUG=1 events and jumps of the playback are logged in mediamaker_debug.log."""
+def log_line(text: str, now: Optional[float] = None) -> str:
+    """A line of the debug log: time with milliseconds (the steps of a preview follow each other within fractions of a second), then the text."""
+    now = time.time() if now is None else now
+    return f"{time.strftime('%H:%M:%S', time.localtime(now))}.{int((now % 1) * 1000):03d} {text}\n"
+
+
+def debug_log(text) -> None:
+    """With MEDIAMAKER_DEBUG=1 events and jumps of the playback are logged in mediamaker_debug.log. `text` can be a function that makes the text: it is only called
+    when the log is on (what it asks of VLC costs time and must not happen otherwise)."""
     if os.environ.get("MEDIAMAKER_DEBUG"):
         with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "mediamaker_debug.log"), "a") as fh:
-            fh.write(f"{time.strftime('%H:%M:%S')} {text}\n")
+            fh.write(log_line(text() if callable(text) else text))
 
 
 class FakePlayer(Player):
@@ -346,6 +357,7 @@ class VlcPlayer(Player):
         """In the Qt thread, as soon as VLC reports that playback is running: pause and wait for the start position."""
         if self._pending_show is not None and not self._closed:
             ms, self._pending_show = self._pending_show, None
+            debug_log(lambda: f"VLC plays: pausing, waiting for {ms} ms ({self.describe()})")
             self.mp.set_pause(1)
             self._mute(True)
             self._await_position(ms, 0)
@@ -370,6 +382,7 @@ class VlcPlayer(Player):
         self._await_position(ms, tries + 1)
 
     def _position_reached(self, ms: int) -> None:
+        debug_log(lambda: f"position {ms} ms reached ({self.describe()})")
         self._awaiting_position = None
         if self._muted:
             self._mute(False)
@@ -461,9 +474,17 @@ class VlcPlayer(Player):
             self._mute(False)
         self.mp.stop()
 
+    def describe(self) -> str:
+        try:
+            return (f"state={self.mp.get_state()} playing={self.mp.is_playing()} time={self.mp.get_time()} awaiting={self._awaiting_position} "
+                    f"pending={self._pending_show} muted={self._muted}")
+        except Exception as e:
+            return f"(not readable: {e})"
+
     def show_at(self, ms: int) -> None:
         State = self._vlc.State
         if self.mp.get_state() in (State.Playing, State.Paused):
+            debug_log(lambda: f"show_at {ms} ms: the medium is started already, jump without flags ({self.describe()})")
             self.mp.set_time(ms)
             if self.mp.is_playing():
                 self.mp.set_pause(1)

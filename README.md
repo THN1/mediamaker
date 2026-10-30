@@ -76,8 +76,8 @@ Settings are made in the options dialog (Edit -> Options) and stored in the INI 
 section `[ToolTipText]` of the INI file). Some options of interest: `player=memory|embed` and `paused_preview=vlc|ffmpeg` (the
 preview; with `ffmpeg` the pictures of a stopped film come from ffmpeg and are frame exact), `multitrack=on|off`, `batch=` (the
 file of the batch script; empty: `~/MediaMaker.sh`), `path_map=` (replaces the beginning of source paths in scripts, e.g. for a network
-drive), `copy_mode_notice=on|off`. `MEDIAMAKER_DEBUG=1` writes a log (`mediamaker_debug.log`), `MEDIAMAKER_NO_FILTER=1` shows the
-unfiltered error output of ffmpeg.
+drive), `copy_mode_notice=on|off`. `MEDIAMAKER_DEBUG=1` writes a log with times in milliseconds (`mediamaker_debug.log` in the program folder; *Create debug package*
+in the Edit menu adds its end), `MEDIAMAKER_NO_FILTER=1` shows the unfiltered error output of ffmpeg.
 
 ## Tests
 

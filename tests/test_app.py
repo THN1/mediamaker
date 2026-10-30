@@ -6557,6 +6557,31 @@ def test_duplicate_real_player(tmp, videos):
     print("Duplicate with the real player: OK")
 
 
+def test_debug_log_lines(tmp, videos):
+    """The debug log has times with milliseconds, and the real player describes itself (state, time, flags) for the lines about the preview."""
+    import player as pl
+    line = pl.log_line("hello", 1788000000.123456)
+    check(line.endswith(".123 hello\n") and len(line.split(" ")[0]) == 12 and line.split(" ")[0][2] == ":" and line.split(" ")[0][8] == ".", f"time with milliseconds: {line!r}")
+    check(pl.log_line("x", 5.0004).split(" ")[0].endswith(".000") and pl.log_line("x", 5.9996).split(" ")[0].endswith(".999"), "the milliseconds are cut, not rounded up into the next second")
+    check(pl.FakePlayer().describe() == "", "the replacement player has nothing to describe")
+    asked = []
+    pl.debug_log(lambda: asked.append(1) or "x")                                     # the log is off: the text is not even made
+    check(asked == [], "the log is off: a function for the text is not called")
+    sim = SimVlc()
+    old = sys.modules.get("vlc")
+    sys.modules["vlc"] = sim.module
+    try:
+        real = pl.MemoryVlcPlayer()
+        text = real.describe()
+        check(all(k in text for k in ("state=", "playing=", "time=", "awaiting=", "pending=")), f"describe: {text}")
+    finally:
+        if old is not None:
+            sys.modules["vlc"] = old
+        else:
+            sys.modules.pop("vlc", None)
+    print("Debug log: OK (milliseconds, description of the player)")
+
+
 def test_counting_note(tmp, videos):
     """The note "counting frames" in the title goes away whenever a counting ends: with a result, cancelled, with an error, or when the file cannot be read."""
     import mediamaker
@@ -6735,6 +6760,7 @@ def main():
     test_batch_run_now(tmp, sys.argv[1])
     test_duplicate_waits(tmp, sys.argv[1])
     test_duplicate_real_player(tmp, sys.argv[1])
+    test_debug_log_lines(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])

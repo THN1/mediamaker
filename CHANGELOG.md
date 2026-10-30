@@ -3,6 +3,10 @@
 ## 0.7 (in progress)
 
 - Version number set to 0.7-dev.
+- **More in the debug log** (`MEDIAMAKER_DEBUG=1`, file `mediamaker_debug.log` in the program folder): the time has milliseconds now (`log_line`), and the steps of the preview are logged:
+  `display frame` (picture from ffmpeg or `show_at`), `show_at` (also the way without flags: "the medium is started already"), "VLC plays: pausing", "position ... reached", "duplicate: ...
+  now waiting for the preview", every look of "waiting for the preview" and "search started", each with `Player.describe()` (state, playing, time, flags of VLC). The description is only made
+  when the log is on (`debug_log` takes a function for the text).
 - **Duplicate segment: the search for the end of the commercial waits for the preview.** When a segment is duplicated, VLC plays the new segment for a moment (it is sent to the new place and
   paused again) while the search already ran; that was confusing. The first version only asked the player (`Player.settled`: no jump or pause pending, not playing) and did not help in a real
   run (the flags of the player do not show every case: after `stop()` libvlc can still report the state of the old medium, then a jump looks like one in a running medium and no flag is set).
