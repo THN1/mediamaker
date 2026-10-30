@@ -268,7 +268,7 @@ class Settings:
         return changed
 
 
-OUTDATED_TOOLTIPS = {"multitrack": ("When the box is ticked, a multitrack selection dialog opens after the name of the file has been chosen (only if the source has more than one audio track or any subtitle track), allowing to choose and configure how the audio and/or subtitle track(s) should be processed.",)}      # earlier default texts: replaced by the current one if they are still in the INI file unchanged
+OUTDATED_TOOLTIPS = {"batch": ("Batch: file the batch script is written to; a leading ~ is your home folder (empty: next to the INI file, with the extension .sh); applies at once",), "multitrack": ("When the box is ticked, a multitrack selection dialog opens after the name of the file has been chosen (only if the source has more than one audio track or any subtitle track), allowing to choose and configure how the audio and/or subtitle track(s) should be processed.",)}      # earlier default texts: replaced by the current one if they are still in the INI file unchanged
 
 
 def default_options() -> dict:

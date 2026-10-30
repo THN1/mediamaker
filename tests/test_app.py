@@ -6261,15 +6261,19 @@ def test_multitrack_window(tmp, videos):
         make_window(w).showEvent(None)
         raw = Settings(ini).options
         check(raw.get("multitrack") == expected and "multilanguage" not in raw and "subtitle" not in raw and raw["crop"] == "72", f"old INI ({old}): multitrack is {raw.get('multitrack')}, the old options are gone")
-    # --- the help text: the old default text in an INI file is replaced, an edited one stays
+    # --- the help texts: an old default text in an INI file is replaced (no "next to the INI file" for batch any more), an edited one stays
     from settings import OUTDATED_TOOLTIPS
-    for number, text, expected in ((4, OUTDATED_TOOLTIPS["multitrack"][0], DEFAULT_TOOLTIPS["multitrack"]), (5, "my own words", "my own words")):
-        w = os.path.join(tmp, f"mttip{number}")
-        os.makedirs(w, exist_ok=True)
-        ini = os.path.join(w, "MediaMaker.ini")
-        open(ini, "w", encoding="utf-8").write(f"[settings]\noptions=crop=\"72\"\n[ToolTipText]\nmultitrack={text}\n")
-        make_window(w).showEvent(None)
-        check(Settings(ini).get("ToolTipText", "multitrack") == expected, f"help text in the INI file: {'old default replaced' if number == 4 else 'edited text stays'}")
+    number = 3
+    for key in ("multitrack", "batch"):
+        for text, expected in ((OUTDATED_TOOLTIPS[key][0], DEFAULT_TOOLTIPS[key]), ("my own words", "my own words")):
+            number += 1
+            w = os.path.join(tmp, f"mttip{number}")
+            os.makedirs(w, exist_ok=True)
+            ini = os.path.join(w, "MediaMaker.ini")
+            open(ini, "w", encoding="utf-8").write(f"[settings]\noptions=crop=\"72\"\n[ToolTipText]\n{key}={text}\n")
+            make_window(w).showEvent(None)
+            check(Settings(ini).get("ToolTipText", key) == expected, f"help text of {key} in the INI file: {'old default replaced' if text != 'my own words' else 'edited text stays'}")
+    check("next to the INI file" not in DEFAULT_TOOLTIPS["batch"], "the new text of batch does not say 'next to the INI file'")
     print("Multitrack in the window: OK (dialog, Cancel, job, batch file with bash, import, sessions, old options)")
 
 

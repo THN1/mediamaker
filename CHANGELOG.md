@@ -3,6 +3,10 @@
 ## 0.7 (in progress)
 
 - Version number set to 0.7-dev.
+- **README.md rewritten** (it is the text that GitHub shows under the files): what the program does (cutting, picture, tracks and chapters, saving and automation), the supported input and
+  output formats (with what each output type can hold), requirements, start, options, tests.
+- **Help text of `batch`**: the old default text ("... empty: next to the INI file, with the extension .sh ...") in an INI file is replaced by the current one (`settings.OUTDATED_TOOLTIPS`;
+  a text that was edited stays).
 - **Batch: the script goes to the home folder, and Run now?** Without the option `batch` the script is `~/MediaMaker.sh` (the name of the INI file; before: next to the INI file); an option that
   is set keeps its place. The dialog at the end ("Batch file was updated ...") ends with **Run now?**: Yes runs the script in a window of its own, a terminal program (`external.terminal_command`:
   konsole, gnome-terminal, xfce4-terminal, mate-terminal, lxterminal, kitty, alacritty or xterm, the first one that is installed) that stays open until Enter is pressed so that the result can be read.
