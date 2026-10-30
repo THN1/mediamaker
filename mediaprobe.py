@@ -146,6 +146,54 @@ def format_duration(path: str, ffprobe: str = "ffprobe") -> float:
     return _float(data.get("format", {}).get("duration"))
 
 
+@dataclass
+class Track:
+    """One audio or subtitle track of a file, as the multitrack dialog shows it."""
+    kind: str                 # "audio" or "subtitle"
+    index: int                # position among ALL streams of this kind in the file: ffmpeg's 0:a:INDEX, 0:s:INDEX (teletext tracks are counted here)
+    number: int               # 1, 2, 3 ...: the number the dialog shows (teletext tracks are left out of the count)
+    codec: str
+    language: str = ""        # as the file says (lower case), "" if it says none
+    title: str = ""
+    channels: int = 0
+    bitrate: int = 0
+    hearing_impaired: bool = False
+    audio_description: bool = False
+
+
+@dataclass
+class TrackList:
+    audio: list
+    subtitles: list           # without the teletext tracks (nothing can be done with them)
+
+    def layout(self) -> tuple:
+        """What identifies the arrangement of the tracks (a choice made for one layout fits another file only if it is the same)."""
+        return (tuple((t.codec, t.language) for t in self.audio), tuple((t.codec, t.language) for t in self.subtitles))
+
+
+IGNORED_SUBTITLES = ("dvb_teletext",)
+
+
+def track_list(path: str, ffprobe: str = "ffprobe") -> TrackList:
+    """The audio and subtitle tracks of a file (fast: only the list of the streams is read). Teletext tracks are not listed, but counted in `index`."""
+    data = _run_ffprobe(["-show_entries", "stream=codec_type,codec_name,channels,bit_rate:stream_tags=language,title:stream_disposition=hearing_impaired,visual_impaired,descriptions", path], ffprobe)
+    audio, subtitles, counts = [], [], {"audio": 0, "subtitle": 0}
+    for s in data.get("streams", []):
+        kind = s.get("codec_type")
+        if kind not in counts:
+            continue
+        index = counts[kind]
+        counts[kind] += 1
+        codec = str(s.get("codec_name", ""))
+        if kind == "subtitle" and codec in IGNORED_SUBTITLES:
+            continue
+        tags, disp = s.get("tags", {}), s.get("disposition", {})
+        target = audio if kind == "audio" else subtitles
+        target.append(Track(kind, index, len(target) + 1, codec, str(tags.get("language", "")).lower(), str(tags.get("title", "")), int(s.get("channels") or 0),
+                            int(float(s.get("bit_rate") or 0)), bool(disp.get("hearing_impaired")), bool(disp.get("visual_impaired") or disp.get("descriptions"))))
+    return TrackList(audio, subtitles)
+
+
 def subtitle_codecs(path: str, ffprobe: str = "ffprobe") -> list:
     """The codec names of the subtitle tracks of the file, in their order (track 1 of the option subtitle is the first one). Fast: only the stream list is read."""
     data = _run_ffprobe(["-select_streams", "s", "-show_entries", "stream=codec_name", path], ffprobe)

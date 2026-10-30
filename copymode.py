@@ -8,7 +8,7 @@ What is possible depends on the videos in the segment list (the decisive number 
 * SEVERAL videos (at least two different files): EVERY item of the list is joined in full length, in the order of the list, with ffmpeg's concat demuxer
   (as in VB6; the same file may be in the list several times). This only works for videos with identical characteristics (size, frame rate, sound,
   codecs). The cut markers, cropping, logo filters, rescaling and the settings of the output profile are ignored.
-* In both cases the sound track and the subtitles are chosen by the options (`audio`, `multilanguage`, `subtitle`) and chapters can be added.
+* In both cases the sound tracks and the subtitles are chosen in the multitrack dialog (see tracks.py; without it: the main sound track, no subtitles) and chapters can be added.
 
 Several segments of ONE video only (no other file in the list) can be joined if none of them has cut markers (the whole video several times); if one has, the job
 would be cutting AND joining, which is not possible without encoding: CopyModeError.
@@ -22,6 +22,8 @@ from fractions import Fraction
 from typing import Optional
 
 import containers
+import mediaprobe
+import tracks
 from cutlist import Job, Segment
 from ffmpeg_cmd import fmt_seconds, stream_times_of
 
@@ -107,31 +109,22 @@ def write_list(plan: CopyPlan, path: str) -> None:
         f.write(list_text(plan))
 
 
-def subtitle_numbers(options: dict) -> list:
-    """The numbers (1, 2 ...) from the option subtitle (\"1,3\"); 0 or empty: none."""
-    numbers = []
-    for part in str(options.get("subtitle", "0")).split(","):
-        part = part.strip()
-        if part.isdigit() and int(part) > 0:
-            numbers.append(int(part))
-    return numbers
-
-
-def stream_maps(options: dict, audio_sel: str) -> list:
-    """-map options: the first video stream, the chosen sound track (all of them with multilanguage), and the chosen subtitles. What is not
-    mapped is deleted."""
-    maps = ["-map", "0:v:0"]
-    if options.get("multilanguage", "False") == "True":
-        maps += ["-map", "0:a"]
+def stream_maps(streams: tracks.Streams, audio_sel: str, input_index: int = 0) -> list:
+    """-map options: the first video stream, the chosen audio tracks (without a choice: the main one of the segment) and the chosen subtitles (see tracks.py).
+    What is not mapped is deleted."""
+    maps = ["-map", f"{input_index}:v:0"]
+    if streams.audio:
+        for index, _ in streams.audio:
+            maps += ["-map", f"{input_index}:a:{index}"]
     else:
-        maps += ["-map", "0:" + ("a:0" if audio_sel in ("a", "") else audio_sel)]
-    for n in subtitle_numbers(options):
-        maps += ["-map", f"0:s:{n - 1}"]
+        maps += ["-map", f"{input_index}:" + ("a:0" if audio_sel in ("a", "") else audio_sel)]
+    for index, *_ in streams.subtitles:
+        maps += ["-map", f"{input_index}:s:{index}"]
     return maps
 
 
 def build_copy_command(plan: CopyPlan, job: Job, list_path: Optional[str] = None, ffmpeg: str = "ffmpeg", chapters_file: Optional[str] = None,
-                       container_start: Optional[Fraction] = None) -> list:
+                       container_start: Optional[Fraction] = None, track_list=None) -> list:
     """The ffmpeg command: no filter, -c copy.
 
     cut: -copyts -seek_timestamp 1 -ss <start> -i <file> -to <end> ... -avoid_negative_ts make_zero. Both times are ABSOLUTE (container start +
@@ -139,11 +132,15 @@ def build_copy_command(plan: CopyPlan, job: Job, list_path: Optional[str] = None
     (measured: 0.4 s with a TV recording)."""
     options, out = job.options, job.output
     audio_sel = (plan.segment or job.segments[0]).audio_sel
-    maps = stream_maps(options, audio_sel)
-    codecs = ["-c", "copy"]
-    if subtitle_numbers(options) and containers.subtitle_codec(out):
-        codecs += ["-c:s", containers.subtitle_codec(out)]    # (mp4: mov_text, for text subtitles only; mkv copies every kind; see containers.py)
+    if track_list is None and tracks.Choice.from_options(options) and tracks.Choice.from_options(options).subtitles:
+        track_list = mediaprobe.track_list(job.segments[0].path)
+    streams = tracks.streams_for(options, out, track_list)
+    maps = stream_maps(streams, audio_sel)
+    codecs = ["-c", "copy"] + tracks.subtitle_codec_args(streams) + tracks.metadata_args(streams, out)   # (conversion of subtitles and the language codes: see tracks.py)
     args = [ffmpeg, "-y", "-hide_banner"]
+    if streams.canvas:                                                  # (an input option: before the -i; the size of the picture that the subtitles were made for)
+        first = plan.segment or job.segments[0]
+        args += ["-canvas_size", f"{first.width}x{first.height}"]
     if plan.kind == "concat":
         args += ["-f", "concat", "-safe", "0", "-i", list_path]
         trimmed = False

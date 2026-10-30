@@ -21,7 +21,7 @@ PRESETS = {
     "acodec_in": ["mp2", "ac3", "aac", "mp3", "eac3", "dts"],
     "acodec_out": ["aac", "ac3", "mp3"],
     "pad": ["False", "True"],
-    "multilanguage": ["False", "True"],
+    "multitrack": ["off", "on"],
     "player": ["memory", "embed"],
     "dialog_style": ["tabs", "list"],
     "file_dialog": ["qt", "native"],
@@ -73,9 +73,14 @@ def _float(value: str) -> Optional[float]:
 
 
 # options that no longer appear in the dialog:
-REMOVED_OPTIONS = {"focus", "pad", "logo_fill", "fill_sigma", "mask_fill", "mask_grow", "logo_rewind"}   # focus: no effect; pad: now belongs to the profile;
+REMOVED_OPTIONS = {"focus", "pad", "logo_fill", "fill_sigma", "mask_fill", "mask_grow", "logo_rewind", "multilanguage", "subtitle"}   # focus: no effect; pad: now belongs to the profile;
                                                                                          # logo_fill ... mask_grow: tried for the logo mask and dropped again; logo_rewind: the rewinding after a logo search was removed
 # options that were renamed (old name -> new name); the value moves at the start (old INI files):
+def multitrack_from_old(options: dict) -> bool:
+    """Did an old INI file or job have `multilanguage` = True or a `subtitle` other than 0 (both are replaced by the option multitrack)?"""
+    return options.get("multilanguage") == "True" or options.get("subtitle", "0") not in ("0", "")
+
+
 RENAMED_OPTIONS = {"overlap": "dedup"}      # "Overlap segments" is "Dedup scene" now
 HIDDEN_OPTIONS = {"logo_edge", "logo_conf", "cut_diff"}   # for advanced users only, they are only in the INI file
 
@@ -84,7 +89,7 @@ OPTION_GROUPS = (
     ("Borders", ("crop", "blackness", "allowance", "border_tol")),
     ("Seeking", ("pause", "dedup", "step_end", "step_next", "cut_window")),
     ("Logo", ("overlay_opacity",)),
-    ("Audio/Subtitles", ("audio", "multilanguage", "subtitle", "aflags")),
+    ("Audio/Subtitles", ("audio", "multitrack", "aflags")),
     ("Batch", ("path_map", "batch")),
     ("Technical", ("floor", "detect", "player", "vlc_args", "hide_messages", "dialog_style", "file_dialog", "sessions_dir", "restore_backup", "copy_mode_notice", "paused_preview", "cutpoint_filters")),
     ("Tools", ("avidemux", "vlc")),
@@ -141,10 +146,8 @@ def validate_options(o: dict) -> list[str]:
         errors.append('"file_dialog" must be qt or native.')
     if "dialog_style" in o and o["dialog_style"] not in ("tabs", "list"):
         errors.append('"dialog_style" must be tabs or list.')
-    if "multilanguage" in o and o["multilanguage"] not in ("True", "False"):
-        errors.append('"multilanguage" must be True or False.')
-    if "subtitle" in o and not re.fullmatch(r"0|\d+(,\d+)*", o["subtitle"]):
-        errors.append('"subtitle" must be 0 (off) or a list of track numbers separated by commas.')
+    if "multitrack" in o and o["multitrack"] not in ("on", "off"):
+        errors.append('"multitrack" must be on or off.')
     return errors
 
 

@@ -41,6 +41,8 @@ from frames import grab_frame, grab_numbered, grab_scanlines        # noqa: E402
 import dedup                                                          # noqa: E402
 import copymode                                                       # noqa: E402
 import containers                                                     # noqa: E402
+import tracks                                                         # noqa: E402
+import tracks_dialog                                                  # noqa: E402
 from stills import StillPreview                                       # noqa: E402
 import mediaprobe                                                     # noqa: E402
 import chapters                                                       # noqa: E402
@@ -61,7 +63,7 @@ from player import debug_log                                         # noqa: E40
 from border import border_at                                         # noqa: E402
 from logo import confidence_at                                       # noqa: E402
 from mediaprobe import display_aspect, MediaInfo, ProbeError, count_video_packets, first_frame_number, probe as full_probe  # noqa: E402
-from profiles import (GROUP_TEXTS, HIDDEN_OPTIONS, OPTION_GROUPS, PRESETS, PROFILE_KEYS, REMOVED_OPTIONS, RENAMED_OPTIONS, default_name, normalize_bitrate,  # noqa: E402
+from profiles import (multitrack_from_old, GROUP_TEXTS, HIDDEN_OPTIONS, OPTION_GROUPS, PRESETS, PROFILE_KEYS, REMOVED_OPTIONS, RENAMED_OPTIONS, default_name, normalize_bitrate,  # noqa: E402
                       ordered_profile, profile_from_segment, valid_profile_name, validate_options, validate_profile,
                       weighted_bitrate)
 from project import format_hms, load_segments, save_segments, segment_row, timeof  # noqa: E402
@@ -127,7 +129,7 @@ class frmMain(frmMainBase):
     def __init__(self, settings: Settings, player, project_path: str, probe: Callable[..., MediaInfo] = quick_probe,
                  fresh: bool = False, count_fn=count_video_packets, thumb_fn=grab_numbered, border_fn=border_at,
                  conf_fn=confidence_at, first_fn=first_frame_number,
-                 render_fn=run_ffmpeg, frame_fn=grab_frame, scan_fn=grab_scanlines, parent=None):
+                 render_fn=run_ffmpeg, frame_fn=grab_frame, scan_fn=grab_scanlines, track_fn=mediaprobe.track_list, parent=None):
         self.fresh = fresh                      # True: clear the segment list instead of loading the last one
         self.settings = settings
         self.player = player
@@ -148,6 +150,8 @@ class frmMain(frmMainBase):
         self._verify_first: set = set()                # files opened just now: the first picture of the thumbnails confirms the first frame
         self.verify_first_frame = True                 # False: take the first frame from the stream data as it is (tests)
         self._frame_fn = frame_fn
+        self._track_fn = track_fn                        # the audio and subtitle tracks of a file (for the multitrack dialog)
+        self.track_choice = None                        # the last choice of the multitrack dialog (tracks.Choice), None: Cancel or never asked
         self._still_frame = None                        # the frame whose picture ffmpeg put into the preview (None: VLC shows the picture)
         self._aspect_fn = display_aspect               # proportions of the picture as a player shows it
         self._aspects: dict = {}
@@ -310,6 +314,12 @@ class frmMain(frmMainBase):
             if key in raw:
                 del raw[key]
                 changed = True
+        if "multilanguage" in raw or "subtitle" in raw:               # replaced by the option multitrack (the dialog); the old ones asked for what it does now
+            if multitrack_from_old(raw):
+                raw.setdefault("multitrack", "on")
+            raw.pop("multilanguage", None)
+            raw.pop("subtitle", None)
+            changed = True
         for old, new in RENAMED_OPTIONS.items():                      # renamed options: the value moves (unless the new name is already set)
             if old in raw:
                 raw.setdefault(new, raw[old])
@@ -932,22 +942,72 @@ class frmMain(frmMainBase):
             self.remember_dir(name)                                   # offered again in the list of the Batch dialog
             return name
 
-    def container_ok(self, output: str, copy: bool) -> bool:
+    # ------------------------------------------------------------------ Multitrack (option multitrack; tracks.py, tracks_dialog.py)
+    def multitrack_on(self) -> bool:
+        return self.options.get("multitrack", "off") == "on"
+
+    def tracks_of(self, path: str):
+        return self._track_fn(path)
+
+    def tracks_options(self) -> dict:
+        """The entries audio_tracks / subtitle_tracks for the options of a job (nothing: only the main audio track, no subtitles)."""
+        return self.track_choice.options() if self.multitrack_on() and self.track_choice else {}
+
+    def ask_tracks(self, track_list, output: str, file_text: str, initial, main_audio: int):
+        """The multitrack dialog: the choice (tracks.Choice) or None for Cancel."""
+        return tracks_dialog.run_dialog(self, track_list, output, file_text, initial, main_audio)
+
+    def pick_tracks(self, output: str) -> bool:
+        """After the name of the file has been chosen: with the option multitrack (and only if the source has more than one audio track or any subtitle track)
+        the dialog opens. Cancel: only the main audio track, no subtitles. False: the job cannot be made (said)."""
+        if not self.multitrack_on():
+            return True
+        first = self.segments[0]
+        try:
+            track_list = self.tracks_of(first.path)
+        except Exception as e:
+            self.msg(f"The tracks of {os.path.basename(first.path)} cannot be read: {e}")
+            return False
+        if not tracks.needs_dialog(track_list):
+            self.track_choice = None
+            return True
+        main = int(first.audio_sel.split(":")[1]) if ":" in first.audio_sel and first.audio_sel.split(":")[1].isdigit() else 0
+        self.track_choice = self.ask_tracks(track_list, output, os.path.basename(first.path), self.track_choice, main)
+        if self.track_choice:
+            for path in sorted({s.path for s in self.segments} - {first.path}):
+                try:
+                    other = self.tracks_of(path)
+                except Exception as e:
+                    self.msg(f"The tracks of {os.path.basename(path)} cannot be read: {e}")
+                    return False
+                if not tracks.fits(self.track_choice, other):
+                    self.msg(f"{os.path.basename(path)} does not have the tracks that were chosen for {os.path.basename(first.path)} (the choice is for the tracks of the first "
+                             "file and is used for all). Use files with the same tracks, or switch multitrack off.")
+                    return False
+        return True
+
+    def job_tracks(self, job):
+        """The tracks of the first source file, if the job has subtitles (the command needs their codecs); else None."""
+        choice = tracks.Choice.from_options(job.options)
+        return self.tracks_of(job.segments[0].path) if choice and choice.subtitles else None
+
+    def container_ok(self, output: str, copy: bool, job=None) -> bool:
         """Does the file type of the target file allow what is to be saved (containers.check)? An error is told and stops; if only something is left out (chapters
         in an avi file) it is asked whether to save anyway."""
-        numbers = copymode.subtitle_numbers(self.options) if copy else []
+        choice = tracks.Choice.from_options(job.options) if job is not None else None
         subtitles = []
         errors = []
-        if numbers and self.segments:
+        if choice and choice.subtitles and self.segments:
             try:
-                codecs = mediaprobe.subtitle_codecs(self.segments[0].path)
+                track_list = self.tracks_of(self.segments[0].path)
             except Exception:
-                codecs = []
-            for n in numbers:
-                if n > len(codecs):
-                    errors.append(f"The option subtitle names track {n}, but the file has {len(codecs)} subtitle track{'s' if len(codecs) != 1 else ''}.")
+                track_list = None
+            for index, _ in choice.subtitles:
+                t = next((t for t in (track_list.subtitles if track_list else []) if t.index == index), None)
+                if t is None:
+                    errors.append(f"The source file has no subtitle track with the index {index}.")
                 else:
-                    subtitles.append(codecs[n - 1])
+                    subtitles.append(t.codec)
         found, warnings = containers.check(output, self.chapters_valid(), subtitles, copy)
         errors += found
         if errors:
@@ -984,8 +1044,11 @@ class frmMain(frmMainBase):
         output = self.choose_output(kind)
         if output is None:
             return
+        if not self.pick_tracks(output):
+            return
         job = self.make_job(output)
-        if not self.check_job(job) or not self.container_ok(output, self.mnuCopyMode.isChecked()):
+        job.options.update(self.tracks_options())
+        if not self.check_job(job) or not self.container_ok(output, self.mnuCopyMode.isChecked(), job):
             return
         work = tempfile.mkdtemp(prefix="mediamaker_")
         plan = None
@@ -1001,12 +1064,16 @@ class frmMain(frmMainBase):
                     chapters_file = os.path.join(work, "chapters.txt")
                     with open(chapters_file, "w", encoding="utf-8", newline="\n") as f:
                         f.write(chapter_text)
-                command = copymode.build_copy_command(plan, job, list_path, chapters_file=chapters_file)
+                command = copymode.build_copy_command(plan, job, list_path, chapters_file=chapters_file, track_list=self.job_tracks(job))
                 expected, total = None, plan.seconds
             else:
                 write_masks(job.segments, work)                       # removelogoNN.png for the filter
                 chapters_file = self.chapters_path() if self.chapters_valid() else None
-                command = build_command(job, chapters_file=chapters_file)
+                files = {}
+                command = build_command(job, chapters_file=chapters_file, subtitle_list=os.path.join(work, "subtitles.ffconcat"), files=files, track_list=self.job_tracks(job))
+                for path, text in files.items():                      # the list that cuts the subtitles like the picture (the command reads it)
+                    with open(path, "w", encoding="utf-8", newline="\n") as f:
+                        f.write(text)
                 expected, total = expected_frames(job), total_seconds(job)
         except copymode.CopyModeError as e:
             shutil.rmtree(work, ignore_errors=True)
@@ -1150,7 +1217,7 @@ class frmMain(frmMainBase):
                 "- SEVERAL videos are joined in full length; this only works for files with identical characteristics (size, frame rate, sound, codecs ...). "
                 "However, the definition of chapters is still possible.\n\n"
                 "Cut markers (when joining), cropping, logo filters, rescaling and the settings of the output profile are ignored. Sound tracks and "
-                "subtitles are chosen by the options audio, multilanguage and subtitle. The state of copy mode is remembered for the next start and is kept in "
+                "subtitles are chosen in the multitrack dialog (option multitrack); without it only the main sound track is processed. The state of copy mode is remembered for the next start and is kept in "
                 "batch scripts and sessions.\n\nContinue anyway?"):
             self.mnuCopyMode.setChecked(False)
         elif not self.mnuCopyMode.isChecked():
@@ -1197,21 +1264,27 @@ class frmMain(frmMainBase):
             return
         name = batch.with_extension(name, batch.OUTPUT_EXTENSIONS, self._save_type)
         self.remember_dir(name)
+        if not self.pick_tracks(name):
+            return
         job = self.make_job(name)
-        if not self.check_job(job) or not self.container_ok(name, copy):
+        job.options.update(self.tracks_options())
+        if not self.check_job(job) or not self.container_ok(name, copy, job):
             return
         chapter_text = self.chapters_text() if self.chapters_valid() else None          # the script writes the file itself when it runs
         rules = batch.parse_path_map(job.options.get("path_map", ""))
-        plan = copy_list = chapters_run = None
+        plan = copy_list = chapters_run = extra = None
         try:
             if copy:                                                  # no filter, -c copy: the script writes the list of files for the concat demuxer itself
                 plan = copymode.make_plan(job.segments, job.options)
                 copy_list = copymode.list_text(plan, lambda p: batch.map_path(p, rules)) if plan.kind == "concat" else None
                 chapters_run = self.copy_chapter_text(plan, job)
                 command = copymode.build_copy_command(plan, job, batch.list_temp(name) if copy_list else None,
-                                                      chapters_file=batch.chapters_temp(name) if chapters_run else None)
+                                                      chapters_file=batch.chapters_temp(name) if chapters_run else None, track_list=self.job_tracks(job))
             else:
-                command = build_command(job, chapters_file=batch.chapters_temp(name) if chapter_text else None)
+                extra = {}
+                command = build_command(job, chapters_file=batch.chapters_temp(name) if chapter_text else None, subtitle_list=batch.subtitles_temp(name), files=extra,
+                                        track_list=self.job_tracks(job))
+                extra = {path: batch.map_list_text(text, rules) for path, text in extra.items()}
             command = batch.map_sources(command, rules)
         except copymode.CopyModeError as e:
             self.msg(str(e))
@@ -1221,7 +1294,7 @@ class frmMain(frmMainBase):
             return
         os.makedirs(os.path.dirname(script) or ".", exist_ok=True)
         with open(script, "w", encoding="utf-8", newline="\n") as f:
-            f.write(batch.build_script(job, command, old, chapter_text, chapters_run, copy_list, copy))
+            f.write(batch.build_script(job, command, old, chapter_text, chapters_run, copy_list, copy, extra))
         os.chmod(script, 0o755)
         self.inform(f"Batch file was updated and can be run from the command line:\n{script}" + (f"\n\n{self.copy_summary(plan)}" if plan is not None else ""))
 
@@ -1323,8 +1396,12 @@ class frmMain(frmMainBase):
         restore_chapters = bool(job.chapters) and self.ask(
             f"The job also has chapters ({len(chapters.parse_titles(job.chapters))} names). Restore them? (They are only valid for the segments of the job.)")
         options = dict(self.options)
-        taken = {RENAMED_OPTIONS.get(k, k): v for k, v in parse_kv(job.options).items() if k not in REMOVED_OPTIONS}     # names from older versions
-        options.update({k: v for k, v in taken.items() if k not in self.LOCAL_OPTIONS})
+        job_options = parse_kv(job.options)
+        taken = {RENAMED_OPTIONS.get(k, k): v for k, v in job_options.items() if k not in REMOVED_OPTIONS}     # names from older versions
+        if multitrack_from_old(job_options):
+            taken.setdefault("multitrack", "on")                      # (multilanguage / subtitle of an old job: the dialog asks now)
+        self.track_choice = tracks.Choice.from_options(job_options)   # the choice of the dialog is part of the job, not of the settings
+        options.update({k: v for k, v in taken.items() if k not in self.LOCAL_OPTIONS and k not in tracks.KEYS})
         self.settings.set_options(options)
         profile = parse_kv(job.profile)
         if profile:
@@ -1934,7 +2011,7 @@ class frmMain(frmMainBase):
     def make_session(self, note: str) -> "sessions.SessionInfo":
         self._save()                                              # the list on disk is the current one
         return sessions.create_session(self.sessions_directory(), self.settings.path, self.project_path, self.segments, note, VERSION, chapters_path=self.chapters_path(),
-                                      copy_mode=self.mnuCopyMode.isChecked())
+                                      copy_mode=self.mnuCopyMode.isChecked(), tracks=self.track_choice.options() if self.track_choice else None)
 
     def mnuBackupSession_Click(self):
         """Saves the segment list and the settings as a session (one zip file, named with the time)."""
@@ -1985,6 +2062,8 @@ class frmMain(frmMainBase):
         self.reload_session()
         self.remember_restore_backup(backup)                         # (a restored INI file brings the value it had in the session)
         text = f"Session {info.stamp} has been restored." + (f" The state before is saved as session {before.stamp}." if before else "")
+        if "list" in parts:
+            self.track_choice = tracks.Choice.from_options(info.tracks)               # the choice of the multitrack dialog belongs to the list
         activated = "list" in parts and self.apply_copy_mode(info.copy_mode)       # copy mode belongs to the job, so it comes back with the list
         self.save_copy_mode()                                        # (a restored INI file has the entry it had in the session: the state of the program counts)
         if activated:

@@ -3,6 +3,25 @@
 ## 0.7 (in progress)
 
 - Version number set to 0.7-dev.
+- **Multitrack: several audio tracks and subtitles in the new file** (option `multitrack`, on|off, default off, group Audio/Subtitles; replaces the options `multilanguage` and
+  `subtitle`, which are removed: an old INI file or job with `multilanguage=True` or a `subtitle` other than 0 gets `multitrack=on`). With the option on, a dialog with two tabs
+  (Audio, Subtitles; `tracks_dialog.py`) opens after the name of the file has been chosen (Save as and Batch), but only if the source has more than one audio track or any
+  subtitle track. For every position it offers the tracks of the source file ("-" = unused) and a language code (a drop-down list with the codes of the source file; a typed code
+  is checked against ISO 639-2, `languages.py`; T and B codes are accepted, `ger` becomes `deu`; OK is impossible while a code is wrong, a track is chosen twice or the file type cannot
+  hold a subtitle). Teletext tracks are ignored and not counted in the numbers of the dialog (but in the index of ffmpeg). Cancel: only the main audio track, no subtitles.
+  * The choice (`tracks.Choice`) is part of the OPTIONS OF THE JOB (`audio_tracks=1:fra,0:deu`, `subtitle_tracks=2:fra`, index of ffmpeg and code), not of the settings: the batch file
+    carries it, a session keeps it, the import restores it; the INI file never holds it. The dialog starts with the last choice if it fits the file.
+  * **Normal mode**: every chosen audio track is cut and joined like the first one (`concat` with `a=K`), with `-metadata:s:a:N language=xxx` (an AVI file has no field for it:
+    `title=`). **Subtitles** cannot go through the concat filter, so they come from a second input, the concat DEMUXER with a list (`inpoint`, `outpoint`, `duration` from the same times
+    as the trim of the picture; with `-copyts` the events then meet the picture exactly; measured with a TV recording). The list is a file in the working folder (the batch file writes
+    and removes `<target>.subtitles.tmp`). One command, no second run.
+  * **Copy mode**: `-map` of the chosen tracks, the languages, the conversion of the subtitles.
+  * **What becomes of a subtitle** (`containers.subtitle_plan`): MKV copies; MP4 converts text with `mov_text` and bitmaps (DVB) with `-c:s dvdsub` into dvd_subtitle (MP4 holds it; the
+    first version of the table said "text only"); TS keeps DVB; AVI cannot hold subtitles (error before saving).
+  * **`-canvas_size`**: a bitmap subtitle that is converted gets the size of the picture of the SOURCE film (an input option, before the input). Measured: without it the new track has no size;
+    with the size of the source (1280x720) it has, also when the film is rescaled (the players scale it); with the NEW smaller size ffmpeg fails ("canvas_size ... is too small for render").
+    Not handled: cropping moves the picture, the positions of bitmap subtitles refer to the whole source picture.
+  * All files of a list must have the tracks of the choice (the choice is made for the first file); otherwise it is told before anything starts.
 - **Larger symbols in the column of buttons** (remove, move, ..., crop, DeLogo, clear): 22 x 22 px (`frmMain.COMMAND_ICON_SIZE`). Qt took its default of about 16 px, VB6 drew the symbols
   nearly as large as the 25 x 25 px buttons. The pictures of the form (32 and 24 px) are scaled; the size is set when the window is built, the generated user interface is unchanged.
 

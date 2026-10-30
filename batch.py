@@ -61,6 +61,7 @@ def segments_to_csv(segments: Iterable[Segment]) -> str:
 
 CHAPTERS_END = "MEDIAMAKER_CHAPTERS_END"
 LIST_END = "MEDIAMAKER_LIST_END"
+SUBS_END = "MEDIAMAKER_SUBTITLES_END"
 COPY_MARK = "# M=copy"
 
 
@@ -74,8 +75,23 @@ def list_temp(output: str) -> str:
     return output + ".files.tmp"
 
 
+def subtitles_temp(output: str) -> str:
+    """Where the script writes the list for the subtitles (concat demuxer, see ffmpeg_cmd.subtitle_list_text) while it runs: next to the target file."""
+    return output + ".subtitles.tmp"
+
+
+def map_list_text(text: str, rules: list) -> str:
+    """A list for the concat demuxer (`file '<path>'` lines) with the paths mapped like the sources of the command."""
+    out = []
+    for line in text.splitlines():
+        if line.startswith("file '") and line.endswith("'"):
+            line = "file '" + map_path(line[6:-1], rules) + "'"
+        out.append(line)
+    return "\n".join(out) + "\n"
+
+
 def job_lines(job: Job, command: list[str], chapters: Optional[str] = None, chapters_run: Optional[str] = None, copy_list: Optional[str] = None,
-              copy_mode: bool = False) -> list[str]:
+              copy_mode: bool = False, extra_files: Optional[dict] = None) -> list[str]:
     """The lines of one job: comments with the whole job, masks, the files that the call needs, the ffmpeg call, clean-up.
     `chapters` is the text of the chapters file as it is kept in the program (the comment K= for a later import); `chapters_run` the text that the
     script writes for ffmpeg (it is the same, unless copy mode made other times: the whole files); the command then has to read chapters_temp(output).
@@ -99,6 +115,11 @@ def job_lines(job: Job, command: list[str], chapters: Optional[str] = None, chap
             lines += text.rstrip("\n").split("\n")
             lines.append(end)
             temps.append(path)
+    for path, text in (extra_files or {}).items():
+        lines.append(f"cat > {bash_quote(path)} <<'{SUBS_END}'")
+        lines += text.rstrip("\n").split("\n")
+        lines.append(SUBS_END)
+        temps.append(path)
     lines.append(command_line(command))
     lines.append(CLEANUP)
     for path in temps:
@@ -160,7 +181,7 @@ def parse_jobs(text: str) -> list:
 
 
 def build_script(job: Job, command: list[str], old_text: Optional[str] = None, chapters: Optional[str] = None, chapters_run: Optional[str] = None,
-                 copy_list: Optional[str] = None, copy_mode: bool = False) -> str:
+                 copy_list: Optional[str] = None, copy_mode: bool = False, extra_files: Optional[dict] = None) -> str:
     """Text of the batch file. With `old_text` (the existing file) its earlier jobs are kept but switched off: every line that is
     not a comment gets '# ' in front (the comments stay, so the old jobs can still be imported)."""
     lines = [SHEBANG]
@@ -169,7 +190,7 @@ def build_script(job: Job, command: list[str], old_text: Optional[str] = None, c
         if old and old[0].startswith("#!"):
             old = old[1:]
         lines += [line if line.startswith("#") else "# " + line for line in old]
-    lines += job_lines(job, command, chapters, chapters_run, copy_list, copy_mode)
+    lines += job_lines(job, command, chapters, chapters_run, copy_list, copy_mode, extra_files)
     return "\n".join(lines) + "\n"
 
 

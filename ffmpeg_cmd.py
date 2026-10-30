@@ -7,7 +7,7 @@ Differences from the VB6 version:
   * Time values are calculated with exact fractions (Fraction) instead of floating point numbers.
     This removes the 1 ms noise (e.g. 2.479 instead of 2.480 at frame 199662 @ 25 fps).
 
-NOT included yet (raises NotImplementedError): DVD mode, subtitles, multilanguage,
+NOT included yet (raises NotImplementedError): DVD mode,
 copy mode. The rest corresponds to the two normal VB6 branches (one or several source files).
 """
 from __future__ import annotations
@@ -21,6 +21,8 @@ from functools import lru_cache
 from math import floor
 from typing import Callable, Optional, Union
 
+import mediaprobe
+import tracks
 from cutlist import Job, Segment
 
 
@@ -155,11 +157,27 @@ def video_filter(seg: Segment, pos: int, profile: dict, opts: dict,
     return f + f"[v{pos - 1}];"
 
 
-def audio_filter(seg: Segment, pos: int, trim: Optional[tuple[Fraction, Fraction]]) -> str:
-    f = f"[{pos - 1}:{seg.audio_sel}]"
+def audio_filter(seg: Segment, pos: int, trim: Optional[tuple[Fraction, Fraction]], selector: Optional[str] = None, label: Optional[str] = None) -> str:
+    """The chain of one audio track of a segment. selector: e.g. "a:2" (default: the audio track of the segment); label: name of the result (default a<pos-1>)."""
+    f = f"[{pos - 1}:{selector or seg.audio_sel}]"
     if trim:
         f += f"atrim={fmt_seconds(trim[0])}:{fmt_seconds(trim[1])},"
-    return f + f"asetpts=PTS-STARTPTS[a{pos - 1}];"
+    return f + f"asetpts=PTS-STARTPTS[{label or f'a{pos - 1}'}];"
+
+
+def _quote(path: str) -> str:
+    return "'" + path.replace("'", "'\\''") + "'"
+
+
+def subtitle_list_text(entries: list) -> str:
+    """The list for the concat demuxer that cuts the subtitles like the video: [(file, in point, out point or None, length or None)] in seconds (absolute times, as the
+    stream has them: with -copyts the subtitles then meet the picture exactly; measured). The demuxer puts the pieces one after the other with the given lengths."""
+    out = "ffconcat version 1.0\n"
+    for path, t0, t1, length in entries:
+        out += f"file {_quote(path)}\ninpoint {fmt_seconds(t0)}\n"
+        if t1 is not None:
+            out += f"outpoint {fmt_seconds(t1)}\nduration {fmt_seconds(length)}\n"
+    return out
 
 
 _FILTERS: dict = {}
@@ -190,7 +208,8 @@ def write_masks(segments: list[Segment], directory: str) -> list[str]:
 
 def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str] = None,
                   path_map: Callable[[str], str] = lambda p: p, unify: bool = False,
-                  stream_times: Union[dict, str, None] = "auto", origin: str = "container", video_extra: str = "") -> list[str]:
+                  stream_times: Union[dict, str, None] = "auto", origin: str = "container", video_extra: str = "",
+                  subtitle_list: Optional[str] = None, files: Optional[dict] = None, track_list=None) -> list[str]:
     """Returns the ffmpeg argument list.
 
         setsar=1 is only set for SEVERAL source files (needed for concat). With a single
@@ -207,12 +226,26 @@ def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str]
         unify=True:  sets codec, sample rate and minrate/maxrate also for only one source file
                      (SAR behaviour stays unchanged).
         video_extra: filter text (with a trailing comma) inserted into the video chain of every segment, after trim and logo filters.
+        Tracks (options audio_tracks / subtitle_tracks of the job, see tracks.py): several audio tracks are cut and joined like the first one (concat with a=K),
+        with their language codes; subtitles (the concat FILTER cannot join them) come from a second input, the concat DEMUXER with a list (`subtitle_list`: the path
+        of the list file; its text is put into `files[subtitle_list]`, the caller writes it), which cuts them with the same times as the video.
+        track_list: the tracks of the first source file (read with ffprobe if the subtitles need it).
     """
     prof, opts, segs = job.profile, job.options, job.segments
     if not segs:
         raise ValueError("Segment list is empty.")
-    if opts.get("subtitle", "0") != "0" or opts.get("multilanguage", "False") == "True":
-        raise NotImplementedError("Subtitles/multilanguage are not implemented yet.")
+    choice = tracks.Choice.from_options(opts)
+    if choice and choice.subtitles:
+        if not stream_times:
+            raise NotImplementedError("Subtitles need the absolute times (stream_times).")
+        if not subtitle_list or files is None:
+            raise ValueError("Subtitles need subtitle_list (the path of the list) and files (where its text is put).")
+        if track_list is None:
+            track_list = mediaprobe.track_list(path_map(segs[0].path))
+    streams = tracks.streams_for(opts, job.output, track_list)
+    selectors = [f"a:{index}" for index, _ in streams.audio] or [None]        # None: the audio track of the segment
+    n_audio = len(selectors)
+    sub_entries = []
 
     if stream_times == "auto":
         stream_times = {p: stream_times_of(path_map(p)) for p in {s.path for s in segs}}
@@ -243,19 +276,37 @@ def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str]
                 args += ["-ss", str(seek)]
         args += ["-i", path_map(seg.path)]
         filtr += video_filter(seg, pos, prof, opts, trim, setsar=multiple, extra=video_extra)
-        filtr += audio_filter(seg, pos, trim)
+        for k, selector in enumerate(selectors):
+            filtr += audio_filter(seg, pos, trim, selector, f"a{pos - 1}" if n_audio == 1 else f"a{pos - 1}_{k}")
+        if streams.subtitles:                                             # the same times as the picture, so that the subtitles meet it
+            if trim:
+                sub_entries.append((path_map(seg.path), trim[0], trim[1], trim[1] - trim[0]))
+            else:
+                sub_entries.append((path_map(seg.path), stream_times[seg.path][1], None, None))        # a whole file: from its first picture
 
     if chapters_file:
         # (-map_chapters: the chapters come from THIS file, also if a source file has chapters itself; without it ffmpeg takes the first input that has any)
         args += ["-i", chapters_file, "-map_metadata", str(len(segs)), "-map_chapters", str(len(segs))]
 
     n = len(segs)
+    if n_audio == 1:
+        alabels = [lambda i, k: f"a{i}"]
+        outs = ["a"]
+    else:
+        alabels = [lambda i, k: f"a{i}_{k}"]
+        outs = [f"aout{k}" for k in range(n_audio)]
+    alabel = alabels[0]
     if n == 1:
         filtr = filtr[:-1]                                      # no concat needed
-        maps = ["-map", "[v0]", "-map", "[a0]"]
+        maps = ["-map", "[v0]"] + [x for k in range(n_audio) for x in ("-map", f"[{alabel(0, k)}]")]
     else:
-        filtr += "".join(f"[v{i}][a{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[v][a]"
-        maps = ["-map", "[v]", "-map", "[a]"]
+        filtr += "".join(f"[v{i}]" + "".join(f"[{alabel(i, k)}]" for k in range(n_audio)) for i in range(n)) + f"concat=n={n}:v=1:a={n_audio}[v]" + "".join(f"[{o}]" for o in outs)
+        maps = ["-map", "[v]"] + [x for o in outs for x in ("-map", f"[{o}]")]
+    if streams.subtitles:
+        sub_input = len(segs) + (1 if chapters_file else 0)                 # (after the segments and the file of the chapters)
+        files[subtitle_list] = subtitle_list_text(sub_entries)
+        args += (["-canvas_size", f"{segs[0].width}x{segs[0].height}"] if streams.canvas else []) + ["-f", "concat", "-safe", "0", "-i", subtitle_list]
+        maps += [x for index, *_ in streams.subtitles for x in ("-map", f"{sub_input}:s:{index}")]
 
     args += ["-filter_complex", filtr, *maps, "-sws_flags", prof["sws_flags"]]
     if explicit:
@@ -264,5 +315,6 @@ def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str]
                  "-minrate", "1000k", "-maxrate", "6000k", "-r", prof["fps"]]
     else:
         args += ["-r", prof["fps"], "-b:v", prof["bv"], "-b:a", prof["ba"]]
+    args += tracks.subtitle_codec_args(streams) + tracks.metadata_args(streams, job.output)
     args.append(job.output)
     return args

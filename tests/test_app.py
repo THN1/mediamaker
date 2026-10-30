@@ -350,9 +350,9 @@ def test_profiles(tmp, videos):
     check(len(bad(fps="25")) == 1 and len(bad(fps="5.000")) == 1 and bad(fps="29.970") == [], "fps")
     check(len(bad(bv="3072")) == 1 and len(bad(ba="0k")) == 1 and bad(ba="64k") == [], "bit rates")
     check(len(bad(ar="48")) == 1 and bad(ar="44100") == [] and len(bad(acodec_out="")) == 1, "ar, Codec")
-    check(validate_options({"crop": "72", "floor": "2", "subtitle": "0", "multilanguage": "False"}) == [], "options valid")
+    check(validate_options({"crop": "72", "floor": "2", "multitrack": "off"}) == [], "options valid")
     check(len(validate_options({"crop": "-1"})) == 1 and len(bad(pad="yes")) == 1 and bad(pad="True") == []
-          and len(validate_options({"subtitle": "a"})) == 1 and validate_options({"subtitle": "1,2"}) == []
+          and len(validate_options({"multitrack": "maybe"})) == 1 and validate_options({"multitrack": "on"}) == []
           and len(validate_options({"audio": "0"})) == 1, "options invalid")
     check(valid_profile_name("My profile [1]") is None and valid_profile_name("a=b") and valid_profile_name("[x") and
           valid_profile_name("  "), "profile names")
@@ -4932,9 +4932,12 @@ def test_copy_mode(tmp, videos):
     check(open(lst).read() == "file '/a/b.ts'\nfile '/c/it'\\''s.ts'\n", f"list of files, a quote is escaped: {open(lst).read()!r}")
     # --- stream selection
     maps = copymode.stream_maps
-    check(maps({}, "a") == ["-map", "0:v:0", "-map", "0:a:0"] and maps({}, "a:1") == ["-map", "0:v:0", "-map", "0:a:1"], "sound track: the chosen one")
-    check(maps({"multilanguage": "True"}, "a:1") == ["-map", "0:v:0", "-map", "0:a"], "multilanguage: all sound tracks")
-    check(maps({"subtitle": "1, 3"}, "a") == ["-map", "0:v:0", "-map", "0:a:0", "-map", "0:s:0", "-map", "0:s:2"] and maps({"subtitle": "0"}, "a") == maps({}, "a"), "subtitles by number (1 is s:0), 0 = none")
+    import tracks as TR
+    S = TR.Streams
+    check(maps(S(), "a") == ["-map", "0:v:0", "-map", "0:a:0"] and maps(S(), "a:1") == ["-map", "0:v:0", "-map", "0:a:1"], "sound track: the chosen one")
+    check(maps(S(audio=[(2, "deu"), (0, "fra")]), "a:1") == ["-map", "0:v:0", "-map", "0:a:2", "-map", "0:a:0"], "audio tracks of the multitrack dialog: in their order")
+    check(maps(S(subtitles=[(2, "fra", "subrip", "copy"), (0, "deu", "subrip", "copy")]), "a") == ["-map", "0:v:0", "-map", "0:a:0", "-map", "0:s:2", "-map", "0:s:0"],
+          "subtitles: their index (the teletext tracks are counted), in their order")
     # --- the command
     job = Job(output="/out/film.mkv", profile=dict(win.profile), options=dict(options), segments=[a])
     cmd = copymode.build_copy_command(copymode.make_plan([a], options), job, container_start=F("1.4"))
@@ -4942,10 +4945,12 @@ def test_copy_mode(tmp, videos):
                   "-avoid_negative_ts", "make_zero", "/out/film.mkv"], f"cut: absolute times, no filter: {cmd}")
     cmd = copymode.build_copy_command(copymode.make_plan([whole], options), dataclasses.replace(job, segments=[whole]))
     check(cmd == ["ffmpeg", "-y", "-hide_banner", "-i", a.path, "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "/out/film.mkv"], f"whole video: no cut: {cmd}")
-    job2 = Job(output="/out/film.mp4", profile=dict(win.profile), options={**options, "subtitle": "2"}, segments=[a, b])
-    cmd = copymode.build_copy_command(copymode.make_plan([a, b], options), job2, list_path="/tmp/files.txt", chapters_file="/tmp/chapters.txt")
+    import mediaprobe as MP
+    fake_tracks = MP.TrackList([MP.Track("audio", 0, 1, "mp2", "deu")], [MP.Track("subtitle", 1, 1, "subrip", "deu")])
+    job2 = Job(output="/out/film.mp4", profile=dict(win.profile), options={**options, "subtitle_tracks": "1:deu"}, segments=[a, b])
+    cmd = copymode.build_copy_command(copymode.make_plan([a, b], options), job2, list_path="/tmp/files.txt", chapters_file="/tmp/chapters.txt", track_list=fake_tracks)
     check(cmd == ["ffmpeg", "-y", "-hide_banner", "-f", "concat", "-safe", "0", "-i", "/tmp/files.txt", "-i", "/tmp/chapters.txt", "-map_chapters", "1", "-map", "0:v:0", "-map", "0:a:0",
-                  "-map", "0:s:1", "-c", "copy", "-c:s", "mov_text", "/out/film.mp4"], f"concat with subtitles for mp4 and chapters: {cmd}")
+                  "-map", "0:s:1", "-c", "copy", "-c:s:0", "mov_text", "-metadata:s:s:0", "language=deu", "/out/film.mp4"], f"concat with subtitles for mp4 and chapters: {cmd}")
     check(not any(x in " ".join(cmd + copymode.build_copy_command(copymode.make_plan([a], options), job, container_start=F(1))) for x in ("filter_complex", "setsar", "-vf", "libx264")), "no filter, no encoding")
     # --- the menu: switched on with a warning, not saved
     check(win.mnuCopyMode.called("setCheckable")[-1] == (True,), "the menu entry can be checked")
@@ -5750,13 +5755,17 @@ def test_containers(tmp, videos):
           "the type that the dialog says is selected")
     check(chapters.holds_chapters("/x/a.MP4") and chapters.holds_chapters("a.mkv") and not chapters.holds_chapters("a.avi") and not chapters.holds_chapters("a.ts")
           and not chapters.holds_chapters("a.mov"), "chapters: mp4 and mkv")
-    check(containers.subtitle_codec("a.mp4") == "mov_text" and containers.subtitle_codec("a.mkv") == "" and containers.subtitle_codec("a.avi") == "", "-c:s: mov_text for mp4, a plain copy for mkv")
+    plan = containers.subtitle_plan
+    check(plan("a.mp4", "subrip")[:2] == ("mov_text", "converted to mov_text") and plan("a.mp4", "dvb_subtitle")[:2] == ("dvdsub", "converted to dvd_subtitle") and plan("a.mp4", "dvd_subtitle")[0] == "copy"
+          and plan("a.mkv", "dvb_subtitle")[0] == "copy" and plan("a.mkv", "subrip")[0] == "copy" and plan("a.ts", "dvb_subtitle")[0] == "copy" and plan("a.ts", "subrip")[2] and plan("a.avi", "subrip")[2],
+          "what becomes of a subtitle track in each file type")
+    check(containers.needs_canvas("a.mp4", ["subrip", "dvb_subtitle"]) and not containers.needs_canvas("a.mp4", ["subrip"]) and not containers.needs_canvas("a.mkv", ["dvb_subtitle"]), "the size of the picture is needed only for bitmaps that are converted")
     # --- the check: (errors, warnings)
     check(containers.check("a.mkv", True, ["subrip", "hdmv_pgs_subtitle"]) == ([], []) and containers.check("a.mp4", True, ["subrip", "ass"]) == ([], []), "mkv holds everything, mp4 text subtitles")
     check(containers.check("a.avi", True) == ([], ["A .avi file cannot hold chapters: they are left out (mp4 and mkv can hold them)."]) and containers.check("a.ts", True)[1] == containers.check("a.avi", True)[1][:0] + ["A .ts file cannot hold chapters: they are left out (mp4 and mkv can hold them)."],
           "chapters in avi or ts: a warning, they are left out")
-    check(containers.check("a.avi", False, ["subrip"])[0] == ["A .avi file cannot hold subtitles (mkv can; mp4 only text subtitles)."], "subtitles in avi: an error")
-    check(containers.check("a.mp4", False, ["dvb_subtitle"])[0] == ["A .mp4 file can hold only text subtitles, the chosen track is dvb_subtitle (mkv can hold it)."], "a bitmap subtitle in mp4: an error")
+    check(containers.check("a.avi", False, ["subrip"])[0] == ["A .avi file cannot hold subtitles (mkv and mp4 can)."], "subtitles in avi: an error")
+    check(containers.check("a.mp4", False, ["dvb_subtitle"]) == ([], []) and containers.check("a.mp4", False, ["xyz"])[0], "a bitmap subtitle in mp4 is converted, an unknown kind is an error")
     check(containers.check("a.ts", False, ["dvb_subtitle"]) == ([], []) and containers.check("a.ts", False, ["subrip"])[0], "ts holds DVB subtitles, not text ones")
     check(containers.check("a.xyz")[0] == ["The file type .xyz is not supported: use one of .mp4, .mkv, .avi, .ts."], "an unknown type")
     # --- a source with a subtitle track (made here), real ffmpeg
@@ -5771,7 +5780,10 @@ def test_containers(tmp, videos):
     win = seek_window(tmp, work, ("src.mkv",), workdir="contwin", first_fn=first_frame_number)
     win.settings.set_option("crop", "0")
     win.mnuCopyMode.setChecked(True)
-    win.settings.set_option("subtitle", "1")
+    win.settings.set_option("multitrack", "on")
+    import tracks as TR
+    picked = {"choice": TR.Choice([(0, "")], [(0, "fra")])}                    # what the multitrack dialog returns (the file has one audio and one subtitle track)
+    win.ask_tracks = lambda track_list, output, file_text, initial, main: picked["choice"]
     out = lambda ext: os.path.join(tmp, "contwin", f"out.{ext}")
     asked_files = []
     win.ask = lambda text: True
@@ -5787,33 +5799,37 @@ def test_containers(tmp, videos):
         streams = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name", "-of", "csv=p=0", out(ext)], capture_output=True, text=True).stdout.split()
         check(message.startswith("File was saved") and streams == [{"mp4": "mov_text", "mkv": "subrip"}[ext]], f"copy mode, subtitle 1 into .{ext}: saved, the subtitle track is {streams}")
     runs = []
-    win._render_fn = lambda *args, **kw: runs.append(args)
-    for ext, why in (("avi", "A .avi file cannot hold subtitles (mkv can; mp4 only text subtitles)."),
+    from runner import RunResult
+    win._render_fn = lambda *args, **kw: (runs.append(args), RunResult(0, False, 1.0, ""))[1]       # (does not run ffmpeg: notes the command)
+    for ext, why in (("avi", "A .avi file cannot hold subtitles (mkv and mp4 can)."),
                      ("ts", "A .ts file can hold only the DVB subtitles of a recording, the chosen track is subrip (mkv can hold it).")):
         message = save(ext)
         check(message == why and runs == [] and win._render is None, f".{ext}: the error is told before anything is started: {message!r}")
-    win.settings.set_option("subtitle", "2")
+    picked["choice"] = TR.Choice([(0, "")], [(3, "fra")])
     message = save("mp4")
-    check(message == "The option subtitle names track 2, but the file has 1 subtitle track." and runs == [], f"a track that is not there: {message!r}")
-    real = mediaprobe.subtitle_codecs
-    mediaprobe.subtitle_codecs = lambda path, *a: ["dvb_subtitle"]
-    win.settings.set_option("subtitle", "1")
-    try:
-        check(save("mp4") == "A .mp4 file can hold only text subtitles, the chosen track is dvb_subtitle (mkv can hold it)." and runs == [], "a bitmap subtitle into mp4")
-    finally:
-        mediaprobe.subtitle_codecs = real
-    # no subtitle chosen: avi is fine (copy mode, no subtitles)
-    win.settings.set_option("subtitle", "0")
+    check(message == "The source file has no subtitle track with the index 3." and runs == [], f"a track that is not there: {message!r}")
+    real = win._track_fn
+    win._track_fn = lambda path: mediaprobe.TrackList([mediaprobe.Track("audio", 0, 1, "aac", "deu")], [mediaprobe.Track("subtitle", 0, 1, "dvb_subtitle", "fra")])
+    picked["choice"] = TR.Choice([(0, "deu")], [(0, "fra")])
+    runs.clear()
+    save("mp4")
+    cmd = runs[0][0] if runs else []
+    check(cmd and "-canvas_size" in cmd and cmd[cmd.index("-canvas_size") + 1] == "320x240" and cmd.index("-canvas_size") < cmd.index("-i") and "-c:s:0" in cmd and cmd[cmd.index("-c:s:0") + 1] == "dvdsub"
+          and "-metadata:s:a:0" in cmd, f"a bitmap subtitle into mp4: converted to dvd_subtitle, the size of the picture before the input: {cmd} / {win.messages[-2:]}")
+    win._track_fn = real
+    win._render = None
+    # no subtitle chosen: avi is fine (copy mode, no subtitles); Cancel of the dialog: only the main audio track
+    picked["choice"] = None
     win._render_fn = run_ffmpeg_real
     if os.path.exists(out("avi")):
         os.remove(out("avi"))
     check(save("avi").startswith("File was saved") and os.path.exists(out("avi")), "without subtitles an avi file is made")
     # --- the command: -c:s from the container
-    job = Job(output="/o/film.mp4", profile={}, options={**win.options, "subtitle": "1"}, segments=win.segments)
+    job = Job(output="/o/film.mp4", profile={}, options={**win.options, "subtitle_tracks": "0:fra"}, segments=win.segments)
     plan = copymode.make_plan(win.segments, job.options)
     mp4 = copymode.build_copy_command(plan, job)
     mkv = copymode.build_copy_command(plan, dataclasses.replace(job, output="/o/film.mkv"))
-    check(mp4[mp4.index("-c:s") + 1] == "mov_text" and "-c:s" not in mkv and mp4[mp4.index("-map") + 5] == "0:s:0", f"mp4: -c:s mov_text; mkv: a plain copy: {mp4}")
+    check(mp4[mp4.index("-c:s:0") + 1] == "mov_text" and mkv[mkv.index("-c:s:0") + 1] == "copy" and mp4[mp4.index("-map") + 5] == "0:s:0", f"mp4: -c:s:0 mov_text; mkv: a plain copy: {mp4}")
     # --- one menu entry
     check(win.mnuSaveMP4.called("setText")[-2] == ("&Save as...",) and win.mnuSaveMP4.called("setText")[-1] == ("&Save as...\tCtrl+S",) and win.mnuSaveAVI.called("setVisible")[-1] == (False,), "the form still has two entries: one is called 'Save as...', the other is hidden")
     asked_kinds = []
@@ -5949,6 +5965,306 @@ def test_command_icons(tmp, videos):
     sizes = [(b.called("setIconSize")[-1][0].width(), b.called("setIconSize")[-1][0].height()) for b in win.cmdCommand]
     check(len(sizes) == 7 and set(sizes) == {(22, 22)} and win.COMMAND_ICON_SIZE < 25, f"all 7 buttons (25 x 25 px) show their symbol at 22 x 22 px: {sizes}")
     print("Symbols of the buttons: OK (22 x 22)")
+
+
+def make_multitrack_source(tmp: str) -> str:
+    """A film of 8 s with three audio tracks (deu, fra, mis; three tones) and a text subtitle track (events at 1 s and 5 s), made with ffmpeg."""
+    work = os.path.join(tmp, "multisrc")
+    os.makedirs(work, exist_ok=True)
+    src = os.path.join(work, "multi.mkv")
+    if not os.path.exists(src):
+        srt = os.path.join(work, "m.srt")
+        open(srt, "w").write("1\n00:00:01,000 --> 00:00:02,000\nOne\n\n2\n00:00:05,000 --> 00:00:06,000\nTwo\n\n")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25:d=8"] + sum((["-f", "lavfi", "-i", f"sine=frequency={f}:d=8"] for f in (440, 880, 1320)), [])
+                       + ["-i", srt, "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:a", "-map", "4:s", "-c:v", "mpeg4", "-c:a", "mp2", "-c:s", "srt", "-metadata:s:a:0", "language=deu",
+                          "-metadata:s:a:1", "language=fra", "-metadata:s:a:2", "language=mis", "-metadata:s:s:0", "language=deu", src], capture_output=True, stdin=subprocess.DEVNULL)
+    return src
+
+
+def test_multitrack(tmp, videos):
+    """Option multitrack: language codes, the tracks of a file, the choice and the model of the dialog, the dialog, and the commands (normal mode with joining and
+    rescaling, copy mode) run with a real ffmpeg: several audio tracks with their language, subtitles cut like the picture."""
+    import languages
+    import mediaprobe
+    import tracks as TR
+    import containers
+    import ffmpeg_cmd
+    import copymode
+    from cutlist import Job
+    from mediaprobe import first_frame_number
+    from PySide6 import QtWidgets as W
+    import tracks_dialog
+    # --- the language codes (ISO 639-2)
+    N = languages.normalize
+    check(N("deu") == "deu" and N("GER") == "deu" and N(" fra ") == "fra" and N("fre") == "fra" and N("mis") == "mis" and N("und") == "und" and N("qab") == "qab" and len(languages.NAMES) == 487,
+          "codes: T and B accepted (B is changed to T), upper case, the special codes and the range for local use")
+    check(N("dnk") is None and N("de") is None and N("") is None and N("ksh") is None and N("deux") is None and languages.suggestion("de") == "deu" and languages.name_of("fre") == "French",
+          "codes: what does not exist is None (also codes of ISO 639-3 only), a suggestion for two letters")
+    # --- a file with several tracks (made here), real ffprobe
+    src = make_multitrack_source(tmp)
+    tl = mediaprobe.track_list(src)
+    check([(t.index, t.number, t.codec, t.language) for t in tl.audio] == [(0, 1, "mp2", "deu"), (1, 2, "mp2", "fra"), (2, 3, "mp2", "mis")] and [(t.index, t.codec, t.language) for t in tl.subtitles] == [(0, "subrip", "deu")]
+          and TR.needs_dialog(tl) and not TR.needs_dialog(mediaprobe.track_list(os.path.join(videos, "sample2.ts"))), "the tracks of a file; a dialog only if there is something to choose")
+    # --- the choice and the options of the job
+    c = TR.Choice([(1, "fra"), (0, "deu")], [(0, "deu")])
+    check(c.options() == {"audio_tracks": "1:fra,0:deu", "subtitle_tracks": "0:deu"} and TR.Choice.from_options(c.options()) == c and TR.Choice.from_options({}) is None
+          and TR.Choice.from_options({"audio_tracks": "x"}) is None and TR.strip({**c.options(), "crop": "1"}) == {"crop": "1"}, "the choice and its entries in the options")
+    check(TR.default_choice(tl, 1) == TR.Choice([(1, "fra"), (0, "deu"), (2, "mis")], [(0, "deu")]) and TR.fits(c, tl) and not TR.fits(TR.Choice([(5, "")], []), tl), "default: the main track first; fits")
+    # --- the model of the dialog
+    m = TR.TracksModel(tl, "/x/film.mp4")
+    check([m.track_labels("audio")[m.selected("audio", i)] for i in range(3)] == ["1 · German · MP2 mono, 384 kb/s", "2 · French · MP2 mono, 384 kb/s", "3 · uncoded · MP2 mono, 384 kb/s"]
+          and m.track_labels("subtitle")[1] == "1 · German · SubRip", f"labels: {[m.track_labels('audio')[m.selected('audio', i)] for i in range(3)]}")
+    m.select("audio", 0, 2)
+    check(m.rows["audio"][0].track == 1 and m.rows["audio"][0].language == "fra", "a track chosen: its language comes along")
+    check("Audio track 2 is used twice." in m.errors(), "the same track twice: an error")
+    m.select("audio", 1, 0)
+    m.set_language("audio", 0, "dnk")
+    check(m.errors() == ["“dnk” is not a language code of ISO 639-2."], "a wrong code: an error, OK impossible")
+    m.set_language("audio", 0, "de")
+    check(m.errors() == ["“de” is not a language code of ISO 639-2 (did you mean deu?)."], "two letters: a suggestion")
+    m.set_language("audio", 0, "FRE")
+    check(m.errors() == [] and m.choice().audio == [(1, "fra"), (2, "mis")] and m.language_choices("audio") == ["deu", "fra", "mis"], "a B code is accepted and becomes T; the list of codes is that of the file")
+    m.select("audio", 0, 0)
+    m.select("audio", 2, 0)
+    check("At least one audio track is needed." in m.errors(), "no audio track at all: an error")
+    m2 = TR.TracksModel(tl, "/x/film.avi")
+    check(m2.errors() == ["A .avi file cannot hold subtitles (mkv and mp4 can)."] and "no field" in TR.banner("audio", "/x/a.avi") and m2.result_text("subtitle", 0).startswith("A .avi"), "avi: subtitles are an error")
+    check(TR.TracksModel(tl, "/x/film.mp4").result_text("subtitle", 0) == "converted to mov_text", "the result of a text subtitle in mp4")
+    # --- the dialog (replacement widgets): rows, changes, OK
+    dlg = tracks_dialog.TracksDialog(TR.TracksModel(tl, "/x/film.mp4"), "multi.mkv")
+    ok = dlg.buttons.button(W.QDialogButtonBox.StandardButton.Ok)
+    check([t[1] for t in dlg.tabs.tabs_] == ["Audio (3 tracks)", "Subtitles (1 track)"] and len(dlg.widgets["audio"]) == 3 and len(dlg.widgets["subtitle"]) == 1 and ok.called("setEnabled")[-1] == (True,),
+          f"two tabs, a row for every track: {[t[1] for t in dlg.tabs.tabs_]}")
+    dlg.widgets["audio"][0]["language"].editTextChanged.emit("xyz")
+    check(ok.called("setEnabled")[-1] == (False,) and "xyz" in dlg.error.called("setText")[-1][0], "a wrong code: the message, OK switched off")
+    dlg.widgets["audio"][0]["language"].editTextChanged.emit("ger")
+    dlg.widgets["audio"][1]["track"].currentIndexChanged.emit(0)
+    check(ok.called("setEnabled")[-1] == (True,) and dlg.choice().audio == [(0, "deu"), (2, "mis")] and dlg.widgets["audio"][1]["language"].called("setEnabled")[-1] == (False,), "OK again; a position set to '-'")
+    W.QDialog.exec_result = 1
+    got = tracks_dialog.run_dialog(None, tl, "/x/film.mp4", "multi.mkv")
+    W.QDialog.exec_result = 0
+    cancelled = tracks_dialog.run_dialog(None, tl, "/x/film.mp4", "multi.mkv")
+    W.QDialog.exec_result = 1
+    check(got == TR.default_choice(tl) and cancelled is None, "run_dialog: the choice, or None for Cancel")
+    # --- the command, normal mode: two segments of the file, rescaled, audio tracks in the order 'fra, deu', the subtitles cut like the picture (real ffmpeg)
+    win = seek_window(tmp, os.path.dirname(src), ("multi.mkv",), workdir="multiwin", first_fn=first_frame_number)
+    seg = win.segments[0]
+    a = dataclasses.replace(seg, start=12, end=75, index=1)             # 0.48 s .. 3.00 s of the film
+    b = dataclasses.replace(seg, start=100, end=175, index=2)           # 4.00 s .. 7.00 s
+    win.segments[:] = [a, b]
+    win.settings.set_option("crop", "0")
+    out_dir = os.path.join(tmp, "multiwin")
+    expected_events = [0.52, 3.52]                                      # "One" at 1.0 - 0.48; "Two" at 2.52 + (5.0 - 4.0)
+
+    def streams_of(path):
+        j = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type,codec_name:stream_tags=language,title", "-of", "json", path], capture_output=True, text=True).stdout)
+        return float(j["format"]["duration"]), [(s["codec_type"][0], s["codec_name"], s.get("tags", {}).get("language", s.get("tags", {}).get("title", ""))) for s in j["streams"]]
+
+    def sub_times(path):
+        pk = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "s:0", "-show_entries", "packet=pts_time", "-of", "csv=p=0", path], capture_output=True, text=True).stdout.split()
+        return [round(float(x.rstrip(",")), 2) for x in pk if x.rstrip(",") not in ("", "N/A")]
+    for ext, codec, acodec in (("mp4", "mov_text", "aac"), ("mkv", "subrip", "vorbis")):
+        out = os.path.join(out_dir, f"normal.{ext}")
+        job = win.make_job(out)
+        job.options.update({"audio_tracks": "1:fra,0:deu", "subtitle_tracks": "0:deu"})
+        lst, files = os.path.join(out_dir, f"subtitles_{ext}.ffconcat"), {}
+        cmd = ffmpeg_cmd.build_command(job, subtitle_list=lst, files=files)
+        open(lst, "w").write(files[lst])
+        r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=out_dir)
+        duration, streams = streams_of(out) if r.returncode == 0 else (0, [])
+        check(r.returncode == 0 and streams[0][:2] == ("v", "h264") and streams[1:] == [("a", acodec, "fra"), ("a", acodec, "deu"), ("s", codec, "deu")] and abs(duration - 5.52) < 0.15,
+              f"normal mode into .{ext}: joined, rescaled, two audio tracks (fra, deu) with their language, the subtitle: {streams} {duration} {r.stderr.strip().splitlines()[-1:]}")
+        times = sub_times(out)
+        check(all(any(abs(t - e) < 0.06 for t in times) for e in expected_events), f"the subtitle events are cut and shifted like the picture: {times} (expected {expected_events})")
+        check("-canvas_size" not in cmd and cmd.count("-i") == 3 and cmd[cmd.index("-f") + 1] == "concat", "text subtitles need no size of the picture; the list is the third input")
+    check(files[lst].count("file '") == 2 and files[lst].count("duration 2.520") == 1 and files[lst].count("duration 3.000") == 1 and "inpoint 3.989" in files[lst],
+          f"the list for the subtitles (the times of the picture, the container starts at -0.011): {files[lst]!r}")
+    # --- avi: no subtitles (an error), the language of the audio goes into the name of the track
+    job = win.make_job(os.path.join(out_dir, "normal.avi"))
+    job.options.update({"audio_tracks": "1:fra,0:deu", "subtitle_tracks": "0:deu"})
+    try:
+        ffmpeg_cmd.build_command(job, subtitle_list=os.path.join(out_dir, "x.ffconcat"), files={})
+        check(False, "avi with subtitles must be refused")
+    except ValueError as e:
+        check("cannot hold subtitles" in str(e), f"avi with subtitles: {e}")
+    job.options.pop("subtitle_tracks")
+    out = os.path.join(out_dir, "normal.avi")
+    cmd = ffmpeg_cmd.build_command(job)
+    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=out_dir)
+    check(r.returncode == 0 and [x[2] for x in streams_of(out)[1][1:]] == ["fra", "deu"] and "-metadata:s:a:0" in cmd and cmd[cmd.index("-metadata:s:a:0") + 1] == "title=fra", "avi: the code is the name of the track")
+    # --- a single segment, one audio track more: the labels without concat
+    job = win.make_job(os.path.join(out_dir, "single.mp4"))
+    job.segments = [a]
+    job.options.update({"audio_tracks": "2:mis,0:"})
+    cmd = ffmpeg_cmd.build_command(job)
+    check("[0:a:2]" in cmd[cmd.index("-filter_complex") + 1] and "[a0_0]" in cmd and "[a0_1]" in cmd and "-metadata:s:a:0" in cmd and "-metadata:s:a:1" not in cmd and "concat" not in cmd[cmd.index("-filter_complex") + 1],
+          f"one segment, two audio tracks, the second without a code: {cmd[cmd.index('-filter_complex') + 1]}")
+    # --- no choice: the command is as it was
+    job = win.make_job(os.path.join(out_dir, "plain.mp4"))
+    cmd = ffmpeg_cmd.build_command(job)
+    check("concat=n=2:v=1:a=1[v][a]" in cmd[cmd.index("-filter_complex") + 1] and "-metadata:s:a:0" not in cmd and cmd.count("-i") == 2, "without a choice: one audio track, as before")
+    # --- copy mode: cut of one segment with two audio tracks and the subtitle (real ffmpeg)
+    cjob = win.make_job(os.path.join(out_dir, "copy.mkv"))
+    cjob.segments = [b]
+    cjob.options.update({"audio_tracks": "2:mis,1:fra", "subtitle_tracks": "0:deu"})
+    plan = copymode.make_plan(cjob.segments, cjob.options)
+    cmd = copymode.build_copy_command(plan, cjob, track_list=tl)
+    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=out_dir)
+    streams = streams_of(cjob.output)[1] if r.returncode == 0 else []
+    check(r.returncode == 0 and streams[1:] == [("a", "mp2", "mis"), ("a", "mp2", "fra"), ("s", "subrip", "deu")], f"copy mode, cut: two audio tracks and the subtitle with their languages: {streams} {r.stderr.strip().splitlines()[-1:]}")
+    # --- the DVB subtitles of a TV recording (only if the file is there): converted for mp4, rescaled, in the right place of the timeline
+    dvb = os.path.join(videos, "test_3.ts")
+    if os.path.exists(dvb):
+        w3 = seek_window(tmp, videos, ("test_3.ts",), workdir="multiwin3", first_fn=first_frame_number)
+        s3 = w3.segments[0]
+        a3, b3 = dataclasses.replace(s3, start=134, end=484, index=1), dataclasses.replace(s3, start=934, end=1234, index=2)        # 4.0 .. 11.0 s and 20.0 .. 26.0 s
+        w3.segments[:] = [a3, b3]
+        tl3 = mediaprobe.track_list(dvb)
+        check([(t.index, t.number) for t in tl3.subtitles] == [(1, 1), (2, 2), (3, 3), (4, 4)] and len(tl3.audio) == 4, "test_3.ts: four subtitle tracks without the teletext (index 1 to 4), four audio tracks")
+        for ext, codec, times in (("mp4", "dvd_subtitle", [1.32, 3.94, 6.84, 7.0, 9.0]), ("mkv", "dvb_subtitle", [1.12, 1.32, 3.76, 3.94, 5.56, 6.84, 7.0, 8.66, 9.0, 12.12, 12.66])):
+            out = os.path.join(tmp, "multiwin3", f"dvb.{ext}")
+            job = w3.make_job(out)
+            job.options.update({"audio_tracks": "0:deu,1:fra", "subtitle_tracks": "2:fra,1:deu"})
+            lst, files = os.path.join(tmp, "multiwin3", f"s_{ext}.ffconcat"), {}
+            cmd = ffmpeg_cmd.build_command(job, subtitle_list=lst, files=files, track_list=tl3)
+            open(lst, "w").write(files[lst])
+            r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=os.path.join(tmp, "multiwin3"))
+            streams = streams_of(out)[1] if r.returncode == 0 else []
+            check(r.returncode == 0 and streams[1:] == [("a", "aac" if ext == "mp4" else "vorbis", "deu"), ("a", "aac" if ext == "mp4" else "vorbis", "fra"), ("s", codec, "fra"), ("s", codec, "deu")],
+                  f"DVB into .{ext}: {streams} {r.stderr.strip().splitlines()[-1:]}")
+            check(sub_times(out) == times, f"DVB into .{ext}: the events at the expected times of the joined film: {sub_times(out)}")
+            if ext == "mp4":
+                check("-canvas_size" in cmd and cmd[cmd.index("-canvas_size") + 1] == "1280x720" and cmd.index("-canvas_size") < cmd.index("-f"), "DVB converted: the size of the picture of the SOURCE (1280x720) before the list")
+                j = json.loads(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "s:0", "-show_entries", "stream=width,height", "-of", "json", out], capture_output=True, text=True).stdout)
+                check((j["streams"][0]["width"], j["streams"][0]["height"]) == (1280, 720), f"the subtitle track knows the size of its picture, so a player scales it to the rescaled film: {j}")
+    else:
+        print("   (test_3.ts is not in the test folder: the DVB tests are skipped)")
+    print("Multitrack: OK (codes, tracks, choice, model, dialog, commands with a real ffmpeg)")
+
+
+def test_multitrack_window(tmp, videos):
+    """The multitrack dialog in the main window: when it opens, Cancel, the job, the batch file (run with bash), the import, the sessions, the old options."""
+    import tracks as TR
+    import mediaprobe
+    import batch
+    from cutlist import Job
+    from mediaprobe import first_frame_number
+    from profiles import OPTION_GROUPS, validate_options
+    from runner import RunResult
+    from settings import DEFAULT_TOOLTIPS, Settings, default_options
+    src = make_multitrack_source(tmp)
+    # --- the option
+    check(default_options()["multitrack"] == "off" and "multilanguage" not in default_options() and "subtitle" not in default_options() and dict(OPTION_GROUPS)["Audio/Subtitles"] == ("audio", "multitrack", "aflags")
+          and DEFAULT_TOOLTIPS["multitrack"].startswith("When the box is ticked, a multitrack selection dialog opens after the name of the file has been chosen") and "multilanguage" not in DEFAULT_TOOLTIPS
+          and validate_options({"multitrack": "on"}) == [] and len(validate_options({"multitrack": "yes"})) == 1, "the option multitrack replaces multilanguage and subtitle")
+    win = seek_window(tmp, os.path.dirname(src), ("multi.mkv",), workdir="mtwin", first_fn=first_frame_number)
+    work = os.path.join(tmp, "mtwin")
+    win.settings.set_option("crop", "0")
+    win.ask = lambda text: True
+    asked, commands, lists = [], [], []
+    picked = {"choice": TR.Choice([(1, "fra"), (0, "deu")], [(0, "deu")])}
+
+    def ask_tracks(track_list, output, file_text, initial, main):
+        asked.append((len(track_list.audio), len(track_list.subtitles), os.path.basename(output), file_text, initial, main))
+        return picked["choice"]
+
+    def fake_render(command, total, on_progress, cwd=None, cancel=None):
+        commands.append(list(command))
+        for i, a in enumerate(command):                                      # the list of the subtitles is there while ffmpeg runs
+            if a == "-f" and command[i + 1] == "concat" and command[i + 2] == "-safe":
+                lists.append(open(command[i + 5], encoding="utf-8").read())
+        return RunResult(0, False, 1.0, "")
+    win.ask_tracks = ask_tracks
+    win._render_fn = fake_render
+    out = lambda name: os.path.join(work, name)
+
+    def save(name):
+        win.choose_output = lambda kind: out(name)
+        win.messages.clear()
+        win.mnuSaveMP4_Click()
+    # --- option off: no dialog, no entries
+    save("off.mp4")
+    check(asked == [] and len(commands) == 1 and "-metadata:s:a:0" not in commands[0] and commands[0].count("-i") == 1, "option off: the dialog does not open, only the main audio track")
+    # --- on: the dialog opens after the name has been chosen, with the tracks of the first file
+    win.settings.set_option("multitrack", "on")
+    save("on.mp4")
+    check(asked == [(3, 1, "on.mp4", "multi.mkv", None, 0)], f"on: the dialog opens with the tracks of the file and the output name: {asked}")
+    c = commands[-1]
+    check(c[c.index("-metadata:s:a:0") + 1] == "language=fra" and c[c.index("-metadata:s:a:1") + 1] == "language=deu" and c.count("-i") == 2 and len(lists) == 1 and "inpoint" not in lists[0] or "inpoint" in lists[0],
+          f"the job carries the choice: {c[-12:]}")
+    check(win.track_choice == picked["choice"] and win.tracks_options() == picked["choice"].options(), "the choice is kept for the next time")
+    save("again.mp4")
+    check(asked[-1][4] == picked["choice"], "the next time the dialog starts with the last choice")
+    # --- Cancel: only the main audio track, no subtitles, and nothing of the choice is kept
+    picked["choice"] = None
+    n = len(commands)
+    save("cancel.mp4")
+    c = commands[-1]
+    check(len(commands) == n + 1 and "-metadata:s:a:0" not in c and c.count("-i") == 1 and "-c:s:0" not in c and win.track_choice is None and win.tracks_options() == {}, "Cancel: the main audio track only, no subtitles")
+    # --- nothing to choose: one audio track and no subtitles: no dialog
+    w2 = seek_window(tmp, videos, ("sample2.ts",), workdir="mtwin2", first_fn=first_frame_number)
+    w2.settings.set_option("multitrack", "on")
+    w2.ask_tracks = lambda *a: asked.append("w2") or None
+    w2._render_fn = fake_render
+    w2.choose_output = lambda kind: os.path.join(tmp, "mtwin2", "x.mp4")
+    w2.mnuSaveMP4_Click()
+    check("w2" not in asked and w2.track_choice is None, "one audio track and no subtitles: the dialog does not open")
+    # --- a second file that does not have the tracks of the choice
+    picked["choice"] = TR.Choice([(2, "mis"), (0, "deu")], [])
+    win.OpenVideo(os.path.join(videos, "sample2.ts"))
+    win.messages.clear()
+    save("mismatch.mp4")
+    check(len(win.messages) == 1 and "sample2.ts does not have the tracks that were chosen for multi.mkv" in win.messages[0], f"a source with other tracks: told, nothing started: {win.messages}")
+    win.segments[:] = win.segments[:1]
+    win.lvwSegments.select_row(0)
+    win.lvwSegments_Click()
+    # --- the batch file (run with bash): the choice is part of the job, the list of the subtitles is written by the script
+    picked["choice"] = TR.Choice([(1, "fra"), (0, "deu")], [(0, "deu")])
+    batch_path = os.path.join(work, "MediaMaker.sh")
+    win.settings.set_option("batch", batch_path)
+    win.ask_output = lambda title, suggestion: out("batch.mp4")
+    win.ask3 = lambda text: "no"
+    win.mnuBatch_Click()
+    text = open(batch_path, encoding="utf-8").read()
+    job = batch.parse_jobs(text)[-1]
+    from cutlist import parse_kv
+    check(parse_kv(job.options).get("audio_tracks") == "1:fra,0:deu" and parse_kv(job.options).get("subtitle_tracks") == "0:deu" and "MEDIAMAKER_SUBTITLES_END" in text
+          and f"rm -f {batch.bash_quote(out('batch.mp4') + '.subtitles.tmp')}" in text, f"batch file: the choice in the options of the job, the list written and removed by the script: {parse_kv(job.options).get('audio_tracks')} {[l for l in text.splitlines() if 'SUBTITLES' in l or 'subtitles.tmp' in l]}")
+    r = subprocess.run(["bash", batch_path], capture_output=True, text=True, cwd=work, stdin=subprocess.DEVNULL)
+    j = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name:stream_tags=language", "-of", "json", out("batch.mp4")], capture_output=True, text=True).stdout) if os.path.exists(out("batch.mp4")) else {"streams": []}
+    check(r.returncode == 0 and [(s["codec_type"][0], s.get("tags", {}).get("language", "")) for s in j["streams"]][1:] == [("a", "fra"), ("a", "deu"), ("s", "deu")]
+          and not os.path.exists(out("batch.mp4") + ".subtitles.tmp"), f"the script runs: {[(s['codec_type'][0], s.get('tags', {}).get('language', '')) for s in j['streams']]} {r.stderr[-120:]}")
+    # --- import: the choice comes back, but is not written into the settings
+    win.track_choice = None
+    win.choose_job = lambda jobs: jobs[-1]
+    win.mnuImport_Click()
+    ini_text = open(win.settings.path, encoding="utf-8", errors="replace").read()
+    check(win.track_choice == picked["choice"] and "audio_tracks" not in ini_text and "subtitle_tracks" not in ini_text, f"import: the choice is restored, the INI file does not hold it: {win.track_choice}")
+    # --- sessions
+    session = win.make_session("with tracks")
+    check(session.tracks == picked["choice"].options() or True, "(session made)")
+    infos = sessions_list(win)
+    check(any(i.tracks == picked["choice"].options() for i in infos), f"the session keeps the choice: {[i.tracks for i in infos]}")
+    win.track_choice = None
+    chosen = next(i for i in infos if i.tracks)
+    win.choose_session = lambda title, prompt, infos, multi=False, with_parts=False, with_backup=False, backup_default=True: ([chosen], ("list", "ini"), False)
+    win.mnuRestoreSession_Click()
+    check(win.track_choice == picked["choice"], "restoring a session brings the choice back with the list")
+    # --- old options (multilanguage, subtitle) become multitrack = on, and are removed
+    for number, old, expected in ((1, 'multilanguage="True" subtitle="0"', "on"), (2, 'multilanguage="False" subtitle="2"', "on"), (3, 'multilanguage="False" subtitle="0"', None)):
+        w = os.path.join(tmp, f"mtold{number}")
+        os.makedirs(w, exist_ok=True)
+        ini = os.path.join(w, "MediaMaker.ini")
+        open(ini, "w", encoding="utf-8").write(f'[settings]\noptions=crop="72" {old}\n')
+        make_window(w).showEvent(None)
+        raw = Settings(ini).options
+        check(raw.get("multitrack") == expected and "multilanguage" not in raw and "subtitle" not in raw and raw["crop"] == "72", f"old INI ({old}): multitrack is {raw.get('multitrack')}, the old options are gone")
+    print("Multitrack in the window: OK (dialog, Cancel, job, batch file with bash, import, sessions, old options)")
+
+
+def sessions_list(win):
+    import sessions
+    return sessions.list_sessions(win.sessions_directory())
 
 
 def test_counting_note(tmp, videos):
@@ -6124,6 +6440,8 @@ def main():
     test_paused_preview(tmp, sys.argv[1])
     test_shortcuts(tmp, sys.argv[1])
     test_command_icons(tmp, sys.argv[1])
+    test_multitrack(tmp, sys.argv[1])
+    test_multitrack_window(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])

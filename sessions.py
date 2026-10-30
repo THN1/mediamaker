@@ -48,6 +48,7 @@ class SessionInfo:
     has_list: bool = False
     has_chapters: bool = False
     copy_mode: bool = False          # copy mode was switched on when the session was saved
+    tracks: dict = field(default_factory=dict)   # the choice of the multitrack dialog (options audio_tracks / subtitle_tracks of tracks.py), empty: none
     ok: bool = True                  # False: the file is not a readable session
 
     def describe(self) -> str:
@@ -94,6 +95,7 @@ def read_info(path: str) -> SessionInfo:
                 info.titles = list(data.get("titles", []))
                 info.program = data.get("program", "")
                 info.copy_mode = bool(data.get("copy_mode", False))
+                info.tracks = {k: str(v) for k, v in dict(data.get("tracks") or {}).items()}
             elif not (info.has_ini or info.has_list):
                 raise SessionError("no files of a session")
     except (zipfile.BadZipFile, OSError, ValueError, SessionError):
@@ -110,7 +112,7 @@ def list_sessions(directory: str) -> list[SessionInfo]:
 
 
 def create_session(directory: str, ini_path: str, list_path: str, segments: list, note: str = "", program: str = "",
-                   now: Optional[datetime.datetime] = None, chapters_path: str = "", copy_mode: bool = False) -> SessionInfo:
+                   now: Optional[datetime.datetime] = None, chapters_path: str = "", copy_mode: bool = False, tracks: Optional[dict] = None) -> SessionInfo:
     """Writes a new session file (first under a temporary name, so that a failure leaves no half file) and returns its information."""
     os.makedirs(directory, exist_ok=True)
     stamp = new_stamp(now)
@@ -121,7 +123,7 @@ def create_session(directory: str, ini_path: str, list_path: str, segments: list
     path = os.path.join(directory, name + EXTENSION)
     manifest = {"format": FORMAT, "version": 1, "created": (now or datetime.datetime.now()).isoformat(timespec="seconds"),
                 "note": " ".join(note.split()), "program": program, "segments": len(segments),
-                "titles": [s.name for s in segments], "copy_mode": bool(copy_mode),
+                "titles": [s.name for s in segments], "copy_mode": bool(copy_mode), "tracks": dict(tracks or {}),
                 "files": [n for n, p in ((INI_NAME, ini_path), (LIST_NAME, list_path), (CHAPTERS_NAME, chapters_path)) if p and os.path.exists(p)]}
     part = path + ".part"
     try:

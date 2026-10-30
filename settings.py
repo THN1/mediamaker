@@ -269,7 +269,7 @@ def default_options() -> dict:
     """Defaults in case the INI file contains no options yet (as in VB6). The step widths of the search are given in seconds
         (40 s = 1000 frames and 240 s = 6000 frames at 25 FPS, the values from VB6)."""
     return {"crop": "0", "floor": "2", "blackness": "12", "allowance": "1000", "dedup": "400", "audio": "1",
-            "pause": "160", "detect": "0", "aflags": "", "subtitle": "0", "multilanguage": "False",
+            "pause": "160", "detect": "0", "aflags": "", "multitrack": "off",
             "step_end": "40", "step_next": "240", "border_tol": "3", "cut_window": "5",
             "logo_edge": "18", "logo_conf": "0.2", "cut_diff": "30", "path_map": "",
             "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "file_dialog": "qt", "sessions_dir": "", "avidemux": "", "vlc": "", "cutpoint_filters": "on", "restore_backup": "on", "copy_mode_notice": "on", "paused_preview": "vlc"}
@@ -293,12 +293,12 @@ DEFAULT_TOOLTIPS = {
     'blackness': 'RGB-related value below which non-black pixels will be considered black (RGB=0) during auto-cropping',
     'allowance': 'During auto-cropping, max. number of non-black pixels allowed in one scanline to be still considered black',
     'dedup': 'Max. number of frames examined during duplicate scene removal search (menu Edit => Dedup scene)',
-    'audio': 'Use nth detected audio stream (language); should be 1 unless (optionally) for multilanguage DVD',
+    'audio': 'Use nth detected audio stream (language) as the main track; should be 1 unless (optionally) for a multilanguage DVD',
     'pause': 'Min. length (in seconds) of pause caused by commercials in between movie segments (for TV recordings)',
     'detect': 'Detect audio streams after moving n milliseconds into the source file; useful for streamed recordings (.ts)',
     'aflags': 'Flags for ffmpeg when extracting audio (like +igndts+genpts); useful when audio is broken',
-    'subtitle': 'Add subtitles from the given track(s) number(s), separated by ",", or zero (0) to disable subtitling (use Ctrl-K or menu Edit => Media info)',
-    'multilanguage': 'False (default) or True; allows to add secondary language stream(s), if present in source video (EXPERIMENTAL)',
+    'multitrack': 'When the box is ticked, a multitrack selection dialog opens after the name of the file has been chosen (only if the source has more than one audio track or any '
+                  'subtitle track), allowing to choose and configure how the audio and/or subtitle track(s) should be processed.',
     # options added in the Python version
     "paused_preview": "Preview while the film is stopped (player = memory only): vlc = VLC jumps to the slider position (it can get stuck after about ten jumps); ffmpeg = the pictures are "
                       "read by ffmpeg (frame exact, with the same frame numbers as the thumbnails; a little slower, a picture follows the slider with a short delay); Play then jumps VLC to "

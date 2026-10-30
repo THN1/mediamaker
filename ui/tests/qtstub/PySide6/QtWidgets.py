@@ -573,6 +573,13 @@ class QHBoxLayout(QVBoxLayout):
     pass
 
 
+class QGridLayout(QVBoxLayout):
+    methods = {"setColumnStretch", "setHorizontalSpacing", "setVerticalSpacing", "setContentsMargins", "setSpacing"}
+
+    def addWidget(self, widget, row=0, col=0, *rest):
+        self.__dict__.setdefault("added_", []).append((widget, row, col))
+
+
 class QButtonGroup(Base):
     methods = {"setExclusive"}
 
@@ -596,6 +603,14 @@ class QFormLayout(Base):
 class QDialogButtonBox(Base):
     StandardButton = EnumGroup("QDialogButtonBox.StandardButton", {"Ok", "Cancel"})
     signals = {"accepted", "rejected"}
+    methods = {"button"}
+
+    def _ret_button(self, which=None):
+        buttons = self.__dict__.setdefault("buttons_", {})
+        key = getattr(which, "name", str(which))
+        if key not in buttons:
+            buttons[key] = QPushButton(key)
+        return buttons[key]
 
 
 class QToolTip:
