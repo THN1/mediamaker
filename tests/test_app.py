@@ -2988,7 +2988,7 @@ def test_logo_mask_as_in_vb6(tmp, videos):
     # --- options, explanations, groups
     d0 = default_options()
     check(not (REMOVED_OPTIONS - {"focus", "pad"}) & set(d0) and all(k not in DEFAULT_TOOLTIPS for k in ("logo_fill", "fill_sigma", "mask_fill", "mask_grow")), "no defaults and no explanations for them")
-    check(dict(OPTION_GROUPS)["Logo"] == ("overlay_opacity",) and "overlay_opacity" in d0 and GROUP_TEXTS["Logo"], "the group Logo has the opacity of the red areas")
+    check(dict(OPTION_GROUPS)["Logo"] == ("overlay_opacity", "logo_conf", "logo_extra") and "overlay_opacity" in d0 and GROUP_TEXTS["Logo"], "the group Logo has the opacity of the red areas and the two values of the logo detection")
     check(validate_options({"overlay_opacity": "35"}) == [], "checking")
     print("Logo mask as in VB6: OK (unchanged mask, removelogo only, dropped options removed)")
 
