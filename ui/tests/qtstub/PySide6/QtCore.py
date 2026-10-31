@@ -110,6 +110,7 @@ class QTimer(QObject):
 class QThread(QObject):
     """In the test run() runs immediately and in the same thread."""
     methods = {"quit"}
+    signals = {"started", "finished"}                  # (as in Qt: finished is emitted when run() has ended, however it ended)
 
     def start(self):
         self._running = True
@@ -117,6 +118,7 @@ class QThread(QObject):
             self.run()
         finally:
             self._running = False
+            self.finished.emit()
 
     def isRunning(self):
         return getattr(self, "_running", False)

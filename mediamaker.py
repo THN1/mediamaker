@@ -151,7 +151,6 @@ class frmMain(frmMainBase):
         self.verify_first_frame = True                 # False: take the first frame from the stream data as it is (tests)
         self._frame_fn = frame_fn
         self._track_fn = track_fn                        # the audio and subtitle tracks of a file (for the multitrack dialog)
-        self._closing = False                           # the program is being closed: nothing is started any more
         self.track_choice = None                        # the last choice of the multitrack dialog (tracks.Choice), None: Cancel or never asked
         self._still_frame = None                        # the frame whose picture ffmpeg put into the preview (None: VLC shows the picture)
         self._aspect_fn = display_aspect               # proportions of the picture as a player shows it
@@ -444,7 +443,6 @@ class frmMain(frmMainBase):
             self.highlight()
 
     def Form_Unload(self):
-        self._closing = True
         """Window is being closed: cancel counting and end playback cleanly before Qt tears down the video area.
                 (A thread that is still running at exit would crash the program.)"""
         if self._modal_child is not None:                            # the crop window is open: cancel it
@@ -733,11 +731,6 @@ class frmMain(frmMainBase):
 
     # ------------------------------------------------------------------ Selection and preview
     def lvwSegments_Click(self):
-        self.select_segment(True)
-
-    def select_segment(self, show_marker: bool) -> None:
-        """The segment that is selected in the list becomes the current one: preview loaded, slider set. show_marker: also show the picture at marker A (VLC then opens the
-        file); duplicating a segment shows another place at once and does not open the file twice."""
         row = self.lvwSegments.current_row()
         if row < 0 or row >= len(self.segments):
             return
@@ -761,11 +754,7 @@ class frmMain(frmMainBase):
         self.Slider1.blockSignals(False)
         self._show_frame_info(seg.first_frame)
         self.vscVolume_Scroll()
-        if show_marker:
-            self.cmdPos_Click(9)                                      # to marker A; shows the picture and pauses
-        else:
-            self.set_timeline_marker("A")                             # (the timeline shows the cut point at marker A all the same: the pictures around it are fetched)
-            self.timeline_refresh()
+        self.cmdPos_Click(9)                                          # to marker A; shows the picture and pauses
 
     def lblInfo_Click(self):
         """Click on the frame number: input of a frame number to jump to."""
@@ -851,12 +840,6 @@ class frmMain(frmMainBase):
     def _go(self, frame: int) -> None:
         self.Slider1.setValue(max(self.Slider1.minimum(), min(self.Slider1.maximum(), int(frame))))
 
-    def set_timeline_marker(self, which: str) -> None:
-        """The timeline shows the pictures around marker A or B (the cut point) and its click moves that marker."""
-        self.timeline_mode = which
-        self._timeline_hint = ("Click timeline to adjust left (low) segment limit" if which == "A" else "Click timeline to adjust right (high) segment limit")
-        self.picTimeline.setToolTip(self._timeline_hint)
-
     def cmdPos_Click(self, index: int):
         seg = self.segment
         if seg is None:
@@ -902,7 +885,10 @@ class frmMain(frmMainBase):
                 self.cmdPos_Click(10)
         elif index in (9, 10):
             frame = seg.start if index == 9 else seg.end
-            self.set_timeline_marker("A" if index == 9 else "B")
+            self.timeline_mode = "A" if index == 9 else "B"
+            self._timeline_hint = ("Click timeline to adjust left (low) segment limit" if index == 9
+                                   else "Click timeline to adjust right (high) segment limit")
+            self.picTimeline.setToolTip(self._timeline_hint)
             if self.Slider1.value() == frame:
                 self.show_frame(frame)                                # show the picture even if the value does not change
                 self._show_frame_info(frame)
@@ -2157,7 +2143,7 @@ class frmMain(frmMainBase):
         self._save()
         self.lblText_Upd()
         self.lvwSegments.select_row(self.current)
-        self.select_segment(False)                                   # load the preview; marker A is not shown (the place after the pause comes at once: VLC opens the file only once)
+        self.lvwSegments_Click()                                     # load the preview, show marker A
         pause = int(self.options.get("pause", 160))
         target = min(new.total_frames, new.start + round(pause * float(new.fps)))
         self._go(target)
@@ -2166,29 +2152,8 @@ class frmMain(frmMainBase):
         # are still in the list (e.g. from earlier tests), that should not prevent the new
         # segment from finding its movie start.
         debug_log(f"duplicate: searching for the start of the movie from frame {self.shown(target)} (several sources: {self.multiple()})")
-        debug_log(lambda: f"duplicate: the new segment is shown, now waiting for the preview ({self.player.describe()})")
-        self.after_preview_settled(self.mnuEnd_Click)                # not while VLC still plays the new segment for a moment: that confuses
-
-    PREVIEW_MIN_MS = 500                                              # the preview is looked at only after this time (VLC needs a moment to start)
-    PREVIEW_IDLE_MS = 300                                             # and no new picture may have arrived for this long (after the jump VLC delivers one late)
-    PREVIEW_WAIT_MS = 5000                                            # how long to wait for the preview at most
-
-    def after_preview_settled(self, action, waited_ms: int = 0, last_time=None) -> None:
-        """Runs `action` when the preview has shown its picture and stopped again (when a new segment is shown, VLC plays it for a moment).
-
-        VLC cannot be trusted to say when that is (after stop() its state can still be the old one for a while, so a jump looks like one in a running medium), so the
-        preview is also WATCHED: it counts as quiet when the player says so (Player.settled), at least PREVIEW_MIN_MS have passed, its time has not moved since the
-        last look (100 ms before) and no new PICTURE has arrived for PREVIEW_IDLE_MS (VLC delivers one late after the last jump, on a network drive). After PREVIEW_WAIT_MS the action runs anyway; if the program is being closed, it does not run."""
-        if self._closing:
-            return
-        now = self.player.get_time() if self.player.has_media else None
-        idle = self.player.picture_idle_ms()
-        quiet = self.player.settled and now == last_time and (idle is None or idle >= self.PREVIEW_IDLE_MS)
-        debug_log(lambda: f"waiting for the preview: {waited_ms} ms, settled={self.player.settled}, time={now} (before: {last_time}), last picture {idle} ms ago, {self.player.describe()}")
-        if (waited_ms >= self.PREVIEW_MIN_MS and quiet) or waited_ms >= self.PREVIEW_WAIT_MS:
-            action()
-            return
-        QtCore.QTimer.singleShot(100, lambda: self.after_preview_settled(action, waited_ms + 100, now))
+        debug_log(lambda: f"duplicate: the new segment is shown, starting the search ({self.player.describe()})")
+        self.mnuEnd_Click()
 
     # ------------------------------------------------------------------ Seeking movie and commercials
     def logo_reference(self, seg: Segment):
@@ -2472,13 +2437,16 @@ class frmMain(frmMainBase):
                  "frame where the logo is clearly visible.")
 
     def _run_job(self, job, message: str, on_done) -> None:
-        """Work in the background with a wait dialog ("<message>, please wait...") and cancel; on_done(result) in the Qt thread."""
+        """Work in the background with a wait dialog ("<message>, please wait...") and cancel; on_done(result) in the Qt thread. The sound of the preview is held off
+        meanwhile (Player.hold_mute)."""
         worker = seek.SeekWorker(job)
         dialog = self.wait_dialog(message, worker.cancel)
         worker.progress.connect(lambda text: getattr(dialog, "set_text", lambda t: None)(f"{message}, please wait...\n{text}"))
-        worker.done.connect(lambda result: (dialog.close(), on_done(result)))
-        worker.failed.connect(lambda text: (dialog.close(), self.msg(f"{message} failed: {text}")))
+        worker.done.connect(lambda result: (self.player.hold_mute(False), dialog.close(), on_done(result)))
+        worker.failed.connect(lambda text: (self.player.hold_mute(False), dialog.close(), self.msg(f"{message} failed: {text}")))
+        worker.finished.connect(lambda: self.player.hold_mute(False))        # (whatever way it ends: cancel, error, done)
         self._seek_worker = worker
+        self.player.hold_mute(True)                                   # no sound from the preview while the program searches
         worker.start()
 
     # ------------------------------------------------------------------ Auto crop (Ctrl+R)

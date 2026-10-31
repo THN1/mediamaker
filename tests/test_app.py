@@ -93,19 +93,6 @@ def test_project(tmp):
 
 
 # ----------------------------------------------------------------------------- Main logic
-def settle_preview():
-    """Runs the short timers: the search after duplicating a segment waits for the preview (at least PREVIEW_MIN_MS) before it starts."""
-    from PySide6 import QtCore as QC
-    for _ in range(60):
-        items = [x for x in QC.QTimer.pending if x[0] < 1000]
-        if not items:
-            break
-        for x in items:
-            QC.QTimer.pending.remove(x)
-        for ms, fn in items:
-            fn()
-
-
 def make_window(tmp, probe=None, fresh=False, thumb_fn=None, first_fn=None, **kwargs):
     import mediamaker
     os.environ["HOME"] = tmp                                     # the home folder of the test is the folder of the window: the batch script goes there (and never into the real one)
@@ -927,7 +914,6 @@ def test_segments(tmp, videos):
     win.cmdPos_Click(8)
     check(seg.end == 100, "marker B at 100")
     win.cmdCommand_Click(4)
-    settle_preview()                                               # (the search waits for the preview)
     new = win.segments[1]
     check((new.start, new.end, new.path, new.crop_top, new.mask) == (100, 148, s2, 5, "0.1 0.2 0.3 0.4") and win.current == 1,
           f"new segment: {new.start}/{new.end}")
@@ -941,7 +927,6 @@ def test_segments(tmp, videos):
     win.lvwSegments_Click()
     seg.end = seg.total_frames
     win.cmdCommand_Click(4)
-    settle_preview()                                               # (the search waits for the preview)
     check(len(win.segments) == 2 and "nothing left" in win.messages[-1], "duplicate at the end of the file")
     # several source files in the list: the search runs anyway (unlike VB6)
     win = seek_window(tmp, videos, ("sample3.ts", "sample2.ts"), workdir="dupwin2", border_fn=border)
@@ -952,7 +937,6 @@ def test_segments(tmp, videos):
     win._go(100)
     win.cmdPos_Click(8)
     win.cmdCommand_Click(4)
-    settle_preview()                                               # (the search waits for the preview)
     check(win.multiple() and probes != [] and win.Slider1.value() == 130, f"several sources: search runs, frame {win.Slider1.value()}")
     # intermediate results in the wait window
     texts = win.dialogs[-1].texts
@@ -969,7 +953,6 @@ def test_segments(tmp, videos):
     win._go(100)
     win.cmdPos_Click(8)
     win.cmdCommand_Click(4)
-    settle_preview()                                               # (the search waits for the preview)
     check(probes == [] and "neither a cropping value" in win.messages[-1] and len(win.segments) == 2, f"without crop and logo: {win.messages[-1:]}")
     win.mnuNext_Click()
     check("neither a cropping value" in win.messages[-1], "also when seeking the next commercial")
@@ -6356,105 +6339,6 @@ def test_batch_run_now(tmp, videos):
     print("Batch, Run now?: OK (home folder, terminal commands, question, errors)")
 
 
-def test_duplicate_waits(tmp, videos):
-    """After duplicating a segment the search for the end of the commercial starts only when the preview (VLC plays the new segment for a moment) has stopped again:
-    the player says so, at least 500 ms have passed, and the time of the preview does not move any more."""
-    from PySide6 import QtCore as QC
-    from mediaprobe import first_frame_number
-    win = seek_window(tmp, videos, ("sample2.ts",), workdir="dupwait", first_fn=first_frame_number)
-    win.segments[0].end = 60
-    calls = []
-    win.mnuEnd_Click = lambda: calls.append("end")
-    player = win.player
-
-    def run_timers():
-        items = list(QC.QTimer.pending)
-        QC.QTimer.pending.clear()
-        for ms, fn in items:
-            fn()
-        return len(items)
-
-    def rounds_until_done(limit=100):
-        rounds = 0
-        while not calls and QC.QTimer.pending and rounds < limit:
-            run_timers()
-            rounds += 1
-        return rounds
-
-    def duplicate():
-        calls.clear()
-        QC.QTimer.pending.clear()
-        win.segments[-1].end = 60
-        win.current = len(win.segments) - 1
-        win.cmdCommand_Click(4)
-    # --- the new segment is shown ONCE (the place after the pause), VLC does not open the file twice
-    player.log.clear()
-    duplicate()
-    shows = [l for l in player.log if l.startswith("show_at")]
-    check(len(shows) == 1 and len(win.segments) >= 2 and win.current == len(win.segments) - 1 and win.Slider1.value() > win.segments[-1].start, f"duplicating shows the file once: {shows}")
-    check(win.timeline_mode == "A" and win.picTimeline.called("setToolTip")[-1] == ("Click timeline to adjust left (low) segment limit",),
-          f"the timeline shows the cut point at marker A (as when marker A was shown): {win.timeline_mode}")
-    check(win.timeline_center == win.segments[-1].start, f"the timeline is centred on marker A of the new segment (frame {win.segments[-1].start}): {win.timeline_center}")
-    # --- the preview is quiet: the search starts after the minimum time (500 ms), not at once
-    duplicate()
-    check(calls == [] and len(QC.QTimer.pending) == 1 and QC.QTimer.pending[0][0] == 100, f"even a quiet preview is looked at for 500 ms first: {calls} {QC.QTimer.pending}")
-    rounds = rounds_until_done()
-    check(calls == ["end"] and rounds == 5, f"quiet: the search starts after 5 looks (500 ms): {rounds} {calls}")
-    # --- the player says it is not quiet: nothing, it is looked at again and again
-    player._settled = False
-    duplicate()
-    run_timers()
-    run_timers()
-    check(calls == [] and len(QC.QTimer.pending) == 1, "busy: still waiting")
-    for _ in range(8):
-        run_timers()
-    check(calls == [], "busy for a long time: still waiting")
-    player._settled = True
-    rounds = rounds_until_done()
-    check(calls == ["end"] and rounds <= 3, f"the preview has stopped: the search starts (once): {calls} after {rounds} looks")
-    # --- the player says 'quiet', but the time of the preview moves (VLC plays the new place, its state is not to be trusted): wait
-    player._settled = True
-    ticks = {"n": 0}
-
-    def moving_time():
-        ticks["n"] += 1
-        return ticks["n"] * 40 if ticks["n"] <= 12 else 480                  # moves for 12 looks, then stands
-    player.get_time = moving_time
-    duplicate()
-    for _ in range(10):
-        run_timers()
-    check(calls == [], f"the time moves: the search does not start although the player says 'quiet': {calls}")
-    rounds = rounds_until_done()
-    check(calls == ["end"] and ticks["n"] > 12, f"the time stands: now it starts: {calls} ({ticks['n']} looks)")
-    del player.get_time
-    # --- a picture was delivered a moment ago (VLC delivers one late after the last jump): wait until none has come for 300 ms
-    player._settled = True
-    state = {"idle": 50}
-    player.picture_idle_ms = lambda: state["idle"]
-    duplicate()
-    for _ in range(10):
-        run_timers()
-        state["idle"] = 50
-    check(calls == [], f"pictures keep arriving: the search does not start: {calls}")
-    state["idle"] = 400
-    rounds = rounds_until_done()
-    check(calls == ["end"] and rounds <= 2, f"no picture for 400 ms: the search starts: {calls} after {rounds} looks")
-    del player.picture_idle_ms
-    # --- the preview never settles: after 5 seconds the search starts anyway
-    player._settled = False
-    duplicate()
-    rounds = rounds_until_done()
-    check(calls == ["end"] and rounds == 50, f"never quiet: the search starts after 5 s ({rounds} looks): {calls}")
-    # --- the program is being closed: nothing is started
-    duplicate()
-    win._closing = True
-    run_timers()
-    check(calls == [] and not QC.QTimer.pending, "closing: the search is not started")
-    win._closing = False
-    player._settled = True
-    print("Duplicate and search: OK (waits for the preview and its time, gives up after 5 s, not when closing)")
-
-
 class SimVlc:
     """A VLC that behaves like the real one in the points that matter here: play() opens first (state Opening), VLC reports Playing later (the test calls
     _after_playing, as the event handler does), set_pause() pauses, the start position comes from the media option start-time."""
@@ -6474,13 +6358,13 @@ class SimVlc:
 
         class Mp:
             def __init__(self):
-                self.state, self.t, self.media, self.set_times = 5, 0, None, []
+                self.state, self.t, self.media, self.set_times, self.muted = 5, 0, None, [], False
             def event_manager(self): return Events()
             def video_set_callbacks(self, *a): pass
             def video_set_format(self, *a): pass
             def video_set_aspect_ratio(self, r): pass
             def audio_set_volume(self, v): pass
-            def audio_set_mute(self, v): pass
+            def audio_set_mute(self, v): self.muted = bool(v)
             def set_media(self, m): self.media = m
             def get_media(self): return self.media
             def play(self): self.state = 1                                   # Opening: VLC reports Playing only later
@@ -6502,97 +6386,6 @@ class SimVlc:
         self.module.EventType = SimpleNamespace(MediaPlayerPlaying=1, MediaPlayerPaused=2, MediaPlayerStopped=3, MediaPlayerEndReached=4, MediaPlayerTimeChanged=5, MediaPlayerSeekableChanged=6)
         self.module.State = SimpleNamespace(NothingSpecial=0, Opening=1, Buffering=2, Playing=3, Paused=4, Stopped=5, Ended=6, Error=7)
         self.module.CallbackDecorators = SimpleNamespace(VideoLockCb=lambda f: f, VideoDisplayCb=lambda f: f)
-
-
-def test_duplicate_real_player(tmp, videos):
-    """The same with the REAL MemoryVlcPlayer (a simulated VLC with its states): the search starts only when VLC has opened, played, paused at the new place and
-    has reached the position, and not before."""
-    import player as pl
-    from PySide6 import QtCore as QC
-    from PySide6.QtWidgets import QWidget
-    from mediaprobe import first_frame_number
-    sim = SimVlc()
-    old_vlc = sys.modules.get("vlc")
-    sys.modules["vlc"] = sim.module
-    try:
-        win = seek_window(tmp, videos, ("sample2.ts",), workdir="dupreal", first_fn=first_frame_number)
-        real = pl.MemoryVlcPlayer()
-        area = QWidget()
-        area.setGeometry(0, 0, 513, 290)
-        real.attach(area)
-        win.player = real
-        mp = real.mp
-        win.segments[0].end = 60
-        calls = []
-        win.mnuEnd_Click = lambda: calls.append("end")
-        QC.QTimer.pending.clear()
-
-        def run_timers():
-            """Runs the short timers (the watchdog of 8 s stays: it does not fire while VLC answers)."""
-            items = [x for x in QC.QTimer.pending if x[0] < 1000]
-            for x in items:
-                QC.QTimer.pending.remove(x)
-            for ms, fn in items:
-                fn()
-        win.cmdCommand_Click(4)
-        check(calls == [] and not real.settled and mp.state == 1, f"the new segment is being opened: nothing started, VLC is not quiet (state {mp.state}, awaiting {real._awaiting_position}, pending {real._pending_show})")
-        for _ in range(5):                                                   # VLC is still opening: the program waits
-            run_timers()
-        check(calls == [] and not real.settled, "still opening: still waiting")
-        mp.state = 3                                                         # VLC reports Playing: now it plays the new place for a moment
-        mp.t = 1000
-        real._after_playing()                                                # (the event handler: pauses and waits for the position)
-        check(calls == [] and mp.state == 4 and not real.settled, f"VLC has paused, but has not been checked at the position yet: not quiet yet: {real._awaiting_position}")
-        run_timers()
-        mp.t = real._awaiting_position if real._awaiting_position is not None else 0   # (the position of the new place has been reached)
-        for _ in range(12):
-            run_timers()
-        check(real.settled and calls == ["end"], f"position reached and paused: the search starts, once: {calls} settled={real.settled} awaiting={real._awaiting_position} pending={real._pending_show} state={mp.state} t={mp.t} timers={QC.QTimer.pending}")
-        # --- the case that the flags do not show: VLC reports a state of the old medium (after stop() it can for a while), the jump is taken for one in a running
-        #     medium, no flag is set, and VLC plays the new segment: the TIME moves. The search must wait until it stands.
-        calls.clear()
-        QC.QTimer.pending[:] = [x for x in QC.QTimer.pending if x[0] >= 1000]
-        mp.state = 4
-        real._awaiting_position = real._pending_show = None
-        clock = {"n": 0}
-
-        def playing_time():
-            clock["n"] += 1
-            return clock["n"] * 40 if clock["n"] <= 15 else 600
-        mp.get_time = playing_time
-        win.segments[-1].end = 60
-        win.current = len(win.segments) - 1
-        real.show_at = lambda ms: None                                       # (this time the jump takes the way without flags)
-        win.cmdCommand_Click(4)
-        for _ in range(10):
-            run_timers()
-        check(calls == [] and real.settled, f"flags quiet, but the time moves: the search waits: {calls} (looks: {clock['n']})")
-        for _ in range(20):
-            run_timers()
-        check(calls == ["end"] and clock["n"] > 15, f"the time stands: the search starts: {calls} (looks: {clock['n']})")
-        # --- the position was reached, VLC is paused and quiet, but the picture of the last jump arrives late: the display callback sets the time of the last picture
-        import time as _time
-        calls.clear()
-        mp.get_time = lambda: 600
-        real._last_picture_at = _time.monotonic()
-        check(real.picture_idle_ms() < 100, "the player knows how long ago the last picture came")
-        win.segments[-1].end = 60
-        win.current = len(win.segments) - 1
-        win.cmdCommand_Click(4)
-        for _ in range(12):
-            run_timers()
-            real._last_picture_at = _time.monotonic()                          # (pictures keep coming)
-        check(calls == [], f"pictures keep arriving: the search waits: {calls}")
-        real._last_picture_at = _time.monotonic() - 1.0
-        for _ in range(5):
-            run_timers()
-        check(calls == ["end"] and real.picture_idle_ms() >= 300, f"no picture for a second: the search starts: {calls}")
-    finally:
-        if old_vlc is not None:
-            sys.modules["vlc"] = old_vlc
-        else:
-            sys.modules.pop("vlc", None)
-    print("Duplicate with the real player: OK")
 
 
 def test_debug_log_lines(tmp, videos):
@@ -6618,6 +6411,62 @@ def test_debug_log_lines(tmp, videos):
         else:
             sys.modules.pop("vlc", None)
     print("Debug log: OK (milliseconds, description of the player)")
+
+
+def test_search_mutes(tmp, videos):
+    """While the program searches (a background job with the blue wait window) the sound of the preview is held off, however the job ends; the sound of the approach to a
+    position (muted, unmuted) cannot switch it on in between."""
+    import player as pl
+    import seek
+    from mediaprobe import first_frame_number
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="mutewin", first_fn=first_frame_number)
+    player = win.player
+    # --- a search that ends normally
+    win.segments[0].end = 60
+    player.log.clear()
+    win.mnuEnd_Click()
+    holds = [l for l in player.log if l.startswith("hold_mute")]
+    check(holds[:1] == ["hold_mute True"] and holds[-1] == "hold_mute False" and not player.held, f"search: sound held off, then released: {holds}")
+    # --- a job that fails
+    real_run = seek.SeekWorker.run
+    seek.SeekWorker.run = lambda self: self.failed.emit("boom")
+    try:
+        player.log.clear()
+        win.messages.clear()
+        win._run_job(None, "Test job", lambda result: None)
+        holds = [l for l in player.log if l.startswith("hold_mute")]
+        check(holds[0] == "hold_mute True" and holds[-1] == "hold_mute False" and not player.held and win.messages[-1] == "Test job failed: boom", f"failing job: sound back on: {holds} {win.messages[-1:]}")
+    finally:
+        seek.SeekWorker.run = real_run
+    # --- the real player (simulated VLC): the held sound stays off when the approach unmutes
+    sim = SimVlc()
+    old = sys.modules.get("vlc")
+    sys.modules["vlc"] = sim.module
+    try:
+        real = pl.MemoryVlcPlayer()
+        mp = real.mp
+        real.hold_mute(True)
+        check(mp.muted, "held: the sound is off")
+        real._mute(True)
+        real._mute(False)                                                   # (position reached: the approach unmutes)
+        check(mp.muted and real._held, "the approach cannot switch the held sound on")
+        real.hold_mute(False)
+        check(not mp.muted, "released: the sound is on again")
+        real._mute(True)
+        real.hold_mute(True)
+        real.hold_mute(False)
+        check(mp.muted, "released while the approach still mutes: it stays off until the approach ends")
+        real._mute(False)
+        check(not mp.muted, "the approach ends: the sound is on")
+        real.hold_mute(True)
+        real.recover("test") if hasattr(real, "recover") else None
+        check(real.mp.muted or not hasattr(real, "recover"), "after a recovery (a new media player) the held sound is still off")
+    finally:
+        if old is not None:
+            sys.modules["vlc"] = old
+        else:
+            sys.modules.pop("vlc", None)
+    print("Search without sound: OK (search, failing job, real player)")
 
 
 def test_counting_note(tmp, videos):
@@ -6796,9 +6645,8 @@ def main():
     test_multitrack(tmp, sys.argv[1])
     test_multitrack_window(tmp, sys.argv[1])
     test_batch_run_now(tmp, sys.argv[1])
-    test_duplicate_waits(tmp, sys.argv[1])
-    test_duplicate_real_player(tmp, sys.argv[1])
     test_debug_log_lines(tmp, sys.argv[1])
+    test_search_mutes(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])

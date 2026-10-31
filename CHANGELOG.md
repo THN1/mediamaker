@@ -3,26 +3,16 @@
 ## 0.7 (in progress)
 
 - Version number set to 0.7-dev.
-- **Duplicate segment, second step: the file is opened once, and the search also waits for the pictures.** A debug log of the user showed: `show_at` ran TWICE (first marker A of the new segment,
-  at once the place after the pause), so VLC opened the file on the network drive twice; and after VLC had paused, the memory player jumps once more (`_position_reached` calls `set_time`
-  so that a picture for the position arrives), whose picture comes late. Now `select_segment(show_marker=False)` loads the preview without showing marker A (`lvwSegments_Click` is
-  `select_segment(True)`), and the memory player notes when its last picture arrived (`picture_idle_ms`): the search starts only when no new picture has come for 300 ms
-  (`PREVIEW_IDLE_MS`), besides the state, the unmoving time and the 500 ms. The wait dialog (blue) and the search are made in the same call (`_run_job`), so the dialog can not appear
-  before the search starts; the log confirms it ("border search from frame ..." follows the last look at once).
-  * **Fix of a side effect found in the next debug log:** `cmdPos_Click(9)`, which duplicating no longer calls, also puts the TIMELINE on marker A (`timeline_mode`, tooltip, `timeline_refresh`), so the
-    pictures around the cut point were missing after duplicating ("thumbnails ..." was gone from the log). `select_segment(False)` does that part now (`set_timeline_marker`, `timeline_refresh`); the test
-    checks the mode, the tooltip and the centre of the timeline, and fails without it.
+- **No sound from the preview while the program searches** (instead of the wait for the preview that was built and taken out again, see below). `Player.hold_mute(True/False)`: the memory player
+  keeps VLC muted as long as a background job with the blue wait window runs (`_run_job`: searches, auto crop, dedup ...), released when the job is done, failed or cancelled
+  (`finished`); the mute of the approach to a position (`_mute`) cannot switch it on in between, and a new media player after a recovery is muted again. Note: the search only reports TEXT to the
+  wait window (`SeekWorker.progress`), it does not move the slider or the preview; the debug log of the user shows no VLC event between "search started" and the result.
+- **The wait for the preview after duplicating a segment is out again** (the commits 6bfabd0, f8d2b61, 0ce2ae6 and a7e8cc5: `after_preview_settled`, `Player.settled`, `picture_idle_ms`,
+  `select_segment(False)`, `set_timeline_marker`, their tests): it did not change what the user saw. The logging of ce92d0c stays.
 - **More in the debug log** (`MEDIAMAKER_DEBUG=1`, file `mediamaker_debug.log` in the program folder): the time has milliseconds now (`log_line`), and the steps of the preview are logged:
   `display frame` (picture from ffmpeg or `show_at`), `show_at` (also the way without flags: "the medium is started already"), "VLC plays: pausing", "position ... reached", "duplicate: ...
-  now waiting for the preview", every look of "waiting for the preview" and "search started", each with `Player.describe()` (state, playing, time, flags of VLC). The description is only made
+  starting the search" and "search started", each with `Player.describe()` (state, playing, time, flags of VLC). The description is only made
   when the log is on (`debug_log` takes a function for the text).
-- **Duplicate segment: the search for the end of the commercial waits for the preview.** When a segment is duplicated, VLC plays the new segment for a moment (it is sent to the new place and
-  paused again) while the search already ran; that was confusing. The first version only asked the player (`Player.settled`: no jump or pause pending, not playing) and did not help in a real
-  run (the flags of the player do not show every case: after `stop()` libvlc can still report the state of the old medium, then a jump looks like one in a running medium and no flag is set).
-  Now the preview is also WATCHED (`frmMain.after_preview_settled`, every 100 ms): the search starts when the player says it is quiet (the memory player also needs a state of VLC that is
-  not Opening, Buffering or Playing), at least 500 ms have passed (VLC needs a moment) and the TIME of the preview has not moved since the look before; after 5 seconds it starts anyway, and
-  not at all if the program is being closed. Tested with the replacement player and with the real `MemoryVlcPlayer` on a simulated VLC (its states, a stale state without flags, a moving time).
-  Every look is written to the debug log (`MEDIAMAKER_DEBUG=1`: "waiting for the preview: ...").
 - **README.md rewritten** (it is the text that GitHub shows under the files): what the program does (cutting, picture, tracks and chapters, saving and automation), the supported input and
   output formats (with what each output type can hold), requirements, start, options, tests.
 - **Help text of `batch`**: the old default text ("... empty: next to the INI file, with the extension .sh ...") in an INI file is replaced by the current one (`settings.OUTDATED_TOOLTIPS`;

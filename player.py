@@ -62,16 +62,6 @@ class Player(QtCore.QObject):
         """What the player knows about itself, for the debug log."""
         return ""
 
-    def picture_idle_ms(self):
-        """How long ago the last picture arrived in the preview (ms); None: there is no information (the player does not know, or no picture came yet)."""
-        return None
-
-    @property
-    def settled(self) -> bool:
-        """Has the preview shown its picture and stopped? (VLC plays for a moment when it is sent to a new place: show_at.) Things that start work at the same time
-        wait for this, so that a picture running by does not confuse."""
-        return True
-
     supports_images = False                                  # can the program put its own pictures into the preview (show_image)? Only the memory player.
 
     def show_image(self, image) -> None:
@@ -98,6 +88,10 @@ class Player(QtCore.QObject):
 
     def set_volume(self, percent: int) -> None:
         raise NotImplementedError
+
+    def hold_mute(self, on: bool) -> None:
+        """The sound stays off as long as the program works in the background (a search): hold_mute(True) ... hold_mute(False). Nothing that the player does itself
+        (the sound of an approach to a position is muted and unmuted again) can switch it on in between."""
 
     def set_aspect(self, ratio: str) -> None:
         raise NotImplementedError
@@ -195,16 +189,13 @@ class FakePlayer(Player):
     def preview_image(self):
         return getattr(self, "preview", None)
 
+    held = False                                                 # in the test: the sound is held off (hold_mute)
+
+    def hold_mute(self, on: bool) -> None:
+        self.held = bool(on)
+        self.log.append(f"hold_mute {bool(on)}")
+
     supports_images = True
-    _settled = True                                              # in the test: False while the "preview" is still running
-    _idle_ms = None                                              # in the test: how long ago the last picture arrived (None: unknown)
-
-    def picture_idle_ms(self):
-        return self._idle_ms
-
-    @property
-    def settled(self) -> bool:
-        return self._settled
 
     def show_image(self, image) -> None:
         self.log.append("image")
@@ -331,13 +322,25 @@ class VlcPlayer(Player):
             debug_log(f"seekable: jumping to {self._awaiting_position} ms")
             self.mp.set_time(self._awaiting_position)
 
+    _held = False                                                # the sound is held off while the program searches (hold_mute)
+
     def _mute(self, on: bool) -> None:
-        """Mute the sound while approaching a position (only works if the audio output already exists)."""
+        """Mute the sound while approaching a position (only works if the audio output already exists). A sound that is held off (hold_mute) stays off."""
         try:
-            self.mp.audio_set_mute(bool(on))
+            self.mp.audio_set_mute(bool(on) or self._held)
             self._muted = bool(on)
         except Exception:
             self._muted = False
+
+    def hold_mute(self, on: bool) -> None:
+        """The sound stays off as long as the program searches: the approach to a position (show_at) muted the sound and unmuted it again, which would also have let
+        the sound out during a search."""
+        self._held = bool(on)
+        debug_log(f"hold_mute {bool(on)}")
+        try:
+            self.mp.audio_set_mute(self._held or self._muted)
+        except Exception:
+            pass
 
     def shutdown(self) -> None:
         """Orderly shutdown: first detach the callbacks, then stop (waits until VLC no longer draws the picture),
@@ -432,6 +435,8 @@ class VlcPlayer(Player):
         self._muted = False
         self._watch_token += 1
         self._new_media_player()
+        if self._held:
+            self.hold_mute(True)
         self._after_recover()
         if self._path and self._last_show is not None:
             self.show_at(self._last_show)
@@ -625,7 +630,6 @@ class MemoryVlcPlayer(VlcPlayer):
         @deco.VideoDisplayCb
         def display(opaque, picture):                            # runs in the VLC thread: pass a copy on to Qt
             if not self._closed:
-                self._last_picture_at = time.monotonic()         # (a number is set: safe between threads)
                 self.frame_ready.emit((bytes(buf), width, height))
 
         self._video_callbacks.append((lock, display, buf))
@@ -633,11 +637,6 @@ class MemoryVlcPlayer(VlcPlayer):
         self.mp.video_set_format("RV32", width, height, width * 4)
         self.mp.video_set_aspect_ratio(f"{width}:{height}")      # picture fills the memory area without black borders of its own
         debug_log(f"memory output {width}x{height}")
-
-    _last_picture_at = None                                      # time.monotonic() of the last picture that VLC delivered
-
-    def picture_idle_ms(self):
-        return None if self._last_picture_at is None else int((time.monotonic() - self._last_picture_at) * 1000)
 
     def _after_recover(self) -> None:
         size, self._size = self._size, (0, 0)                    # the new media player knows nothing yet: install the video callbacks again
@@ -699,15 +698,6 @@ class MemoryVlcPlayer(VlcPlayer):
         return image.copy() if image is not None and hasattr(image, "copy") else image
 
     supports_images = True
-
-    @property
-    def settled(self) -> bool:
-        """Not waiting for the picture of show_at (position not reached, not yet paused) and not playing."""
-        if self._closed:
-            return True
-        State = self._vlc.State
-        quiet = (State.NothingSpecial, State.Paused, State.Stopped, State.Ended, State.Error)           # not Opening, Buffering or Playing
-        return self._awaiting_position is None and self._pending_show is None and self.mp.get_state() in quiet and not self.mp.is_playing()
 
     def show_image(self, image) -> None:
         if self.surface is not None and not self._closed:
