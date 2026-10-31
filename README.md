@@ -102,5 +102,5 @@ python3 ui/show_form.py frmMain --dir ui/generated        # preview of a form
 
 ## Versions
 
-Frozen states are marked with tags (`v0.1` to `v0.6`). The next version is developed on `main`; the version number is in
+Frozen states are marked with tags (`v0.1` to `v0.7`). The next version is developed on `main`; the version number is in
 `mediamaker.py` (`VERSION`).

@@ -1,8 +1,14 @@
 # Changes
 
-## 0.7 (in progress)
+## 0.7
 
-- Version number set to 0.7-dev.
+Seventh frozen state: **multitrack** (several audio tracks and subtitles in the new file, with language codes), the batch script in the home folder with "Run now?", the preview during a search
+(the pictures that the search reads, no playing of the place in VLC at the end), the new segment is not played while the search after duplicating runs, searches that survive an unreadable end of a
+recording and say when they found nothing, a logo detection that a close-up of hair no longer fools, larger symbols in the column of buttons, a README with the functions and the supported formats,
+and a debug log with milliseconds. Still to do: DVD mode, and more tests with several audio and subtitle tracks. The logo that appears again INSIDE a commercial break is found as the end of the
+break; this cannot be told apart by the logo alone.
+
+- Version number was 0.7-dev.
 - **Logo detection: a busy picture no longer counts as the logo** (`logo.logo_confidence`, new advanced option `logo_extra`, default 1.0, only in the INI file). A user's debug package (60 s of
   a commercial break of an RTL recording, reference logo made with the button L) showed why the search for the end of the commercial stopped at a close-up of hair: the confidence was only the
   share of the reference edges that is found in the logo rectangle (73 x 36 pixels); vertical strands of hair have so many edges that about half of them are hit by chance (0.47 to 0.72; the
