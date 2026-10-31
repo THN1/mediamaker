@@ -3,13 +3,15 @@
 ## 0.7 (in progress)
 
 - Version number set to 0.7-dev.
-- **The preview shows pictures while a search runs** (option `search_pictures`, on|off, default on, group Seeking; memory player only). While the search steps in jumps of at least 10 frames
-  (`seek.PICTURE_MIN_STEP`; the step width goes 1000 -> 100 -> 10 -> 1) the preview shows the picture of each probe, like a film that runs by; at the end VLC jumps to the result as before. The
+- **The preview shows pictures while a search runs** (option `search_pictures`, on|off, default on, group Seeking; memory player only). The preview shows the picture of EVERY probe, down to the
+  step width 1 (`seek.PICTURE_MIN_STEP = 1`; the step width goes 1000 -> 100 -> 10 -> 1; first built for step widths from 10 on, then opened up because the pictures cost nothing), like a film that
+  runs by; at the end VLC jumps to the result as before. The
   pictures are the ones that the search reads anyway: `border_at` and `confidence_at` read the whole frame with `grab_frame` and hand it over (`on_image`), `where_border` / `where_logo`
   report the step width of each probe (`probe`), `SeekWorker.picture` passes it to the main window (`search_picture`). **Measured** with `test_3.ts` (1280x720 h264, local disk, 11 steps, 8 of
   them with step width >= 10, two runs each): without pictures 8.96 s; handing over the picture that was read **9.05 s (+1 %)**; an additional ffmpeg call per picture, in parallel
   15.68 s (+75 %), one after the other 15.90 s (+77 %). So the second read would nearly have doubled the search; reusing the picture costs nothing measurable (on a network drive a second read
-  would also read the file twice). Not tried on the NAS.
+  would also read the file twice). Not tried on the NAS. The single picture of marker A that was shown for a short time while the preview was held (duplicate_segment) is out again: the
+  search pictures take its place; until the first probe the preview stays black.
 - **Duplicate segment: VLC does not show the new segment during the search, but at the end of it.** Debug logs of the user showed that VLC was sent to the new segment twice before the search
   (`show_at` for marker A of the new segment, then at once for the place after the pause) and played it for a moment (picture and sound), while the search for the end of the commercial ran.
   `duplicate_segment` now HOLDS the preview (`_preview_held`): the slider and `display_frame` do not touch VLC until the search is over; the list, the slider and the timeline (marker A) are
@@ -17,8 +19,6 @@
   is shown (`release_preview`, `worker_finished`). Before this, three other attempts were made and taken out again because they changed nothing for the user: a wait until the preview was quiet
   (`after_preview_settled`, `Player.settled`, `picture_idle_ms`; commits 6bfabd0, f8d2b61, 0ce2ae6, a7e8cc5) and the muting of the sound while a job runs (`hold_mute`; commit 160fb37). The
   logging of ce92d0c stays. Note: the search itself only reports text to the wait window; it does not move the slider or the preview.
-  While the preview is held (memory player), instead of the black picture a SINGLE picture of marker A of the new segment is shown, read by ffmpeg like the pictures of a stopped film (`StillPreview`);
-  VLC is not asked. It is dropped when the search is over.
 - **More in the debug log** (`MEDIAMAKER_DEBUG=1`, file `mediamaker_debug.log` in the program folder): the time has milliseconds now (`log_line`), and the steps of the preview are logged:
   `display frame` (picture from ffmpeg or `show_at`), `show_at` (also the way without flags: "the medium is started already"), "VLC plays: pausing", "position ... reached", "duplicate: ...
   starting the search" and "search started", each with `Player.describe()` (state, playing, time, flags of VLC). The description is only made

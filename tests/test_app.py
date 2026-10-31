@@ -6264,7 +6264,7 @@ def test_multitrack_window(tmp, videos):
     # --- the help texts: an old default text in an INI file is replaced (no "next to the INI file" for batch any more), an edited one stays
     from settings import OUTDATED_TOOLTIPS
     number = 3
-    for key in ("multitrack", "batch"):
+    for key in ("multitrack", "batch", "search_pictures"):
         for text, expected in ((OUTDATED_TOOLTIPS[key][0], DEFAULT_TOOLTIPS[key]), ("my own words", "my own words")):
             number += 1
             w = os.path.join(tmp, f"mttip{number}")
@@ -6418,13 +6418,7 @@ def test_duplicate_preview(tmp, videos):
     end of it: the found picture; if the search fails, is cancelled or is not started, the picture at the slider."""
     import seek
     from mediaprobe import first_frame_number
-    import numpy as np
-    fetched = []
-
-    def fake_frame(path, frame, fps):
-        fetched.append(frame)
-        return np.full((12, 16, 3), 7, np.uint8)
-    win = seek_window(tmp, videos, ("sample2.ts",), workdir="dupprev", first_fn=first_frame_number, frame_fn=fake_frame)
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="dupprev", first_fn=first_frame_number)
     player = win.player
     real_run = seek.SeekWorker.run
     seen = {}
@@ -6435,7 +6429,6 @@ def test_duplicate_preview(tmp, videos):
         seen["held"] = win._preview_held
         seen["slider"] = win.Slider1.value()
         seen["images"] = player.log.count("image")
-        seen["fetched"] = list(fetched)
         return real_run(self)
 
     def duplicate():
@@ -6443,7 +6436,6 @@ def test_duplicate_preview(tmp, videos):
         win.current = len(win.segments) - 1
         player.log.clear()
         seen.clear()
-        fetched.clear()
         win.cmdCommand_Click(4)
     # --- a search that finds something
     seek.SeekWorker.run = run_noting
@@ -6455,10 +6447,7 @@ def test_duplicate_preview(tmp, videos):
     check(seen["held"] and seen["shows"] == [] and seen["time"] == 0 and seen["slider"] > win.segments[-1].start,
           f"during the search: the preview is held, VLC was not sent anywhere (no show_at, the new medium stands at 0), but the slider is at the target: {seen}")
     check(len(after) == 1 and not win._preview_held, f"at the end of the search: the found picture is shown, once: {after}")
-    check(seen["images"] == 1 and seen["fetched"] == [win.segments[-1].start], f"during the search: instead of a black picture a single picture of marker A (frame {win.segments[-1].start}) from ffmpeg: {seen['images']} {seen['fetched']}")
-    shown = player.log.count("image")
-    win.still_ready(win.segments[-1].path, win.segments[-1].start, "late")
-    check(player.log.count("image") == shown and win._still_frame is None, "a picture of marker A that arrives after the search is ignored")
+    check(seen["images"] == 0, f"before the search starts nothing is shown at all (no single picture of marker A any more): {seen['images']} pictures")
     check(player.time == win.f2t(win.Slider1.value()), f"VLC stands at the slider position after the search: {player.time} / {win.f2t(win.Slider1.value())}")
     # --- the search fails
     seek.SeekWorker.run = lambda self: (run_noting(self) if False else self.failed.emit("boom"))
@@ -6491,7 +6480,7 @@ def test_duplicate_preview(tmp, videos):
 
 
 def test_search_pictures(tmp, videos):
-    """While a search steps in jumps of at least 10 frames the preview shows the pictures that the search reads anyway (no second read: measured +1 % against +75 %)."""
+    """While a search runs the preview shows the pictures that the search reads anyway, every probe down to the step width 1 (no second read: measured +1 % against +75 %)."""
     import numpy as np
     import border
     import logo
@@ -6549,7 +6538,14 @@ def test_search_pictures(tmp, videos):
     emitted = []
     worker.picture.connect(lambda frame, img: emitted.append(frame))
     worker.start()
-    check(emitted == [5, 7] and seek.PICTURE_MIN_STEP == 10, f"the worker passes on the pictures of step width >= 10 only: {emitted}")
+    check(emitted == [5, 6, 7] and seek.PICTURE_MIN_STEP == 1, f"the worker passes on the pictures of every probe, down to the step width 1: {emitted}")
+    seek.PICTURE_MIN_STEP = 10                                              # (the limit still works if it is raised)
+    worker = seek.SeekWorker(lambda control: (control.picture(5, picture, 100), control.picture(6, picture, 1), control.picture(7, picture, 10), 3)[-1])
+    emitted.clear()
+    worker.picture.connect(lambda frame, img: emitted.append(frame))
+    worker.start()
+    seek.PICTURE_MIN_STEP = 1
+    check(emitted == [5, 7], f"with the limit 10 only the large steps: {emitted}")
     # --- the main window: the preview shows them (memory player only), the option switches it off
     win = seek_window(tmp, videos, ("sample2.ts",), workdir="searchpics", first_fn=first_frame_number)
     player = win.player
@@ -6567,7 +6563,7 @@ def test_search_pictures(tmp, videos):
     player.log.clear()
     win.mnuEnd_Click()
     big = player.log.count("image")
-    check(len(calls) > big >= 3, f"the search shows the pictures of its large steps in the preview: {big} of {len(calls)} probes")
+    check(big == len(calls) >= 6, f"the search shows the picture of EVERY probe in the preview, down to the step width 1: {big} of {len(calls)} probes")
     check(getattr(player, "preview", None) is not None and player.preview._args[1:3] == (16, 12), "(it is the picture that the search read: 16 x 12 here)")
     check(any(l.startswith("show_at") for l in player.log), "and at the end VLC jumps to the result as before")
     win.settings.set_option("search_pictures", "off")

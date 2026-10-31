@@ -268,7 +268,7 @@ class Settings:
         return changed
 
 
-OUTDATED_TOOLTIPS = {"batch": ("Batch: file the batch script is written to; a leading ~ is your home folder (empty: next to the INI file, with the extension .sh); applies at once",), "multitrack": ("When the box is ticked, a multitrack selection dialog opens after the name of the file has been chosen (only if the source has more than one audio track or any subtitle track), allowing to choose and configure how the audio and/or subtitle track(s) should be processed.",)}      # earlier default texts: replaced by the current one if they are still in the INI file unchanged
+OUTDATED_TOOLTIPS = {"search_pictures": ("Seeking: on = while the search (end of commercial, next commercial) is still stepping in jumps of at least 10 frames, the preview shows the pictures that the search reads, like a film that runs by (these pictures are read anyway, the search is not slower; player = memory only); off = the preview stays as it is until the search is over; applies at once",), "batch": ("Batch: file the batch script is written to; a leading ~ is your home folder (empty: next to the INI file, with the extension .sh); applies at once",), "multitrack": ("When the box is ticked, a multitrack selection dialog opens after the name of the file has been chosen (only if the source has more than one audio track or any subtitle track), allowing to choose and configure how the audio and/or subtitle track(s) should be processed.",)}      # earlier default texts: replaced by the current one if they are still in the INI file unchanged
 
 
 def default_options() -> dict:
@@ -306,9 +306,9 @@ DEFAULT_TOOLTIPS = {
     'multitrack': 'When set to on, a multitrack selection dialog opens after the name of the file has been chosen (only if the source has more than one audio track or any '
                   'subtitle track), allowing to choose and configure how the audio and/or subtitle track(s) should be processed.',
     # options added in the Python version
-    "search_pictures": "Seeking: on = while the search (end of commercial, next commercial) is still stepping in jumps of at least 10 frames, the preview shows the pictures that the "
-                       "search reads, like a film that runs by (these pictures are read anyway, the search is not slower; player = memory only); off = the preview stays as it is until the "
-                       "search is over; applies at once",
+    "search_pictures": "Seeking: on = while a search (end of commercial, next commercial) runs, the preview shows the picture of every frame that the search reads, like a film "
+                       "that runs by (these pictures are read anyway, the search is not slower; player = memory only); off = the preview stays as it is until the search is over; "
+                       "applies at once",
     "paused_preview": "Preview while the film is stopped (player = memory only): vlc = VLC jumps to the slider position (it can get stuck after about ten jumps); ffmpeg = the pictures are "
                       "read by ffmpeg (frame exact, with the same frame numbers as the thumbnails; a little slower, a picture follows the slider with a short delay); Play then jumps VLC to "
                       "the shown position; applies at once",

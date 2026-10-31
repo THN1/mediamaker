@@ -19,7 +19,7 @@ from logo import confidence_at, where_logo
 from player import debug_log
 
 DEFAULT_STEP_END_S = 40              # step width for "Seek end of commercial" in seconds (VB6: 1000 frames at 25 FPS)
-PICTURE_MIN_STEP = 10               # the preview shows the pictures that the search reads as long as the step width is at least this many frames
+PICTURE_MIN_STEP = 1                # the preview shows the pictures that the search reads as long as the step width is at least this many frames (1: every probe)
 DEFAULT_STEP_NEXT_S = 240            # step width for "Seek next commercial" in seconds (VB6: 6000 frames at 25 FPS)
 
 

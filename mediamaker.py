@@ -2155,9 +2155,6 @@ class frmMain(frmMainBase):
         target = min(new.total_frames, new.start + round(pause * float(new.fps)))
         self._go(target)
         self.show_frame(target)
-        if self.player.supports_images:                              # instead of the black picture: a single picture of marker A, read by ffmpeg (VLC is not asked)
-            self._still_frame = new.start
-            self.stills.request(new.path, new.start, new.fps)
         # In VB6 the search only ran if all segments came from the same file. Here it always runs: if segments of other files
         # are still in the list (e.g. from earlier tests), that should not prevent the new
         # segment from finding its movie start.
@@ -2466,13 +2463,11 @@ class frmMain(frmMainBase):
         self.release_preview(True)
 
     def search_picture(self, frame: int, array) -> None:
-        """A picture that the search has just read for a probe (the step width is still large): shown in the preview instead of what was there, like a film that runs by.
+        """A picture that the search has just read for a probe (every probe, down to the step width 1): shown in the preview instead of what was there, like a film that runs by.
         It is the picture that was read anyway, so the search is not slower (measured: +1 % against +75 % for a second ffmpeg call per picture). VLC is not asked; at the
         end of the search it jumps to the result as usual. Only the memory player can show pictures of its own."""
         if not self.player.supports_images:
             return
-        self._still_frame = None                                      # the single picture of marker A (duplicate_segment) is out of date now
-        self.stills.cancel()
         height, width = array.shape[0], array.shape[1]
         self.player.show_image(QtGui.QImage(array.tobytes(), width, height, width * 3, QtGui.QImage.Format.Format_RGB888).copy())
 
@@ -2486,8 +2481,6 @@ class frmMain(frmMainBase):
         if not self._preview_held:
             return
         self._preview_held = False
-        self._still_frame = None                                      # the single picture of marker A is over (one that arrives late is ignored)
-        self.stills.cancel()
         debug_log(f"preview released (show the picture at the slider: {show})")
         if show and self.segment is not None:
             self.display_frame(self.Slider1.value())
