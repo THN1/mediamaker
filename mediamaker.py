@@ -151,6 +151,7 @@ class frmMain(frmMainBase):
         self.verify_first_frame = True                 # False: take the first frame from the stream data as it is (tests)
         self._frame_fn = frame_fn
         self._track_fn = track_fn                        # the audio and subtitle tracks of a file (for the multitrack dialog)
+        self._preview_held = False                      # VLC is not touched while True (duplicate_segment until its search is over)
         self.track_choice = None                        # the last choice of the multitrack dialog (tracks.Choice), None: Cancel or never asked
         self._still_frame = None                        # the frame whose picture ffmpeg put into the preview (None: VLC shows the picture)
         self._aspect_fn = display_aspect               # proportions of the picture as a player shows it
@@ -787,7 +788,9 @@ class frmMain(frmMainBase):
         if self.segment is None:
             return
         value = self.Slider1.value()
-        if self.still_mode():
+        if self._preview_held:
+            pass                                                    # (duplicate_segment: the preview is not touched until the search is over)
+        elif self.still_mode():
             self.show_still(value)                                  # the film is stopped: the picture comes from ffmpeg, VLC is not asked
         else:
             self.player.set_time(self.f2t(value))
@@ -809,7 +812,10 @@ class frmMain(frmMainBase):
                 and self.player.is_started and not self.player.is_playing)
 
     def display_frame(self, frame: int) -> None:
-        """The picture at `frame` while the film is stopped: from ffmpeg (still_mode) or by a jump of VLC."""
+        """The picture at `frame` while the film is stopped: from ffmpeg (still_mode) or by a jump of VLC. Not while the preview is held (duplicate_segment)."""
+        if self._preview_held:
+            debug_log(f"display frame {frame}: not shown, the preview is held until the search is over")
+            return
         if self.still_mode():
             debug_log(f"display frame {frame}: picture from ffmpeg")
             self.show_still(frame)
@@ -2142,8 +2148,9 @@ class frmMain(frmMainBase):
         self.refresh_list()
         self._save()
         self.lblText_Upd()
+        self._preview_held = True                                    # the new segment is NOT played in VLC now (that was heard and seen during the search), but at the end of it
         self.lvwSegments.select_row(self.current)
-        self.lvwSegments_Click()                                     # load the preview, show marker A
+        self.lvwSegments_Click()                                     # load the preview (the timeline shows marker A); VLC shows nothing yet
         pause = int(self.options.get("pause", 160))
         target = min(new.total_frames, new.start + round(pause * float(new.fps)))
         self._go(target)
@@ -2152,8 +2159,10 @@ class frmMain(frmMainBase):
         # are still in the list (e.g. from earlier tests), that should not prevent the new
         # segment from finding its movie start.
         debug_log(f"duplicate: searching for the start of the movie from frame {self.shown(target)} (several sources: {self.multiple()})")
-        debug_log(lambda: f"duplicate: the new segment is shown, starting the search ({self.player.describe()})")
+        debug_log(lambda: f"duplicate: the preview is held, starting the search ({self.player.describe()})")
         self.mnuEnd_Click()
+        if not self._seek_running():
+            self.release_preview(True)                               # no search was started (it said why): show the picture at the target now
 
     # ------------------------------------------------------------------ Seeking movie and commercials
     def logo_reference(self, seg: Segment):
@@ -2437,17 +2446,33 @@ class frmMain(frmMainBase):
                  "frame where the logo is clearly visible.")
 
     def _run_job(self, job, message: str, on_done) -> None:
-        """Work in the background with a wait dialog ("<message>, please wait...") and cancel; on_done(result) in the Qt thread. The sound of the preview is held off
-        meanwhile (Player.hold_mute)."""
+        """Work in the background with a wait dialog ("<message>, please wait...") and cancel; on_done(result) in the Qt thread. A held preview (duplicate_segment) is
+        released when the job is over: before on_done (which shows the result), or, if it failed or was cancelled, by showing the picture at the slider."""
         worker = seek.SeekWorker(job)
         dialog = self.wait_dialog(message, worker.cancel)
         worker.progress.connect(lambda text: getattr(dialog, "set_text", lambda t: None)(f"{message}, please wait...\n{text}"))
-        worker.done.connect(lambda result: (self.player.hold_mute(False), dialog.close(), on_done(result)))
-        worker.failed.connect(lambda text: (self.player.hold_mute(False), dialog.close(), self.msg(f"{message} failed: {text}")))
-        worker.finished.connect(lambda: self.player.hold_mute(False))        # (whatever way it ends: cancel, error, done)
+        worker.done.connect(lambda result: (self.release_preview(False), dialog.close(), on_done(result)))
+        worker.failed.connect(lambda text: (self.release_preview(True), dialog.close(), self.msg(f"{message} failed: {text}")))
+        worker.finished.connect(self.worker_finished)                 # (a bound method: it runs in the Qt thread, also after a cancel, which emits nothing else)
         self._seek_worker = worker
-        self.player.hold_mute(True)                                   # no sound from the preview while the program searches
         worker.start()
+
+    def worker_finished(self) -> None:
+        self.release_preview(True)
+
+    def _seek_running(self) -> bool:
+        """Is a search (background job) running?"""
+        return self._seek_worker is not None and self._seek_worker.isRunning()
+
+    def release_preview(self, show: bool) -> None:
+        """Ends the hold of the preview (see duplicate_segment). show: also show the picture at the slider position, which is what is wanted when the job
+        ended without a result (cancelled, failed, not started); the result of a search is shown by its own handler."""
+        if not self._preview_held:
+            return
+        self._preview_held = False
+        debug_log(f"preview released (show the picture at the slider: {show})")
+        if show and self.segment is not None:
+            self.display_frame(self.Slider1.value())
 
     # ------------------------------------------------------------------ Auto crop (Ctrl+R)
     def mnuAutoCrop_Click(self):

@@ -89,10 +89,6 @@ class Player(QtCore.QObject):
     def set_volume(self, percent: int) -> None:
         raise NotImplementedError
 
-    def hold_mute(self, on: bool) -> None:
-        """The sound stays off as long as the program works in the background (a search): hold_mute(True) ... hold_mute(False). Nothing that the player does itself
-        (the sound of an approach to a position is muted and unmuted again) can switch it on in between."""
-
     def set_aspect(self, ratio: str) -> None:
         raise NotImplementedError
 
@@ -188,12 +184,6 @@ class FakePlayer(Player):
 
     def preview_image(self):
         return getattr(self, "preview", None)
-
-    held = False                                                 # in the test: the sound is held off (hold_mute)
-
-    def hold_mute(self, on: bool) -> None:
-        self.held = bool(on)
-        self.log.append(f"hold_mute {bool(on)}")
 
     supports_images = True
 
@@ -322,25 +312,13 @@ class VlcPlayer(Player):
             debug_log(f"seekable: jumping to {self._awaiting_position} ms")
             self.mp.set_time(self._awaiting_position)
 
-    _held = False                                                # the sound is held off while the program searches (hold_mute)
-
     def _mute(self, on: bool) -> None:
-        """Mute the sound while approaching a position (only works if the audio output already exists). A sound that is held off (hold_mute) stays off."""
+        """Mute the sound while approaching a position (only works if the audio output already exists)."""
         try:
-            self.mp.audio_set_mute(bool(on) or self._held)
+            self.mp.audio_set_mute(bool(on))
             self._muted = bool(on)
         except Exception:
             self._muted = False
-
-    def hold_mute(self, on: bool) -> None:
-        """The sound stays off as long as the program searches: the approach to a position (show_at) muted the sound and unmuted it again, which would also have let
-        the sound out during a search."""
-        self._held = bool(on)
-        debug_log(f"hold_mute {bool(on)}")
-        try:
-            self.mp.audio_set_mute(self._held or self._muted)
-        except Exception:
-            pass
 
     def shutdown(self) -> None:
         """Orderly shutdown: first detach the callbacks, then stop (waits until VLC no longer draws the picture),
@@ -435,8 +413,6 @@ class VlcPlayer(Player):
         self._muted = False
         self._watch_token += 1
         self._new_media_player()
-        if self._held:
-            self.hold_mute(True)
         self._after_recover()
         if self._path and self._last_show is not None:
             self.show_at(self._last_show)

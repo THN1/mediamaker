@@ -3,12 +3,13 @@
 ## 0.7 (in progress)
 
 - Version number set to 0.7-dev.
-- **No sound from the preview while the program searches** (instead of the wait for the preview that was built and taken out again, see below). `Player.hold_mute(True/False)`: the memory player
-  keeps VLC muted as long as a background job with the blue wait window runs (`_run_job`: searches, auto crop, dedup ...), released when the job is done, failed or cancelled
-  (`finished`); the mute of the approach to a position (`_mute`) cannot switch it on in between, and a new media player after a recovery is muted again. Note: the search only reports TEXT to the
-  wait window (`SeekWorker.progress`), it does not move the slider or the preview; the debug log of the user shows no VLC event between "search started" and the result.
-- **The wait for the preview after duplicating a segment is out again** (the commits 6bfabd0, f8d2b61, 0ce2ae6 and a7e8cc5: `after_preview_settled`, `Player.settled`, `picture_idle_ms`,
-  `select_segment(False)`, `set_timeline_marker`, their tests): it did not change what the user saw. The logging of ce92d0c stays.
+- **Duplicate segment: VLC does not show the new segment during the search, but at the end of it.** Debug logs of the user showed that VLC was sent to the new segment twice before the search
+  (`show_at` for marker A of the new segment, then at once for the place after the pause) and played it for a moment (picture and sound), while the search for the end of the commercial ran.
+  `duplicate_segment` now HOLDS the preview (`_preview_held`): the slider and `display_frame` do not touch VLC until the search is over; the list, the slider and the timeline (marker A) are
+  set up as before. The search shows its result as before (`seek_done`); if it fails, is cancelled (only `finished` is emitted then) or is not started at all, the picture at the slider position
+  is shown (`release_preview`, `worker_finished`). Before this, three other attempts were made and taken out again because they changed nothing for the user: a wait until the preview was quiet
+  (`after_preview_settled`, `Player.settled`, `picture_idle_ms`; commits 6bfabd0, f8d2b61, 0ce2ae6, a7e8cc5) and the muting of the sound while a job runs (`hold_mute`; commit 160fb37). The
+  logging of ce92d0c stays. Note: the search itself only reports text to the wait window; it does not move the slider or the preview.
 - **More in the debug log** (`MEDIAMAKER_DEBUG=1`, file `mediamaker_debug.log` in the program folder): the time has milliseconds now (`log_line`), and the steps of the preview are logged:
   `display frame` (picture from ffmpeg or `show_at`), `show_at` (also the way without flags: "the medium is started already"), "VLC plays: pausing", "position ... reached", "duplicate: ...
   starting the search" and "search started", each with `Player.describe()` (state, playing, time, flags of VLC). The description is only made

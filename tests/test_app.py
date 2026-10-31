@@ -6413,60 +6413,68 @@ def test_debug_log_lines(tmp, videos):
     print("Debug log: OK (milliseconds, description of the player)")
 
 
-def test_search_mutes(tmp, videos):
-    """While the program searches (a background job with the blue wait window) the sound of the preview is held off, however the job ends; the sound of the approach to a
-    position (muted, unmuted) cannot switch it on in between."""
-    import player as pl
+def test_duplicate_preview(tmp, videos):
+    """After duplicating a segment VLC does not show the new segment while the search for the end of the commercial runs (that was heard and seen), but at the
+    end of it: the found picture; if the search fails, is cancelled or is not started, the picture at the slider."""
     import seek
     from mediaprobe import first_frame_number
-    win = seek_window(tmp, videos, ("sample2.ts",), workdir="mutewin", first_fn=first_frame_number)
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="dupprev", first_fn=first_frame_number)
     player = win.player
-    # --- a search that ends normally
-    win.segments[0].end = 60
-    player.log.clear()
-    win.mnuEnd_Click()
-    holds = [l for l in player.log if l.startswith("hold_mute")]
-    check(holds[:1] == ["hold_mute True"] and holds[-1] == "hold_mute False" and not player.held, f"search: sound held off, then released: {holds}")
-    # --- a job that fails
     real_run = seek.SeekWorker.run
-    seek.SeekWorker.run = lambda self: self.failed.emit("boom")
-    try:
+    seen = {}
+
+    def run_noting(self):                                                    # what the preview looked like in the middle of the search
+        seen["shows"] = [l for l in player.log if l.startswith("show_at")]
+        seen["time"] = player.time
+        seen["held"] = win._preview_held
+        seen["slider"] = win.Slider1.value()
+        return real_run(self)
+
+    def duplicate():
+        win.segments[-1].end = 60
+        win.current = len(win.segments) - 1
         player.log.clear()
-        win.messages.clear()
-        win._run_job(None, "Test job", lambda result: None)
-        holds = [l for l in player.log if l.startswith("hold_mute")]
-        check(holds[0] == "hold_mute True" and holds[-1] == "hold_mute False" and not player.held and win.messages[-1] == "Test job failed: boom", f"failing job: sound back on: {holds} {win.messages[-1:]}")
+        seen.clear()
+        win.cmdCommand_Click(4)
+    # --- a search that finds something
+    seek.SeekWorker.run = run_noting
+    try:
+        duplicate()
     finally:
         seek.SeekWorker.run = real_run
-    # --- the real player (simulated VLC): the held sound stays off when the approach unmutes
-    sim = SimVlc()
-    old = sys.modules.get("vlc")
-    sys.modules["vlc"] = sim.module
+    after = [l for l in player.log if l.startswith("show_at")]
+    check(seen["held"] and seen["shows"] == [] and seen["time"] == 0 and seen["slider"] > win.segments[-1].start,
+          f"during the search: the preview is held, VLC was not sent anywhere (no show_at, the new medium stands at 0), but the slider is at the target: {seen}")
+    check(len(after) == 1 and not win._preview_held, f"at the end of the search: the found picture is shown, once: {after}")
+    check(player.time == win.f2t(win.Slider1.value()), f"VLC stands at the slider position after the search: {player.time} / {win.f2t(win.Slider1.value())}")
+    # --- the search fails
+    seek.SeekWorker.run = lambda self: (run_noting(self) if False else self.failed.emit("boom"))
     try:
-        real = pl.MemoryVlcPlayer()
-        mp = real.mp
-        real.hold_mute(True)
-        check(mp.muted, "held: the sound is off")
-        real._mute(True)
-        real._mute(False)                                                   # (position reached: the approach unmutes)
-        check(mp.muted and real._held, "the approach cannot switch the held sound on")
-        real.hold_mute(False)
-        check(not mp.muted, "released: the sound is on again")
-        real._mute(True)
-        real.hold_mute(True)
-        real.hold_mute(False)
-        check(mp.muted, "released while the approach still mutes: it stays off until the approach ends")
-        real._mute(False)
-        check(not mp.muted, "the approach ends: the sound is on")
-        real.hold_mute(True)
-        real.recover("test") if hasattr(real, "recover") else None
-        check(real.mp.muted or not hasattr(real, "recover"), "after a recovery (a new media player) the held sound is still off")
+        win.messages.clear()
+        duplicate()
     finally:
-        if old is not None:
-            sys.modules["vlc"] = old
-        else:
-            sys.modules.pop("vlc", None)
-    print("Search without sound: OK (search, failing job, real player)")
+        seek.SeekWorker.run = real_run
+    shows = [l for l in player.log if l.startswith("show_at")]
+    check(not win._preview_held and len(shows) == 1 and win.messages[-1].endswith("failed: boom") and player.time == win.f2t(win.Slider1.value()),
+          f"failed search: the picture at the slider is shown, once: {shows} {win.messages[-1:]}")
+    # --- the search is cancelled (nothing is emitted, only finished)
+    seek.SeekWorker.run = lambda self: None
+    try:
+        duplicate()
+    finally:
+        seek.SeekWorker.run = real_run
+    shows = [l for l in player.log if l.startswith("show_at")]
+    check(not win._preview_held and len(shows) == 1 and player.time == win.f2t(win.Slider1.value()), f"cancelled search: the picture at the slider is shown, once: {shows}")
+    # --- no search is started at all
+    win.mnuEnd_Click = lambda: None
+    duplicate()
+    shows = [l for l in player.log if l.startswith("show_at")]
+    check(not win._preview_held and len(shows) == 1, f"no search started: the picture at the target is shown at once, once: {shows}")
+    del win.mnuEnd_Click
+    # --- the hold does not leak: a normal jump of the slider afterwards goes to VLC
+    win._go(win.segments[-1].start + 3)
+    check(player.time == win.f2t(win.segments[-1].start + 3), "afterwards the slider moves VLC as usual")
+    print("Duplicate and preview: OK (held during the search, shown at the end, released if there is no result)")
 
 
 def test_counting_note(tmp, videos):
@@ -6646,7 +6654,7 @@ def main():
     test_multitrack_window(tmp, sys.argv[1])
     test_batch_run_now(tmp, sys.argv[1])
     test_debug_log_lines(tmp, sys.argv[1])
-    test_search_mutes(tmp, sys.argv[1])
+    test_duplicate_preview(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])
