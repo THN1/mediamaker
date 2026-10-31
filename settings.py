@@ -349,6 +349,5 @@ DEFAULT_TOOLTIPS = {
     "cut_diff": "Seeking with the black border (advanced): min. mean difference (0 to 255) between two frames to count as a hard cut",
     "logo_edge": "Logo detection (advanced): min. grey level difference of neighbouring pixels that counts as an edge",
     "logo_conf": "Logo detection (advanced): min. confidence (0 to 1) for the logo to count as present: the share of the reference edges that is found, minus logo_extra times the density of other edges",
-    "logo_extra": "Logo detection (advanced): weight (0 to 5) of the edges in the logo rectangle that are NOT in the reference logo; 1.0 = a busy picture (hair, textures) does not count as the logo any more; 0 = only "
-                  "the share of the reference edges that is found, as before (then a picture with many edges can reach a confidence of 0.7 without the logo)",
+    "logo_extra": "Logo detection (advanced): weight (0 to 5) of the edges in the logo rectangle that are NOT in the reference logo; 1.0 = a picture with many edges (fine stripes, textures) does not count as the logo any more; 0 = only the share of the reference edges that is found, as before (then a picture with many edges can reach a confidence of 0.7 without the logo)",
 }

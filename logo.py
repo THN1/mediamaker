@@ -173,7 +173,7 @@ def ref_from_rect(frame_rgb: np.ndarray, rect: tuple[int, int, int, int], bin_mi
 def logo_confidence(frame_rgb: np.ndarray, ref: LogoRef, bin_min: int = BIN_MIN, extra: float = EXTRA_WEIGHT) -> float:
     """How sure it is that the logo is in the rectangle of this frame (0..1): the share of the reference edges that also occur there, MINUS `extra` times the density of the
     edges that are not in the reference (the share of the other pixels of the rectangle that are edges). The share alone (extra = 0, as in VB6) is high in every picture with
-    many edges: a close-up of hair (vertical strands) has about half of the reference edges by chance and counted as 'logo present' (confidence up to 0.72); the logo itself
+    many edges: a picture with many vertical edges (fine stripes, textures) has about half of the reference edges by chance and counted as 'logo present' (confidence up to 0.72); the logo itself
     on its own or on an ordinary background has almost no other edges. Measured with a real recording: without the logo at most 0.12, with the logo at least 0.53 (0.28 at
     80 % opacity); the minimum `logo_conf` of 0.2 is unchanged."""
     left, top, right, bottom = ref.rect

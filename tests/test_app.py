@@ -6727,7 +6727,7 @@ def test_search_end_unreadable(tmp, videos):
 
 
 def test_logo_busy_pictures(tmp, videos):
-    """A close-up of hair (vertical strands) has many edges, about half of the reference edges are found by chance: 'logo present' with a confidence of up to 0.72 (a user's search
+    """A picture with many vertical edges (fine stripes) has many edges, about half of the reference edges are found by chance: 'logo present' with a confidence of up to 0.72 (a user's search
     for the end of a commercial stopped there). The confidence is the share of the reference edges that is found MINUS the density of the other edges now. The data are the edge
     maps of the logo rectangle of 60 s of a real commercial break (RTL, 73 x 36 pixels; only edge maps, no pictures)."""
     import logo
@@ -6771,7 +6771,7 @@ def test_logo_busy_pictures(tmp, videos):
     import profiles
     check(settings.default_options()["logo_extra"] == "1.0" and "logo_extra" in settings.DEFAULT_TOOLTIPS and "logo_extra" in profiles.HIDDEN_OPTIONS
           and profiles.validate_options({"logo_extra": "0"}) == [] and len(profiles.validate_options({"logo_extra": "9"})) == 1, "the option logo_extra (advanced, only in the INI file)")
-    print("Logo and busy pictures: OK (hair frames, logo on the same backgrounds, option)")
+    print("Logo and busy pictures: OK (frames with many edges, logo on the same backgrounds, option)")
 
 
 def test_counting_note(tmp, videos):

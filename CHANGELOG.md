@@ -14,13 +14,13 @@ break; this cannot be told apart by the logo alone.
 
 - Version number was 0.7-dev.
 - **Logo detection: a busy picture no longer counts as the logo** (`logo.logo_confidence`, new advanced option `logo_extra`, default 1.0, only in the INI file). A user's debug package (60 s of
-  a commercial break of an RTL recording, reference logo made with the button L) showed why the search for the end of the commercial stopped at a close-up of hair: the confidence was only the
-  share of the reference edges that is found in the logo rectangle (73 x 36 pixels); vertical strands of hair have so many edges that about half of them are hit by chance (0.47 to 0.72; the
+  a commercial break of an RTL recording, reference logo made with the button L) showed why the search for the end of the commercial stopped too early: it got confused by patterns similar to the searched-for logo. The confidence was only the
+  share of the reference edges that is found in the logo rectangle (73 x 36 pixels); a picture with many vertical edges (fine stripes, textures) has so many that about half of the reference edges are hit by chance (0.47 to 0.72; the
   minimum `logo_conf` is 0.2). My recalculation of the package gave exactly the 28 values that the search had logged. In the 1504 frames of the clip 92 frames, in four runs, counted as
   'logo present'. Now the confidence is that share MINUS `logo_extra` times the density of the edges that are not in the reference (`found - extra * others`, at least 0): with the weight 1.0
   no frame of the clip reaches more than 0.118 (before 0.721, 0 frames above 0.2 instead of 92). With the logo inserted into the same frames (reference picture, three kinds of insertion): at least
   0.53 with the whole logo box opaque, 0.40 with only the tiles opaque, 0.28 with the tiles at 80 % opacity; only at 65 % opacity and a very busy background single frames fall below 0.2 (the search
-  only has to meet the logo in some frame of the movie). Weights below 0.75 leave the hair above the minimum, 1.25 and more cost recognition of a transparent logo; `logo_extra = 0` is the old
+  only has to meet the logo in some frame of the movie). Weights below 0.75 leave such pictures above the minimum, 1.25 and more cost recognition of a transparent logo; `logo_extra = 0` is the old
   behaviour. Test data: `tests/data/logo_false_positives.npz` (the edge maps of 327 frames, no pictures) and the test `test_logo_busy_pictures`, which fails with the weight 0.
   NOT solved by this: the logo that appears again INSIDE the commercial break (the user's frame 86875); a logo alone cannot tell it from the end of the break.
 - **A search no longer fails when the end of the recording cannot be read, and says when it found nothing.** A search for the end of a commercial with `crop = 73` ran through the whole rest of a
