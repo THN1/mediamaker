@@ -6418,7 +6418,13 @@ def test_duplicate_preview(tmp, videos):
     end of it: the found picture; if the search fails, is cancelled or is not started, the picture at the slider."""
     import seek
     from mediaprobe import first_frame_number
-    win = seek_window(tmp, videos, ("sample2.ts",), workdir="dupprev", first_fn=first_frame_number)
+    import numpy as np
+    fetched = []
+
+    def fake_frame(path, frame, fps):
+        fetched.append(frame)
+        return np.full((12, 16, 3), 7, np.uint8)
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="dupprev", first_fn=first_frame_number, frame_fn=fake_frame)
     player = win.player
     real_run = seek.SeekWorker.run
     seen = {}
@@ -6428,6 +6434,8 @@ def test_duplicate_preview(tmp, videos):
         seen["time"] = player.time
         seen["held"] = win._preview_held
         seen["slider"] = win.Slider1.value()
+        seen["images"] = player.log.count("image")
+        seen["fetched"] = list(fetched)
         return real_run(self)
 
     def duplicate():
@@ -6435,6 +6443,7 @@ def test_duplicate_preview(tmp, videos):
         win.current = len(win.segments) - 1
         player.log.clear()
         seen.clear()
+        fetched.clear()
         win.cmdCommand_Click(4)
     # --- a search that finds something
     seek.SeekWorker.run = run_noting
@@ -6446,6 +6455,10 @@ def test_duplicate_preview(tmp, videos):
     check(seen["held"] and seen["shows"] == [] and seen["time"] == 0 and seen["slider"] > win.segments[-1].start,
           f"during the search: the preview is held, VLC was not sent anywhere (no show_at, the new medium stands at 0), but the slider is at the target: {seen}")
     check(len(after) == 1 and not win._preview_held, f"at the end of the search: the found picture is shown, once: {after}")
+    check(seen["images"] == 1 and seen["fetched"] == [win.segments[-1].start], f"during the search: instead of a black picture a single picture of marker A (frame {win.segments[-1].start}) from ffmpeg: {seen['images']} {seen['fetched']}")
+    shown = player.log.count("image")
+    win.still_ready(win.segments[-1].path, win.segments[-1].start, "late")
+    check(player.log.count("image") == shown and win._still_frame is None, "a picture of marker A that arrives after the search is ignored")
     check(player.time == win.f2t(win.Slider1.value()), f"VLC stands at the slider position after the search: {player.time} / {win.f2t(win.Slider1.value())}")
     # --- the search fails
     seek.SeekWorker.run = lambda self: (run_noting(self) if False else self.failed.emit("boom"))

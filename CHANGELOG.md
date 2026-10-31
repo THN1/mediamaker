@@ -10,6 +10,8 @@
   is shown (`release_preview`, `worker_finished`). Before this, three other attempts were made and taken out again because they changed nothing for the user: a wait until the preview was quiet
   (`after_preview_settled`, `Player.settled`, `picture_idle_ms`; commits 6bfabd0, f8d2b61, 0ce2ae6, a7e8cc5) and the muting of the sound while a job runs (`hold_mute`; commit 160fb37). The
   logging of ce92d0c stays. Note: the search itself only reports text to the wait window; it does not move the slider or the preview.
+  While the preview is held (memory player), instead of the black picture a SINGLE picture of marker A of the new segment is shown, read by ffmpeg like the pictures of a stopped film (`StillPreview`);
+  VLC is not asked. It is dropped when the search is over.
 - **More in the debug log** (`MEDIAMAKER_DEBUG=1`, file `mediamaker_debug.log` in the program folder): the time has milliseconds now (`log_line`), and the steps of the preview are logged:
   `display frame` (picture from ffmpeg or `show_at`), `show_at` (also the way without flags: "the medium is started already"), "VLC plays: pausing", "position ... reached", "duplicate: ...
   starting the search" and "search started", each with `Player.describe()` (state, playing, time, flags of VLC). The description is only made

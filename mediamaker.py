@@ -2155,6 +2155,9 @@ class frmMain(frmMainBase):
         target = min(new.total_frames, new.start + round(pause * float(new.fps)))
         self._go(target)
         self.show_frame(target)
+        if self.player.supports_images:                              # instead of the black picture: a single picture of marker A, read by ffmpeg (VLC is not asked)
+            self._still_frame = new.start
+            self.stills.request(new.path, new.start, new.fps)
         # In VB6 the search only ran if all segments came from the same file. Here it always runs: if segments of other files
         # are still in the list (e.g. from earlier tests), that should not prevent the new
         # segment from finding its movie start.
@@ -2470,6 +2473,8 @@ class frmMain(frmMainBase):
         if not self._preview_held:
             return
         self._preview_held = False
+        self._still_frame = None                                      # the single picture of marker A is over (one that arrives late is ignored)
+        self.stills.cancel()
         debug_log(f"preview released (show the picture at the slider: {show})")
         if show and self.segment is not None:
             self.display_frame(self.Slider1.value())
