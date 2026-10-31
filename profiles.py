@@ -29,6 +29,7 @@ PRESETS = {
     "restore_backup": ["on", "off"],
     "copy_mode_notice": ["on", "off"],
     "paused_preview": ["vlc", "ffmpeg"],
+    "search_pictures": ["on", "off"],
 }
 
 
@@ -87,7 +88,7 @@ HIDDEN_OPTIONS = {"logo_edge", "logo_conf", "cut_diff"}   # for advanced users o
 # grouping of the options dialog: (tab, keys)
 OPTION_GROUPS = (
     ("Borders", ("crop", "blackness", "allowance", "border_tol")),
-    ("Seeking", ("pause", "dedup", "step_end", "step_next", "cut_window")),
+    ("Seeking", ("pause", "dedup", "step_end", "step_next", "cut_window", "search_pictures")),
     ("Logo", ("overlay_opacity",)),
     ("Audio/Subtitles", ("audio", "multitrack", "aflags")),
     ("Batch", ("path_map", "batch")),
@@ -134,6 +135,8 @@ def validate_options(o: dict) -> list[str]:
             errors.append(f'"{key}" must not contain double quotes.')
     if "player" in o and o["player"] not in ("memory", "embed"):
         errors.append('"player" must be memory or embed.')
+    if "search_pictures" in o and o["search_pictures"] not in ("on", "off"):
+        errors.append('"search_pictures" must be on or off.')
     if "paused_preview" in o and o["paused_preview"] not in ("vlc", "ffmpeg"):
         errors.append('"paused_preview" must be vlc or ffmpeg.')
     if "copy_mode_notice" in o and o["copy_mode_notice"] not in ("on", "off"):

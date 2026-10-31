@@ -6490,6 +6490,99 @@ def test_duplicate_preview(tmp, videos):
     print("Duplicate and preview: OK (held during the search, shown at the end, released if there is no result)")
 
 
+def test_search_pictures(tmp, videos):
+    """While a search steps in jumps of at least 10 frames the preview shows the pictures that the search reads anyway (no second read: measured +1 % against +75 %)."""
+    import numpy as np
+    import border
+    import logo
+    import seek
+    from fractions import Fraction as F
+    from profiles import OPTION_GROUPS, validate_options
+    from settings import DEFAULT_TOOLTIPS, default_options
+    from mediaprobe import first_frame_number
+    check(default_options()["search_pictures"] == "on" and "search_pictures" in dict(OPTION_GROUPS)["Seeking"] and validate_options({"search_pictures": "off"}) == []
+          and len(validate_options({"search_pictures": "x"})) == 1 and "search_pictures" in DEFAULT_TOOLTIPS, "the option search_pictures (on at first)")
+    # --- the step width of every probe is reported (where_border, where_logo)
+    steps, probes = [], []
+
+    def border_of(n):
+        probes.append(n)
+        return 73 if n >= 1163 else 0
+    border.where_border(border_of, 100, 2010, 73, True, 100, 3, probe=steps.append)
+    check(len(steps) == len(probes) and steps[0] == 100 and steps == sorted(steps, reverse=True) and set(steps) == {100, 10, 1}, f"where_border reports the step width of each probe: {steps}")
+    lsteps, lprobes = [], []
+    logo.where_logo(lambda n: (lprobes.append(n), 0.9 if n >= 1163 else 0.0)[1], 100, 2010, True, 100, 0.2, probe=lsteps.append)
+    check(len(lsteps) == len(lprobes) and set(lsteps) == {100, 10, 1}, f"where_logo too: {lsteps}")
+    # --- border_at and confidence_at give the picture they have read
+    got = []
+    real_grab_b, real_grab_l, real_conf = border.grab_frame, logo.grab_frame, logo.logo_confidence
+    picture = np.zeros((20, 30, 3), np.uint8)
+    border.grab_frame = lambda *a, **k: picture
+    logo.grab_frame = lambda *a, **k: picture
+    logo.logo_confidence = lambda img, ref, edge: 0.5
+    try:
+        plain = border.border_at("x.ts", 7, F(25), {})
+        with_cb = border.border_at("x.ts", 7, F(25), {}, on_image=lambda f, img: got.append((f, img is picture)))
+        check(plain == with_cb and got == [(7, True)], f"border_at hands over the picture it read, the result is the same: {got}")
+        got.clear()
+        check(logo.confidence_at("x.ts", 9, F(25), None, {}, on_image=lambda f, img: got.append((f, img is picture))) == 0.5 and got == [(9, True)], "confidence_at too")
+    finally:
+        border.grab_frame, logo.grab_frame, logo.logo_confidence = real_grab_b, real_grab_l, real_conf
+    # --- seek_border passes the step width on; a border function without on_image still works
+    class Control:
+        def __init__(self): self.pictures = []; self.notes = []
+        def __call__(self): return False
+        def note(self, text): self.notes.append(text)
+        def picture(self, frame, img, step): self.pictures.append((frame, step))
+    def border_fn(path, n, fps, opts, on_image=None):
+        if on_image:
+            on_image(n, picture)
+        return 73 if n >= 1163 else 0
+    control = Control()
+    result = seek.seek_border("x.ts", F(25), 2010, 100, 73, True, 100, {"cut_window": 0}, border_fn, control)
+    check(result == 1163 and len(control.pictures) == len(control.notes) and control.pictures[0][1] == 100 and {s for _, s in control.pictures} == {100, 10, 1}, f"seek_border: every probe reports (frame, step width): {control.pictures[:4]}")
+    control2 = Control()
+    seek.seek_border("x.ts", F(25), 2010, 100, 73, True, 100, {"cut_window": 0}, lambda path, n, fps, opts: 73 if n >= 1163 else 0, control2)
+    check(control2.pictures == [] and control2.notes, "a border function without on_image: no pictures, no error")
+    # --- the worker emits only pictures with a step width of at least 10
+    worker = seek.SeekWorker(lambda control: (control.picture(5, picture, 100), control.picture(6, picture, 1), control.picture(7, picture, 10), 3)[-1])
+    emitted = []
+    worker.picture.connect(lambda frame, img: emitted.append(frame))
+    worker.start()
+    check(emitted == [5, 7] and seek.PICTURE_MIN_STEP == 10, f"the worker passes on the pictures of step width >= 10 only: {emitted}")
+    # --- the main window: the preview shows them (memory player only), the option switches it off
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="searchpics", first_fn=first_frame_number)
+    player = win.player
+    win.segments[0].end = 20
+    calls = []
+
+    def fake_border(path, n, fps, opts, on_image=None):
+        calls.append(n)
+        if on_image:
+            on_image(n, np.zeros((12, 16, 3), np.uint8))
+        return 72 if n >= 140 else 0
+    win._border_fn = fake_border
+    win.settings.set_option("step_end", "4")
+    win.settings.set_option("cut_window", "0")
+    player.log.clear()
+    win.mnuEnd_Click()
+    big = player.log.count("image")
+    check(len(calls) > big >= 3, f"the search shows the pictures of its large steps in the preview: {big} of {len(calls)} probes")
+    check(getattr(player, "preview", None) is not None and player.preview._args[1:3] == (16, 12), "(it is the picture that the search read: 16 x 12 here)")
+    check(any(l.startswith("show_at") for l in player.log), "and at the end VLC jumps to the result as before")
+    win.settings.set_option("search_pictures", "off")
+    calls.clear()
+    player.log.clear()
+    win.mnuEnd_Click()
+    check(player.log.count("image") == 0 and calls, "option off: no pictures")
+    win.settings.set_option("search_pictures", "on")
+    player.supports_images = False
+    player.log.clear()
+    win.mnuEnd_Click()
+    check(player.log.count("image") == 0, "a player that cannot show pictures of its own (embed): nothing")
+    print("Search pictures: OK (steps, hand-over of the picture, worker, preview, option)")
+
+
 def test_counting_note(tmp, videos):
     """The note "counting frames" in the title goes away whenever a counting ends: with a result, cancelled, with an error, or when the file cannot be read."""
     import mediamaker
@@ -6668,6 +6761,7 @@ def main():
     test_batch_run_now(tmp, sys.argv[1])
     test_debug_log_lines(tmp, sys.argv[1])
     test_duplicate_preview(tmp, sys.argv[1])
+    test_search_pictures(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])

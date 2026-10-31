@@ -5,6 +5,8 @@ refines it by a factor of 10 each time until it reaches 1. It runs in the backgr
 """
 from __future__ import annotations
 
+import inspect
+
 from typing import Optional, Callable
 
 from PySide6 import QtCore
@@ -17,6 +19,7 @@ from logo import confidence_at, where_logo
 from player import debug_log
 
 DEFAULT_STEP_END_S = 40              # step width for "Seek end of commercial" in seconds (VB6: 1000 frames at 25 FPS)
+PICTURE_MIN_STEP = 10               # the preview shows the pictures that the search reads as long as the step width is at least this many frames
 DEFAULT_STEP_NEXT_S = 240            # step width for "Seek next commercial" in seconds (VB6: 6000 frames at 25 FPS)
 
 
@@ -30,6 +33,14 @@ def step_seconds(opts: dict, end: bool) -> float:
         if pause > 0:
             seconds = min(seconds, pause)
     return seconds
+
+
+def _accepts(fn, name: str) -> bool:
+    """Does the function take the keyword `name`? (The search functions of the tests do not take on_image.)"""
+    try:
+        return name in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def step_frames(seconds, fps) -> int:
@@ -81,13 +92,16 @@ def seek_border(path, fps, total, pos, value, equal, stepping, opts, border_fn=b
         wait window (cancel.note) and in the log.
     """
     note = getattr(cancel, "note", None)
+    picture = getattr(cancel, "picture", None)                  # the preview shows the pictures that are read anyway (no second read)
+    step_now = {"width": stepping}
+    images = picture is not None and _accepts(border_fn, "on_image")
     debug_log(f"border search from frame {shown(pos)}: looking for {'border about' if equal else 'border different from'} {value} "
               f"(tolerance {int(opts.get('border_tol', 3))}), step width {stepping}, end at {shown(total)}")
 
     def border_of(n: int) -> int:
         if cancel():
             raise SeekCancelled()
-        found = border_fn(path, n, fps, opts)
+        found = border_fn(path, n, fps, opts, on_image=lambda frame, img: picture(frame, img, step_now["width"])) if images else border_fn(path, n, fps, opts)
         if stats is not None:
             stats.setdefault("borders", []).append((n, int(found)))
         text = f"frame {shown(n)}: border {found} (looking for {'about ' if equal else 'not '}{value})"
@@ -96,7 +110,7 @@ def seek_border(path, fps, total, pos, value, equal, stepping, opts, border_fn=b
             note(text)
         return found
     tolerance = int(opts.get("border_tol", 3))
-    result = where_border(border_of, pos, total, value, equal, stepping, lim=tolerance)
+    result = where_border(border_of, pos, total, value, equal, stepping, lim=tolerance, probe=lambda width: step_now.__setitem__("width", width))
     debug_log(f"border search: result frame {shown(result)}")
     window = int(opts.get("cut_window", 5))
     if window > 0:
@@ -120,11 +134,14 @@ def seek_logo(path, fps, total, pos, ref, equal, stepping, opts, conf_fn=confide
             raise SeekCancelled()
 
     note = getattr(cancel, "note", None)
+    picture = getattr(cancel, "picture", None)
+    step_now = {"width": stepping}
+    images = picture is not None and _accepts(conf_fn, "on_image")
     debug_log(f"logo search from frame {shown(pos)}: looking for {'logo present' if equal else 'logo missing'}, step width {stepping}")
 
     def conf_of(n: int) -> float:
         check()
-        found = conf_fn(path, n, fps, ref, opts)
+        found = conf_fn(path, n, fps, ref, opts, on_image=lambda frame, img: picture(frame, img, step_now["width"])) if images else conf_fn(path, n, fps, ref, opts)
         if stats is not None:
             stats.setdefault("confidences", []).append((n, float(found)))
         text = f"frame {shown(n)}: logo confidence {found:.2f}"
@@ -135,7 +152,7 @@ def seek_logo(path, fps, total, pos, ref, equal, stepping, opts, conf_fn=confide
 
     min_conf = float(opts.get("logo_conf", 0.2))
 
-    result = where_logo(conf_of, pos, total, equal, stepping, min_conf)
+    result = where_logo(conf_of, pos, total, equal, stepping, min_conf, probe=lambda width: step_now.__setitem__("width", width))
     debug_log(f"logo search: result frame {shown(result)}")
     if stats is not None:
         stats["result"] = result
@@ -148,6 +165,7 @@ class SeekWorker(QtCore.QThread):
     done = QtCore.Signal(int)                       # frame found
     failed = QtCore.Signal(str)
     progress = QtCore.Signal(str)                   # intermediate result for the wait window
+    picture = QtCore.Signal(int, object)            # a picture that the search has read (frame, rgb array) while the step width is at least PICTURE_MIN_STEP
 
     def __init__(self, job: Callable[[Callable[[], bool]], int]):
         super().__init__()
@@ -169,6 +187,10 @@ class SeekWorker(QtCore.QThread):
 
             def note(self, text: str) -> None:
                 worker.note(text)
+
+            def picture(self, frame: int, img, step: int) -> None:
+                if step >= PICTURE_MIN_STEP:
+                    worker.picture.emit(int(frame), img)
         try:
             result = self.job(Control())
         except SeekCancelled:

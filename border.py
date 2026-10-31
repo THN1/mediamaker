@@ -5,7 +5,7 @@ Port of border() and where_border() from VB6.
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import Callable
+from typing import Callable, Optional
 
 import numpy as np
 
@@ -27,13 +27,16 @@ def count_black_lines(img: np.ndarray, blackness: int = 12, allowance: int = 100
     return int(over[0]) if over.size else 0
 
 
-def border_at(path: str, frame: int, fps: Fraction, opts: dict, ffmpeg: str = "ffmpeg") -> int:
+def border_at(path: str, frame: int, fps: Fraction, opts: dict, ffmpeg: str = "ffmpeg", on_image=None) -> int:
+    """The black border of a frame. `on_image(frame, rgb)` gets the picture that was read for it (the search shows it in the preview: no second read)."""
     img = grab_frame(path, frame, fps, int(opts.get("floor", 2)), ffmpeg)
+    if on_image is not None:
+        on_image(frame, img)
     return count_black_lines(img, int(opts.get("blackness", 12)), int(opts.get("allowance", 1000)))
 
 
 def where_border(border_of: Callable[[int], int], pos: int, last: int, value: int,
-                 equal: bool, stepping: int, lim: int = 3) -> int:
+                 equal: bool, stepping: int, lim: int = 3, probe: Optional[Callable[[int], None]] = None) -> int:
     """Starting at frame `pos`, searches for the next frame whose border matches `value` (equal=True)
         or differs from it (equal=False). Coarse to fine: large steps; on a hit one step
         back and the step width is reduced until it reaches 1.
@@ -47,6 +50,8 @@ def where_border(border_of: Callable[[int], int], pos: int, last: int, value: in
             stepping = (stepping + 8) // 10          # end of file: only reduce the step width
             continue
         pos += stepping
+        if probe is not None:
+            probe(stepping)                          # (the step width of the frame that is looked at now)
         diff = abs(border_of(pos) - value)
         if (equal and diff < lim) or (not equal and diff > lim):
             pos -= stepping

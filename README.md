@@ -12,7 +12,7 @@ The history and the details of every change are in [CHANGELOG.md](CHANGELOG.md).
 **Cutting**
 - A list of segments (start and end markers) from one or more files; the timeline shows the pictures around the cut point, with
   frame-exact positioning. The segments are joined in the order of the list.
-- *Seek next commercial / end of commercial* look for the pauses that commercials make in a recording (option `pause`); *Dedup scene*
+- *Seek next commercial / end of commercial* look for the pauses that commercials make in a recording (option `pause`; the preview shows the pictures that the search reads, option `search_pictures`); *Dedup scene*
   removes a scene that is repeated at a cut; *Analyze cut point* makes a short test clip around a cut, with the filters of *Save as*,
   and opens it in Avidemux or VLC.
 - *Copy mode* (Edit menu): saves without re-encoding. One video is cut at the next keyframe, several files are joined in full

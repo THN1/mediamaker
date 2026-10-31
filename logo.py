@@ -176,12 +176,16 @@ def logo_confidence(frame_rgb: np.ndarray, ref: LogoRef, bin_min: int = BIN_MIN)
     return ones(edges, ref.edges) / ref.ones if ref.ones else 0.0
 
 
-def confidence_at(path: str, frame: int, fps: Fraction, ref: LogoRef, opts: dict, ffmpeg: str = "ffmpeg") -> float:
-    return logo_confidence(grab_frame(path, frame, fps, int(opts.get("floor", 2)), ffmpeg), ref,
-                           int(opts.get("logo_edge", BIN_MIN)))
+def confidence_at(path: str, frame: int, fps: Fraction, ref: LogoRef, opts: dict, ffmpeg: str = "ffmpeg", on_image=None) -> float:
+    """`on_image(frame, rgb)` gets the picture that was read for it (the search shows it in the preview: no second read)."""
+    img = grab_frame(path, frame, fps, int(opts.get("floor", 2)), ffmpeg)
+    if on_image is not None:
+        on_image(frame, img)
+    return logo_confidence(img, ref, int(opts.get("logo_edge", BIN_MIN)))
 
 
-def where_logo(conf_of: Callable[[int], float], pos: int, last: int, equal: bool, stepping: int, min_conf: float = MIN_CONF) -> int:
+def where_logo(conf_of: Callable[[int], float], pos: int, last: int, equal: bool, stepping: int, min_conf: float = MIN_CONF,
+               probe: Optional[Callable[[int], None]] = None) -> int:
     """Starting at frame `pos`, searches for the first frame WITH logo (equal=True) or WITHOUT logo (equal=False); `last` (the end of the
         movie) is returned if there is none.
 
@@ -192,6 +196,8 @@ def where_logo(conf_of: Callable[[int], float], pos: int, last: int, equal: bool
             stepping = (stepping + 8) // 10          # end of file: only reduce the step width
             continue
         pos += stepping
+        if probe is not None:
+            probe(stepping)
         c = conf_of(pos)
         if (equal and c > min_conf) or (not equal and c < min_conf):
             pos -= stepping

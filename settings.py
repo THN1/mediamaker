@@ -278,7 +278,7 @@ def default_options() -> dict:
             "pause": "160", "detect": "0", "aflags": "", "multitrack": "off",
             "step_end": "40", "step_next": "240", "border_tol": "3", "cut_window": "5",
             "logo_edge": "18", "logo_conf": "0.2", "cut_diff": "30", "path_map": "",
-            "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "file_dialog": "qt", "sessions_dir": "", "avidemux": "", "vlc": "", "terminal": "", "cutpoint_filters": "on", "restore_backup": "on", "copy_mode_notice": "on", "paused_preview": "vlc"}
+            "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "file_dialog": "qt", "sessions_dir": "", "avidemux": "", "vlc": "", "terminal": "", "cutpoint_filters": "on", "restore_backup": "on", "copy_mode_notice": "on", "paused_preview": "vlc", "search_pictures": "on"}
 
 
 # explanations for keys that are still missing in the INI file (section [ToolTipText])
@@ -306,6 +306,9 @@ DEFAULT_TOOLTIPS = {
     'multitrack': 'When set to on, a multitrack selection dialog opens after the name of the file has been chosen (only if the source has more than one audio track or any '
                   'subtitle track), allowing to choose and configure how the audio and/or subtitle track(s) should be processed.',
     # options added in the Python version
+    "search_pictures": "Seeking: on = while the search (end of commercial, next commercial) is still stepping in jumps of at least 10 frames, the preview shows the pictures that the "
+                       "search reads, like a film that runs by (these pictures are read anyway, the search is not slower; player = memory only); off = the preview stays as it is until the "
+                       "search is over; applies at once",
     "paused_preview": "Preview while the film is stopped (player = memory only): vlc = VLC jumps to the slider position (it can get stuck after about ten jumps); ffmpeg = the pictures are "
                       "read by ffmpeg (frame exact, with the same frame numbers as the thumbnails; a little slower, a picture follows the slider with a short delay); Play then jumps VLC to "
                       "the shown position; applies at once",

@@ -1379,7 +1379,7 @@ class frmMain(frmMainBase):
 
     # ------------------------------------------------------------------ Import of a job from the batch file (File => Import, Ctrl+M)
     LOCAL_OPTIONS = {"batch", "player", "dialog_style", "vlc_args", "hide_messages", "overlay_opacity", "file_dialog", "sessions_dir", "avidemux", "vlc", "terminal",
-                     "path_map", "cutpoint_filters"}          # of this computer and of this installation: not taken from a job
+                     "path_map", "cutpoint_filters", "search_pictures"}          # of this computer and of this installation: not taken from a job
 
     def choose_job(self, jobs: list):
         import import_dialog
@@ -2457,11 +2457,24 @@ class frmMain(frmMainBase):
         worker.done.connect(lambda result: (self.release_preview(False), dialog.close(), on_done(result)))
         worker.failed.connect(lambda text: (self.release_preview(True), dialog.close(), self.msg(f"{message} failed: {text}")))
         worker.finished.connect(self.worker_finished)                 # (a bound method: it runs in the Qt thread, also after a cancel, which emits nothing else)
+        if self.options.get("search_pictures", "on") == "on":
+            worker.picture.connect(self.search_picture)
         self._seek_worker = worker
         worker.start()
 
     def worker_finished(self) -> None:
         self.release_preview(True)
+
+    def search_picture(self, frame: int, array) -> None:
+        """A picture that the search has just read for a probe (the step width is still large): shown in the preview instead of what was there, like a film that runs by.
+        It is the picture that was read anyway, so the search is not slower (measured: +1 % against +75 % for a second ffmpeg call per picture). VLC is not asked; at the
+        end of the search it jumps to the result as usual. Only the memory player can show pictures of its own."""
+        if not self.player.supports_images:
+            return
+        self._still_frame = None                                      # the single picture of marker A (duplicate_segment) is out of date now
+        self.stills.cancel()
+        height, width = array.shape[0], array.shape[1]
+        self.player.show_image(QtGui.QImage(array.tobytes(), width, height, width * 3, QtGui.QImage.Format.Format_RGB888).copy())
 
     def _seek_running(self) -> bool:
         """Is a search (background job) running?"""
