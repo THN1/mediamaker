@@ -13,6 +13,9 @@ and a debug log with milliseconds. Still to do: DVD mode, and more tests with se
 break; this cannot be told apart by the logo alone.
 
 - Version number was 0.7-dev.
+- **README: the beginning no longer speaks of TV recordings only.** MediaMaker cuts, unifies and joins videos of many formats and sizes (films, parts of films, clips, TV recordings); the tools
+  for commercials, borders and the station logo are named as the special tools for TV recordings. A new line says that material of different size, frame rate and sound is made uniform by the profile.
+  Also repaired: the words "Dedup scene" had got lost from the description of the search.
 - **Options dialog: "Show advanced options".** The page Logo has the check box "Show advanced options" under `overlay_opacity` (`profiles.ADVANCED_OPTIONS`, `dialogs.edit_pairs(advanced=...)`). It is
   OFF every time the dialog opens; ticked, the rows `logo_conf` and `logo_extra` appear below it and can be changed (hidden, they cannot be edited and their values come back unchanged). If one of
   them is wrong when OK is pressed, the dialog opens again with the check box on (`dialogs.error_in_advanced`). The two values were hidden before (only in the INI file), so that a user did not

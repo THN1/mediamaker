@@ -1,9 +1,12 @@
 # MediaMaker
 
-Cuts TV recordings: removes commercials, black borders and the station logo, joins pieces of several files and writes the result
-as MP4, MKV, AVI or TS, with chapters, several audio tracks and subtitles if wanted. A reimplementation of a VB6 program in
-Python with PySide6; the work is done by `ffmpeg`, the preview is shown with VLC. It runs on Linux (developed on KDE).
-The user interface is still designed in the VB6 IDE and translated to PySide6 with `ui/frm2qt.py`.
+Cuts, unifies and joins videos: films, parts of films, clips and TV recordings, in many formats and sizes. The pieces (segments) can
+come from one or several files; they are brought to one size, frame rate and sound (the *profile*) and written as one file, as MP4, MKV, AVI
+or TS, with chapters, several audio tracks and subtitles if wanted. For TV recordings there are special tools: finding the end of the
+commercial breaks, removing black borders and the station logo.
+
+A reimplementation of a VB6 program in Python with PySide6; the work is done by `ffmpeg`, the preview is shown with VLC. It runs on
+Linux (developed on KDE). The user interface is still designed in the VB6 IDE and translated to PySide6 with `ui/frm2qt.py`.
 
 The history and the details of every change are in [CHANGELOG.md](CHANGELOG.md).
 
@@ -12,11 +15,14 @@ The history and the details of every change are in [CHANGELOG.md](CHANGELOG.md).
 **Cutting**
 - A list of segments (start and end markers) from one or more files; the timeline shows the pictures around the cut point, with
   frame-exact positioning. The segments are joined in the order of the list.
-- *Seek next commercial / end of commercial* look for the pauses that commercials make in a recording (option `pause`; the preview shows every picture that the search reads, option `search_pictures`); *Dedup scene*
-  removes a scene that is repeated at a cut; *Analyze cut point* makes a short test clip around a cut, with the filters of *Save as*,
-  and opens it in Avidemux or VLC.
-  The search uses the black border (option `crop` above 0) or, with `crop = 0`, the station logo (a reference logo made with the button L); improved logo detection:
-  certain disturbances are tolerated and overlooked.
+- Material of different formats, sizes, frame rates and sound can be joined: every segment is scaled to the size of the profile (with black
+  bars, profile parameter `pad`, or stretched), set to its frame rate and its sound is resampled, so that one uniform file results.
+  (Without re-encoding, in *Copy mode*, the pieces must have the same characteristics.)
+- For TV recordings: *Seek next commercial / end of commercial* look for the pauses that commercials make in a recording (option `pause`);
+  the preview shows every picture that the search reads (option `search_pictures`). The search uses the black border (option `crop` above 0)
+  or, with `crop = 0`, the station logo (a reference logo made with the button L); improved logo detection: certain disturbances are tolerated
+  and overlooked. *Dedup scene* removes a scene that is repeated at a cut; *Analyze cut point* makes a short test clip around a cut, with the
+  filters of *Save as*, and opens it in Avidemux or VLC.
 - *Copy mode* (Edit menu): saves without re-encoding. One video is cut at the next keyframe, several files are joined in full
   length (chapters work). Cropping, logo filters, scaling and the profile are ignored in this mode.
 
