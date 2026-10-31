@@ -83,7 +83,7 @@ def multitrack_from_old(options: dict) -> bool:
 
 
 RENAMED_OPTIONS = {"overlap": "dedup"}      # "Overlap segments" is "Dedup scene" now
-HIDDEN_OPTIONS = {"logo_edge", "logo_conf", "cut_diff"}   # for advanced users only, they are only in the INI file
+HIDDEN_OPTIONS = {"logo_edge", "logo_conf", "logo_extra", "cut_diff"}   # for advanced users only, they are only in the INI file
 
 # grouping of the options dialog: (tab, keys)
 OPTION_GROUPS = (
@@ -120,7 +120,7 @@ def validate_options(o: dict) -> list[str]:
             v = _int(o[key])
             if v is None or not lo <= v <= hi:
                 errors.append(f'"{key}" must be a whole number between {lo} and {hi}.')
-    for key, (lo, hi) in {"logo_conf": (0, 1)}.items():
+    for key, (lo, hi) in {"logo_conf": (0, 1), "logo_extra": (0, 5)}.items():
         if key in o:
             v = _float(o[key])
             if v is None or not lo <= v <= hi:

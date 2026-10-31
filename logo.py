@@ -22,6 +22,7 @@ EXTRA = 5            # border around the isolated logo in pixels
 LINE_SUM = 400       # sum of the bytes of a 1-bit line from which it counts as a "logo line"
 BIN_MIN = 18         # bin(): brightness difference of neighbouring pixels from which an edge is counted
 MIN_CONF = 0.2       # where_logo(): minimum match
+EXTRA_WEIGHT = 1.0   # logo_confidence(): weight of the edges that are NOT in the reference (0 = only the share of the reference edges that is found, as in VB6)
 
 
 @dataclass
@@ -169,11 +170,23 @@ def ref_from_rect(frame_rgb: np.ndarray, rect: tuple[int, int, int, int], bin_mi
 
 
 # ----------------------------------------------------------------------------- Detection
-def logo_confidence(frame_rgb: np.ndarray, ref: LogoRef, bin_min: int = BIN_MIN) -> float:
-    """Share of the reference edges that also occur in the logo rectangle of this frame (0..1)."""
+def logo_confidence(frame_rgb: np.ndarray, ref: LogoRef, bin_min: int = BIN_MIN, extra: float = EXTRA_WEIGHT) -> float:
+    """How sure it is that the logo is in the rectangle of this frame (0..1): the share of the reference edges that also occur there, MINUS `extra` times the density of the
+    edges that are not in the reference (the share of the other pixels of the rectangle that are edges). The share alone (extra = 0, as in VB6) is high in every picture with
+    many edges: a close-up of hair (vertical strands) has about half of the reference edges by chance and counted as 'logo present' (confidence up to 0.72); the logo itself
+    on its own or on an ordinary background has almost no other edges. Measured with a real recording: without the logo at most 0.12, with the logo at least 0.53 (0.28 at
+    80 % opacity); the minimum `logo_conf` of 0.2 is unchanged."""
     left, top, right, bottom = ref.rect
     edges = edge_map(to_grey(frame_rgb[top:bottom, left:right]), bin_min)
-    return ones(edges, ref.edges) / ref.ones if ref.ones else 0.0
+    if not ref.ones:
+        return 0.0
+    common = ones(edges, ref.edges)
+    found = common / ref.ones
+    if extra <= 0:
+        return found
+    rest = (edges.shape[0] - 1) * edges.shape[1] - ref.ones              # the pixels of the rectangle without the reference edges (the last line is left out, as in ones())
+    others = (int(edges[:-1].sum()) - common) / rest if rest > 0 else 0.0
+    return max(found - extra * others, 0.0)
 
 
 def confidence_at(path: str, frame: int, fps: Fraction, ref: LogoRef, opts: dict, ffmpeg: str = "ffmpeg", on_image=None) -> float:
@@ -181,7 +194,7 @@ def confidence_at(path: str, frame: int, fps: Fraction, ref: LogoRef, opts: dict
     img = grab_frame(path, frame, fps, int(opts.get("floor", 2)), ffmpeg)
     if on_image is not None:
         on_image(frame, img)
-    return logo_confidence(img, ref, int(opts.get("logo_edge", BIN_MIN)))
+    return logo_confidence(img, ref, int(opts.get("logo_edge", BIN_MIN)), float(opts.get("logo_extra", EXTRA_WEIGHT)))
 
 
 def logo_hit(conf: float, equal: bool, min_conf: float = MIN_CONF) -> bool:

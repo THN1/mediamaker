@@ -1953,7 +1953,7 @@ class frmMain(frmMainBase):
             origin = data["origin"]
             report = {"source": "RemoveLogo mask" if seg.has_png_mask else "DeLogo rectangle (button L)",
                       "rect_left_top_right_bottom": list(ref.rect), "edge_pixels": int(ref.ones), "area_pixels": int(ref.edges.size),
-                      "edge_share": round(share, 4), "logo_edge": data["options"].get("logo_edge"), "logo_conf": data["options"].get("logo_conf")}
+                      "edge_share": round(share, 4), "logo_edge": data["options"].get("logo_edge"), "logo_conf": data["options"].get("logo_conf"), "logo_extra": data["options"].get("logo_extra")}
             if origin is not None:
                 report.update({"created_at_frame": origin["frame"], "created_at_frame_shown": origin["shown"], "created_at_time": debugpack.hms(origin["seconds"])})
             elif not seg.has_png_mask:
@@ -2410,7 +2410,7 @@ class frmMain(frmMainBase):
                              "method": "black border (crop)" if crop > 0 else "reference logo", "crop": crop, "start_frame": start,
                              "start_frame_shown": start - seg.first_frame, "stepping_frames": stepping, "segment_end_marker": seg.end,
                              "options": {k: opts.get(k) for k in ("crop", "floor", "blackness", "allowance", "pause", "step_end", "step_next", "border_tol",
-                                                                  "cut_window", "cut_diff", "logo_conf", "logo_edge")},
+                                                                  "cut_window", "cut_diff", "logo_conf", "logo_edge", "logo_extra")},
                              "result_frame": None, "result_frame_shown": None, "probes": []}
         if crop > 0:
             def job(cancel):

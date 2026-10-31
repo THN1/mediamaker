@@ -6267,7 +6267,7 @@ def test_multitrack_window(tmp, videos):
     # --- the help texts: an old default text in an INI file is replaced (no "next to the INI file" for batch any more), an edited one stays
     from settings import OUTDATED_TOOLTIPS
     number = 3
-    for key in ("multitrack", "batch", "search_pictures"):
+    for key in ("multitrack", "batch", "search_pictures", "logo_conf"):
         for text, expected in ((OUTDATED_TOOLTIPS[key][0], DEFAULT_TOOLTIPS[key]), ("my own words", "my own words")):
             number += 1
             w = os.path.join(tmp, f"mttip{number}")
@@ -6511,7 +6511,7 @@ def test_search_pictures(tmp, videos):
     picture = np.zeros((20, 30, 3), np.uint8)
     border.grab_frame = lambda *a, **k: picture
     logo.grab_frame = lambda *a, **k: picture
-    logo.logo_confidence = lambda img, ref, edge: 0.5
+    logo.logo_confidence = lambda img, ref, edge, extra=0: 0.5
     try:
         plain = border.border_at("x.ts", 7, F(25), {})
         with_cb = border.border_at("x.ts", 7, F(25), {}, on_image=lambda f, img: got.append((f, img is picture)))
@@ -6726,6 +6726,54 @@ def test_search_end_unreadable(tmp, videos):
     print("Search and the end of the data: OK (hit condition, unreadable end, found, error in the middle, logo, window)")
 
 
+def test_logo_busy_pictures(tmp, videos):
+    """A close-up of hair (vertical strands) has many edges, about half of the reference edges are found by chance: 'logo present' with a confidence of up to 0.72 (a user's search
+    for the end of a commercial stopped there). The confidence is the share of the reference edges that is found MINUS the density of the other edges now. The data are the edge
+    maps of the logo rectangle of 60 s of a real commercial break (RTL, 73 x 36 pixels; only edge maps, no pictures)."""
+    import logo
+    import numpy as np
+    data = np.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "logo_false_positives.npz"))
+    R, edges, old_values, (r0, r1, c0, c1) = data["ref"], data["edges"], data["old"], data["box"]
+    ref = logo.LogoRef((0, 0, 73, 36), R, logo.ones(R, R))
+
+    def picture(edge_map):
+        """A grey picture whose edge map is exactly this one (a jump of 40 where there is an edge, alternating up and down)."""
+        grey = np.zeros(edge_map.shape, np.uint8)
+        for y in range(edge_map.shape[0]):
+            level, sign = 128, 1
+            for x in range(edge_map.shape[1]):
+                grey[y, x] = level
+                if x < edge_map.shape[1] - 1 and edge_map[y, x]:
+                    level += 40 * sign
+                    sign = -sign
+        return np.stack([grey] * 3, axis=-1)
+    check(ref.ones == 330 and len(edges) > 150, f"the data: reference with {ref.ones} edge pixels, {len(edges)} frames")
+    frames = [picture(e) for e in edges]
+    check(all(np.array_equal(logo.edge_map(logo.to_grey(f), 18), e) for f, e in zip(frames[:20], edges[:20])), "(the test pictures have exactly the edge maps of the data)")
+    before = np.array([logo.logo_confidence(f, ref, 18, 0) for f in frames])
+    after = np.array([logo.logo_confidence(f, ref, 18) for f in frames])
+    check(np.allclose(before, old_values, atol=1e-4) and int((before > 0.2).sum()) >= 90 and before.max() > 0.7,
+          f"as before (extra = 0): {int((before > 0.2).sum())} of {len(frames)} frames without the logo count as 'logo present', up to {before.max():.2f}")
+    check(int((after > 0.2).sum()) == 0 and after.max() < 0.15, f"now: none of them does, at most {after.max():.3f}")
+    # --- the logo itself, on the backgrounds of these frames: the edges of the logo box, everything else as it is
+    positives = []
+    for e in edges:
+        p = e.copy()
+        p[r0:r1, c0:c1] = R[r0:r1, c0:c1]
+        positives.append(logo.logo_confidence(picture(p), ref, 18))
+    positives = np.array(positives)
+    check(positives.min() > 0.4 and np.median(positives) > 0.85, f"with the logo: at least {positives.min():.2f} (median {np.median(positives):.2f}), far above the minimum of 0.2")
+    # --- the logo on a plain background: unchanged
+    check(abs(logo.logo_confidence(picture(R), ref, 18) - 1.0) < 1e-9 and logo.logo_confidence(picture(np.zeros_like(R)), ref, 18) == 0.0, "the reference itself 1.0, a picture without edges 0.0")
+    # --- the weight is an option
+    check(logo.EXTRA_WEIGHT == 1.0 and logo.confidence_at.__defaults__ is not None, "default weight 1.0")
+    import settings
+    import profiles
+    check(settings.default_options()["logo_extra"] == "1.0" and "logo_extra" in settings.DEFAULT_TOOLTIPS and "logo_extra" in profiles.HIDDEN_OPTIONS
+          and profiles.validate_options({"logo_extra": "0"}) == [] and len(profiles.validate_options({"logo_extra": "9"})) == 1, "the option logo_extra (advanced, only in the INI file)")
+    print("Logo and busy pictures: OK (hair frames, logo on the same backgrounds, option)")
+
+
 def test_counting_note(tmp, videos):
     """The note "counting frames" in the title goes away whenever a counting ends: with a result, cancelled, with an error, or when the file cannot be read."""
     import mediamaker
@@ -6907,6 +6955,7 @@ def main():
     test_search_pictures(tmp, sys.argv[1])
     test_play_at(tmp, sys.argv[1])
     test_search_end_unreadable(tmp, sys.argv[1])
+    test_logo_busy_pictures(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])
