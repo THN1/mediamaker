@@ -6774,6 +6774,76 @@ def test_logo_busy_pictures(tmp, videos):
     print("Logo and busy pictures: OK (frames with many edges, logo on the same backgrounds, option)")
 
 
+def test_advanced_options(tmp, videos):
+    """Options dialog, page Logo: under overlay_opacity the check box 'Show advanced options' (off every time); the two values of the logo detection appear when it is
+    ticked, and only then can they be changed."""
+    import dialogs
+    from profiles import ADVANCED_OPTIONS, OPTION_GROUPS
+    from PySide6.QtWidgets import QCheckBox, QDialog, QFormLayout, QLineEdit, QTabWidget, QVBoxLayout
+    from mediaprobe import first_frame_number
+    check(ADVANCED_OPTIONS == {"Logo": ("logo_conf", "logo_extra")} and all(k in dict(OPTION_GROUPS)[h] for h, keys in ADVANCED_OPTIONS.items() for k in keys), "which options are advanced")
+    pairs = {"crop": "73", "overlay_opacity": "35", "logo_conf": "0.2", "logo_extra": "1.0"}
+
+    def open_dialog(show_advanced=False, on_exec=None):
+        QDialog.exec_result, QDialog.on_exec = 1, on_exec
+        n = len(QCheckBox.instances) if hasattr(QCheckBox, "instances") else 0
+        before = len(QFormLayout.instances)
+        result = dialogs.edit_pairs(None, "Options", pairs, {}, {}, OPTION_GROUPS, advanced=ADVANCED_OPTIONS, show_advanced=show_advanced)
+        tabs = QTabWidget.instances[-1]
+        page = next(page for page, label in tabs.tabs_ if label == "Logo")
+        outer = next(v for v in QVBoxLayout.instances if v._args and v._args[0] is page)
+        form = next(layout for layout, _ in outer.added_ if isinstance(layout, QFormLayout))
+        return result, form
+    # --- off at the start: the check box under overlay_opacity, the two rows hidden and not editable
+    result, form = open_dialog()
+    names = [l._args[0] for l, e in form.rows]
+    tick = form.rows[1][0]
+    check(names == ["overlay_opacity", "Show advanced options", "logo_conf", "logo_extra"] and isinstance(tick, QCheckBox) and form.rows[1][1] is None,
+          f"the page Logo: opacity, the check box, then the two advanced rows: {names}")
+    check(tick.called("setChecked")[-1] == (False,), "the check box is off at the start")
+    (conf_label, conf_edit), (extra_label, extra_edit) = form.rows[2], form.rows[3]
+    check(all(w.called("setVisible")[-1] == (False,) for w in (conf_label, conf_edit, extra_label, extra_edit)) and conf_edit.called("setEnabled")[-1] == (False,)
+          and extra_edit.called("setEnabled")[-1] == (False,), "the advanced rows are hidden and cannot be edited")
+    check(result == {"crop": "73", "overlay_opacity": "35", "logo_conf": "0.2", "logo_extra": "1.0"}, f"untouched: the values come back unchanged: {result}")
+    # --- ticking shows the rows and makes them editable; a changed value comes back
+    tick.toggled.emit(True)
+    check(all(w.called("setVisible")[-1] == (True,) for w in (conf_label, conf_edit, extra_label, extra_edit)) and extra_edit.called("setEnabled")[-1] == (True,), "ticked: the rows appear and can be edited")
+    tick.toggled.emit(False)
+    check(conf_edit.called("setVisible")[-1] == (False,) and conf_edit.called("setEnabled")[-1] == (False,), "unticked again: hidden again")
+    holder = {}
+
+    def edit_then_accept(dialog):
+        form_ = [f for f in QFormLayout.instances if f.rows and f.rows[0][0]._args and f.rows[0][0]._args[0] == "overlay_opacity"][-1]
+        form_.rows[1][0].toggled.emit(True)
+        form_.rows[3][1].setText("1.25")
+        holder["ok"] = True
+    result, _ = open_dialog(on_exec=edit_then_accept)
+    check(holder.get("ok") and result["logo_extra"] == "1.25" and result["logo_conf"] == "0.2", f"ticked and changed: {result}")
+    # --- after a wrong advanced value the dialog opens with the advanced options shown
+    result, form = open_dialog(show_advanced=True)
+    check(form.rows[1][0].called("setChecked")[-1] == (True,) and form.rows[2][1].called("setVisible")[-1] == (True,), "show_advanced: the check box is on, the rows are shown")
+    check(dialogs.error_in_advanced(['"logo_conf" must be a number from 0 to 1.'], ADVANCED_OPTIONS) and not dialogs.error_in_advanced(['"crop" must be a number.'], ADVANCED_OPTIONS)
+          and not dialogs.error_in_advanced([], ADVANCED_OPTIONS), "which errors belong to the advanced options")
+    # --- the main window: starts off, and shows them again after an error in an advanced value
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="advopts", first_fn=first_frame_number)
+    seen = []
+    answers = iter([dict(win.options, logo_conf="abc"), dict(win.options, logo_conf="0.3")])
+
+    def fake_edit(title, pairs_, groups=None, start=0):
+        seen.append((win._show_advanced, start, groups is OPTION_GROUPS))
+        return next(answers)
+    win.edit_pairs = fake_edit
+    win.mnuOptions_Click()
+    check(seen[0][0] is False and len(seen) == 2 and seen[1][0] is True, f"the options dialog: off at the start, on again after an error in logo_conf: {seen}")
+    check(win.options["logo_conf"] == "0.3" and win.messages and "logo_conf" in win.messages[-1], f"the corrected value is saved: {win.options['logo_conf']}")
+    seen.clear()
+    answers = iter([dict(win.options, crop="x"), dict(win.options)])
+    win.mnuOptions_Click()
+    check(seen[1][0] is False, "an error in an ordinary value: the advanced options stay hidden")
+    QDialog.exec_result, QDialog.on_exec = 1, None
+    print("Advanced options: OK (check box, rows, values, error in an advanced value)")
+
+
 def test_counting_note(tmp, videos):
     """The note "counting frames" in the title goes away whenever a counting ends: with a result, cancelled, with an error, or when the file cannot be read."""
     import mediamaker
@@ -6956,6 +7026,7 @@ def main():
     test_play_at(tmp, sys.argv[1])
     test_search_end_unreadable(tmp, sys.argv[1])
     test_logo_busy_pictures(tmp, sys.argv[1])
+    test_advanced_options(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])

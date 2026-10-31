@@ -134,6 +134,23 @@ def group_plan(pairs: dict, groups) -> list:
     return [(heading, keys) for heading, keys in plan if keys]
 
 
+def error_in_advanced(errors: list, advanced) -> bool:
+    """Does one of the error messages ('"logo_conf" must be ...') name an advanced option? (Then the dialog has to show the advanced options again.)"""
+    keys = {k for names in (advanced or {}).values() for k in names}
+    return any(m and m.group(1) in keys for m in (re.search(r'"(\w+)"', message) for message in errors))
+
+
+def set_row_visible(form, label, editor, on: bool) -> None:
+    """Shows or hides a row of a form and makes it editable only while it is shown. (QFormLayout.setRowVisible, new in Qt 6.4, also takes the room of the row away.)"""
+    try:
+        form.setRowVisible(editor, on)
+    except (AttributeError, TypeError):
+        pass
+    label.setVisible(on)
+    editor.setVisible(on)
+    editor.setEnabled(on)
+
+
 def tab_of_error(errors: list, pairs: dict, groups) -> int:
     """Index of the tab that holds the first key named in the error messages (messages look like '"crop" must be ...')."""
     for message in errors:
@@ -146,7 +163,7 @@ def tab_of_error(errors: list, pairs: dict, groups) -> int:
 
 
 def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, groups=None, start: int = 0,
-               texts=None) -> Optional[dict]:
+               texts=None, advanced=None, show_advanced: bool = False) -> Optional[dict]:
     """Shows one row per key (caption with explanation, input field, a selection list for suggestions).
 
         Returns: the changed values as a dictionary or None on cancel. Replaces frmProfile from VB6, without enlarging the window
@@ -156,6 +173,10 @@ def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, g
         groups = ((heading, (key, ...)), ...) puts the rows on tabs along the top, one tab per group; keys that do not occur in any
         group follow at the end on the tab "Other"; `start` is the tab shown first; texts = {heading: one line of explanation} is
         shown above the rows of the page. Without groups all rows appear in one list in the order of `pairs` (the profile).
+
+        advanced = {heading: (key, ...)}: on such a page these keys follow the other rows under a check box "Show advanced options", which is OFF every time the dialog
+        opens (show_advanced=True: ON, used when an advanced value was wrong); the rows appear when it is ticked, and only then can they be changed (their values are
+        returned unchanged otherwise).
     """
     dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle(title)
@@ -163,6 +184,7 @@ def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, g
     getters = {}
 
     def add_rows(form, keys):
+        made = []
         for key in keys:
             value = pairs[key]
             tip = wrap_tooltip(tooltips.get(key, ""))
@@ -184,6 +206,8 @@ def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, g
             label.setToolTip(tip)
             editor.setToolTip(tip)
             form.addRow(label, editor)
+            made.append((label, editor))
+        return made
 
     if groups:
         sections = Sections()
@@ -198,7 +222,16 @@ def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, g
                 outer.addWidget(note)
             form = QtWidgets.QFormLayout()
             form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
-            add_rows(form, keys)
+            advanced_keys = [k for k in keys if k in (advanced or {}).get(heading, ())]
+            add_rows(form, [k for k in keys if k not in advanced_keys])
+            if advanced_keys:
+                tick = QtWidgets.QCheckBox("Show advanced options")
+                tick.setChecked(show_advanced)
+                form.addRow(tick)
+                rows = add_rows(form, advanced_keys)
+                tick.toggled.connect(lambda on, rows=rows, form=form: [set_row_visible(form, label, editor, bool(on)) for label, editor in rows])
+                for label, editor in rows:
+                    set_row_visible(form, label, editor, show_advanced)
             outer.addLayout(form)
             outer.addStretch(1)
             sections.add(heading, page)

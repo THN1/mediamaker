@@ -63,7 +63,7 @@ from player import debug_log                                         # noqa: E40
 from border import border_at                                         # noqa: E402
 from logo import confidence_at                                       # noqa: E402
 from mediaprobe import display_aspect, MediaInfo, ProbeError, count_video_packets, first_frame_number, probe as full_probe  # noqa: E402
-from profiles import (multitrack_from_old, GROUP_TEXTS, HIDDEN_OPTIONS, OPTION_GROUPS, PRESETS, PROFILE_KEYS, REMOVED_OPTIONS, RENAMED_OPTIONS, default_name, normalize_bitrate,  # noqa: E402
+from profiles import (ADVANCED_OPTIONS, multitrack_from_old, GROUP_TEXTS, HIDDEN_OPTIONS, OPTION_GROUPS, PRESETS, PROFILE_KEYS, REMOVED_OPTIONS, RENAMED_OPTIONS, default_name, normalize_bitrate,  # noqa: E402
                       ordered_profile, profile_from_segment, valid_profile_name, validate_options, validate_profile,
                       weighted_bitrate)
 from project import format_hms, load_segments, save_segments, segment_row, timeof  # noqa: E402
@@ -151,6 +151,7 @@ class frmMain(frmMainBase):
         self.verify_first_frame = True                 # False: take the first frame from the stream data as it is (tests)
         self._frame_fn = frame_fn
         self._track_fn = track_fn                        # the audio and subtitle tracks of a file (for the multitrack dialog)
+        self._show_advanced = False                     # the options dialog shows the advanced options (after an error in one of them)
         self._preview_held = False                      # VLC is not touched while True (duplicate_segment until its search is over)
         self._search_picture_frame = None               # the frame of the last picture of a search that is on screen (search_picture)
         self._vlc_stale = False                         # a picture of a search stays on screen: VLC is not where the slider is (seek_done)
@@ -212,7 +213,8 @@ class frmMain(frmMainBase):
     def edit_pairs(self, title: str, pairs: dict, groups=None, start: int = 0) -> Optional[dict]:
         import dialogs
         tooltips = {key: self.settings.tooltip(key) for key in pairs}
-        return dialogs.edit_pairs(self, title, pairs, tooltips, PRESETS, groups, start, GROUP_TEXTS if groups else None)
+        return dialogs.edit_pairs(self, title, pairs, tooltips, PRESETS, groups, start, GROUP_TEXTS if groups else None,
+                                  advanced=ADVANCED_OPTIONS if groups is OPTION_GROUPS else None, show_advanced=self._show_advanced)
 
     def inform(self, text: str) -> None:
         QtWidgets.QMessageBox.information(self, "MediaMaker", text)
@@ -487,6 +489,7 @@ class frmMain(frmMainBase):
     def _edit_validated(self, title: str, values: dict, validate, groups=None) -> Optional[dict]:
         """Edit dialog that appears again with the entered values if values are invalid."""
         start = 0
+        self._show_advanced = False                                          # the check box "Show advanced options" starts off every time
         while True:
             result = self.edit_pairs(title, values, groups, start=start) if start else self.edit_pairs(title, values, groups)
             if result is None:
@@ -499,6 +502,7 @@ class frmMain(frmMainBase):
             if groups:
                 import dialogs
                 start = dialogs.tab_of_error(errors, values, groups)        # show the tab with the wrong value again
+                self._show_advanced = dialogs.error_in_advanced(errors, ADVANCED_OPTIONS)    # ... with the advanced options if one of them is wrong
 
     def mnuProfile_Click(self):
         result = self._edit_validated("Profile", self.profile, validate_profile)

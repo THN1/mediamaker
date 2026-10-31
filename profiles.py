@@ -86,6 +86,8 @@ RENAMED_OPTIONS = {"overlap": "dedup"}      # "Overlap segments" is "Dedup scene
 HIDDEN_OPTIONS = {"logo_edge", "cut_diff"}   # for advanced users only, they are only in the INI file (logo_conf and logo_extra are on the page Logo of the options dialog)
 
 # grouping of the options dialog: (tab, keys)
+ADVANCED_OPTIONS = {"Logo": ("logo_conf", "logo_extra")}      # {page: keys}: on the page they appear only under the check box "Show advanced options" (see dialogs.edit_pairs)
+
 OPTION_GROUPS = (
     ("Borders", ("crop", "blackness", "allowance", "border_tol")),
     ("Seeking", ("pause", "dedup", "step_end", "step_next", "cut_window", "search_pictures")),
