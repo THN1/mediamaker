@@ -13,7 +13,8 @@ and a debug log with milliseconds. Still to do: DVD mode, and more tests with se
 break; this cannot be told apart by the logo alone.
 
 - Version number was 0.7-dev.
-- **Logo detection: a busy picture no longer counts as the logo** (`logo.logo_confidence`, new advanced option `logo_extra`, default 1.0, only in the INI file). A user's debug package (60 s of
+- **Logo detection: a busy picture no longer counts as the logo** (`logo.logo_confidence`, new option `logo_extra`, default 1.0; it and `logo_conf` are on the page Logo of the options dialog
+  now, they were hidden before: a new option that was only in the INI file was not found by the user; `logo_edge` and `cut_diff` stay hidden). A user's debug package (60 s of
   a commercial break of an RTL recording, reference logo made with the button L) showed why the search for the end of the commercial stopped too early: it got confused by patterns similar to the searched-for logo. The confidence was only the
   share of the reference edges that is found in the logo rectangle (73 x 36 pixels); a picture with many vertical edges (fine stripes, textures) has so many that about half of the reference edges are hit by chance (0.47 to 0.72; the
   minimum `logo_conf` is 0.2). My recalculation of the package gave exactly the 28 values that the search had logged. In the 1504 frames of the clip 92 frames, in four runs, counted as

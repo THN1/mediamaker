@@ -83,13 +83,13 @@ def multitrack_from_old(options: dict) -> bool:
 
 
 RENAMED_OPTIONS = {"overlap": "dedup"}      # "Overlap segments" is "Dedup scene" now
-HIDDEN_OPTIONS = {"logo_edge", "logo_conf", "logo_extra", "cut_diff"}   # for advanced users only, they are only in the INI file
+HIDDEN_OPTIONS = {"logo_edge", "cut_diff"}   # for advanced users only, they are only in the INI file (logo_conf and logo_extra are on the page Logo of the options dialog)
 
 # grouping of the options dialog: (tab, keys)
 OPTION_GROUPS = (
     ("Borders", ("crop", "blackness", "allowance", "border_tol")),
     ("Seeking", ("pause", "dedup", "step_end", "step_next", "cut_window", "search_pictures")),
-    ("Logo", ("overlay_opacity",)),
+    ("Logo", ("overlay_opacity", "logo_conf", "logo_extra")),
     ("Audio/Subtitles", ("audio", "multitrack", "aflags")),
     ("Batch", ("path_map", "batch")),
     ("Technical", ("floor", "detect", "player", "vlc_args", "hide_messages", "dialog_style", "file_dialog", "sessions_dir", "restore_backup", "copy_mode_notice", "paused_preview", "cutpoint_filters")),

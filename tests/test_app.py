@@ -6769,8 +6769,8 @@ def test_logo_busy_pictures(tmp, videos):
     check(logo.EXTRA_WEIGHT == 1.0 and logo.confidence_at.__defaults__ is not None, "default weight 1.0")
     import settings
     import profiles
-    check(settings.default_options()["logo_extra"] == "1.0" and "logo_extra" in settings.DEFAULT_TOOLTIPS and "logo_extra" in profiles.HIDDEN_OPTIONS
-          and profiles.validate_options({"logo_extra": "0"}) == [] and len(profiles.validate_options({"logo_extra": "9"})) == 1, "the option logo_extra (advanced, only in the INI file)")
+    check(settings.default_options()["logo_extra"] == "1.0" and "logo_extra" in settings.DEFAULT_TOOLTIPS and "logo_extra" in dict(profiles.OPTION_GROUPS)["Logo"] and "logo_conf" in dict(profiles.OPTION_GROUPS)["Logo"] and "logo_extra" not in profiles.HIDDEN_OPTIONS
+          and profiles.validate_options({"logo_extra": "0"}) == [] and len(profiles.validate_options({"logo_extra": "9"})) == 1, "the options logo_conf and logo_extra are on the page Logo of the options dialog")
     print("Logo and busy pictures: OK (frames with many edges, logo on the same backgrounds, option)")
 
 
