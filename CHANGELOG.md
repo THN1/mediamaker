@@ -1,5 +1,9 @@
 # Changes
 
+## 0.8 (in progress)
+
+- Version number set to 0.8-dev.
+
 ## 0.7
 
 Seventh frozen state: **multitrack** (several audio tracks and subtitles in the new file, with language codes), the batch script in the home folder with "Run now?", the preview during a search
