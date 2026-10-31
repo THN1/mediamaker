@@ -184,6 +184,11 @@ def confidence_at(path: str, frame: int, fps: Fraction, ref: LogoRef, opts: dict
     return logo_confidence(img, ref, int(opts.get("logo_edge", BIN_MIN)))
 
 
+def logo_hit(conf: float, equal: bool, min_conf: float = MIN_CONF) -> bool:
+    """Does a frame with this confidence have what the search looks for (the logo present / missing)?"""
+    return (equal and conf > min_conf) or (not equal and conf < min_conf)
+
+
 def where_logo(conf_of: Callable[[int], float], pos: int, last: int, equal: bool, stepping: int, min_conf: float = MIN_CONF,
                probe: Optional[Callable[[int], None]] = None) -> int:
     """Starting at frame `pos`, searches for the first frame WITH logo (equal=True) or WITHOUT logo (equal=False); `last` (the end of the
@@ -198,8 +203,7 @@ def where_logo(conf_of: Callable[[int], float], pos: int, last: int, equal: bool
         pos += stepping
         if probe is not None:
             probe(stepping)
-        c = conf_of(pos)
-        if (equal and c > min_conf) or (not equal and c < min_conf):
+        if logo_hit(conf_of(pos), equal, min_conf):
             pos -= stepping
             stepping = (stepping + 8) // 10
     return pos + 1                                   # pos is the last frame before the change

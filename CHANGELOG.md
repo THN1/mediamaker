@@ -3,6 +3,15 @@
 ## 0.7 (in progress)
 
 - Version number set to 0.7-dev.
+- **A search no longer fails when the end of the recording cannot be read, and says when it found nothing.** A search for the end of a commercial with `crop = 73` ran through the whole rest of a
+  recording (no border of 73 in it), and the very last frame (162022 = `total_frames`) could not be read (the recording is damaged at its end: "Invalid frame dimensions 0x0", "ac-tex damaged"):
+  "Seeking with crop = 73 failed: Frame 162022 could not be read". `grab_frame` raises `frames.FrameUnreadable` (a RuntimeError) now; `seek_border` and `seek_logo` take an unreadable frame in
+  the last 10 seconds of the recording (`_tail_frames`) as the end of the data (`SeekEndReached`): the search stops, the result is the last frame that could be read (`stats["found"] = False`,
+  `end_reason = "unreadable"`); an unreadable frame elsewhere is still an error. A search that found nothing (also when everything could be read: the border/logo never matched) says so after
+  the slider has been set: `border_seek_report` ("No end of the commercial was found ..."; the logo search had its own `logo_seek_report`, which now also says that the end could not be read).
+  Before, the border search ended at the last frame as if it had found something there. The condition of a hit is one function now (`border.border_hit`, `logo.logo_hit`). Also: the record of a
+  search for the debug package (`last_search.json`) has `found`, `end_reason` and, for the logo search, `reference_logo` (the rectangle, whether it was made with the button L, at which frame,
+  how many edge pixels): which reference a search used. NOTE: with the option `crop` above 0 the search always uses the black border; the reference logo is used only with `crop = 0`.
 - **The search ends without playing the place in VLC.** The last picture of the search STAYS on screen (it is the picture of the result: `border_at` / `confidence_at` read the frame that is
   found last); the slider, the frame info and `last_frame` are set, but VLC is not sent there (`seek_done`: `_vlc_stale`, `_slider_sync_off`). VLC is brought to the slider position (`show_at`)
   only when the slider is moved again (`Slider1_Change`), when a marker is set (`cmdPos_Click` 7/8 -> `display_frame`) or when Play is pressed: then `Player.play_at(ms)` starts at the slider

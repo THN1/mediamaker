@@ -3067,6 +3067,9 @@ def test_reference_logo(tmp, videos):
     text = win.messages[-1]
     check(text.startswith("No frame without the logo was found up to the end of the movie.") and f"all {len(seen)} frames" in text and "between 0.95 and 0.95" in text
           and 'button "L"' in text, f"message with the confidences: {text[:130]}")
+    used = win._last_search.get("reference_logo")
+    check(used and used["made_with_button_L"] and used["rectangle"] == seg.mask and used["frame_shown"] == win.shown(first + 25) and used["edge_pixels"] > 0,
+          f"the record of the search says which reference logo it used (for the debug package): {used}")
     win._conf_fn = lambda path, n, fps_, ref_, opts_: 0.04
     win.Slider1.setValue(first)
     win.mnuEnd_Click()
@@ -6642,6 +6645,87 @@ def test_play_at(tmp, videos):
     print("play_at: OK (never started, started)")
 
 
+def test_search_end_unreadable(tmp, videos):
+    """The end of a recording can be damaged: the frames there cannot be read. A search that comes there stops and says that it found nothing; it does not fail
+    (a user's search for the end of a commercial ran to the end of the file, the last frame could not be read: 'Seeking with crop = 73 failed: Frame 162022 could not be read')."""
+    import border
+    import frames
+    import logo
+    import seek
+    from fractions import Fraction as F
+    from frames import FrameUnreadable
+    from mediaprobe import first_frame_number
+    # --- the conditions of a hit are one function
+    check(border.border_hit(73, 73, True, 3) and border.border_hit(71, 73, True, 3) and not border.border_hit(70, 73, True, 3) and border.border_hit(77, 73, False, 3)
+          and not border.border_hit(76, 73, False, 3) and logo.logo_hit(0.5, True, 0.2) and not logo.logo_hit(0.1, True, 0.2) and logo.logo_hit(0.1, False, 0.2), "the conditions of a hit")
+    # --- a frame past the end of a real file: the error has its own type (still a RuntimeError)
+    try:
+        frames.grab_frame(os.path.join(videos, "sample2.ts"), 999999, F(25))
+        check(False, "a frame past the end must not be read")
+    except FrameUnreadable as e:
+        check(isinstance(e, RuntimeError) and "could not be read" in str(e), f"a frame past the end of a real file: FrameUnreadable: {str(e)[:50]!r}")
+    total, fps = 5000, F(25)                                                # the last 250 frames count as 'the end of the data'
+
+    def run(border_value, unreadable_from, **kw):
+        stats = {}
+        calls = []
+
+        def border_fn(path, n, fps_, opts):
+            calls.append(n)
+            if n >= unreadable_from:
+                raise FrameUnreadable(f"Frame {n} could not be read: Invalid frame dimensions 0x0")
+            return border_value(n)
+        result = seek.seek_border("x.ts", fps, total, 1000, 73, True, 1000, {"cut_window": 0}, border_fn, stats=stats, **kw)
+        return result, stats, calls
+    # --- nothing found, the last frame cannot be read: no failure, the last readable frame is the result
+    result, stats, calls = run(lambda n: 0, 5000)
+    check(result == 4000 and stats["found"] is False and stats["end_reason"] == "unreadable" and calls[-1] == 5000, f"the end cannot be read: stops there, nothing found: {result} {stats}")
+    # --- nothing found, everything readable
+    result, stats, calls = run(lambda n: 0, 10 ** 9)
+    check(stats["found"] is False and stats["end_reason"] == "end" and result == total, f"nothing found up to the end (all readable): the end of the movie, as before: {result} {stats['end_reason']}")
+    # --- found: as before
+    result, stats, calls = run(lambda n: 73 if n >= 3333 else 0, 5000)
+    check(result == 3333 and stats["found"] is True and "end_reason" not in stats, f"found: {result} {stats.get('found')}")
+    # --- an unreadable frame in the middle of the file is still an error (the message is kept)
+    try:
+        run(lambda n: 0, 2000)
+        check(False, "an unreadable frame in the middle must fail")
+    except FrameUnreadable as e:
+        check("could not be read" in str(e), "an unreadable frame far from the end: the error as before")
+    # --- the logo search too
+    def logo_run(conf, unreadable_from):
+        stats = {}
+
+        def conf_fn(path, n, fps_, ref, opts):
+            if n >= unreadable_from:
+                raise FrameUnreadable("Frame could not be read")
+            return conf(n)
+        return seek.seek_logo("x.ts", fps, total, 1000, None, True, 1000, {"logo_conf": 0.2}, conf_fn, stats=stats), stats
+    result, stats = logo_run(lambda n: 0.0, 4990)
+    check(result == 4980 and stats["found"] is False and stats["end_reason"] == "unreadable", f"logo search: the end cannot be read (frame 4990 is the first that fails): the last frame read, {result}, is the result")
+    result, stats = logo_run(lambda n: 0.9 if n >= 3333 else 0.0, 4990)
+    check(result == 3333 and stats["found"] is True, f"logo search: found: {result}")
+    # --- the main window: no 'failed' message, but what happened; the slider is at the last frame that could be read
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="endunread", first_fn=first_frame_number)
+    seg = win.segments[0]
+    win.settings.set_option("crop", "72")
+    win.settings.set_option("cut_window", "0")
+
+    def fake_border(path, n, fps_, opts):
+        if n >= seg.total_frames - 3:
+            raise FrameUnreadable(f"Frame {n} could not be read: Invalid frame dimensions 0x0")
+        return 0
+    win._border_fn = fake_border
+    win.messages.clear()
+    win.mnuEnd_Click()
+    text = win.messages[-1] if win.messages else ""
+    check(len(win.messages) == 1 and text.startswith("No end of the commercial was found") and "cannot be read" in text and "failed" not in text and "set crop to 0" in text, f"message: {text[:200]!r}")
+    check(win.Slider1.value() == win._last_search["result_frame"] < seg.total_frames - 3 + 1 and win._last_search["found"] is False and win._last_search["end_reason"] == "unreadable",
+          f"the slider is at the last frame that could be read: {win.Slider1.value()} / {win._last_search.get('found')}")
+    check("reference_logo" not in win._last_search, "a search with the black border has no reference logo in its record")
+    print("Search and the end of the data: OK (hit condition, unreadable end, found, error in the middle, logo, window)")
+
+
 def test_counting_note(tmp, videos):
     """The note "counting frames" in the title goes away whenever a counting ends: with a result, cancelled, with an error, or when the file cannot be read."""
     import mediamaker
@@ -6822,6 +6906,7 @@ def main():
     test_duplicate_preview(tmp, sys.argv[1])
     test_search_pictures(tmp, sys.argv[1])
     test_play_at(tmp, sys.argv[1])
+    test_search_end_unreadable(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])

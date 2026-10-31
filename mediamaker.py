@@ -2416,9 +2416,14 @@ class frmMain(frmMainBase):
             def job(cancel):
                 return seek.seek_border(seg.path, seg.fps, total, start, crop, end, stepping, opts, self._border_fn, cancel,
                                         shown=lambda n, f=seg.first_frame: n - f, frames_fn=self._thumb_fn, stats=stats)
-            self._run_seek(job, lambda frame: (self.seek_done(frame), self.record_search(stats, frame, seg)), f"Seeking with {method}")
+            self._run_seek(job, lambda frame: (self.seek_done(frame), self.record_search(stats, frame, seg), self.border_seek_report(stats, end, crop, seg)),
+                           f"Seeking with {method}")
             return
         ref = self.logo_reference(seg)
+        origin = self.ref_origin.get(seg.mask) if seg.mask else None
+        self._last_search["reference_logo"] = {"rectangle": seg.mask if not seg.has_png_mask else "(RemoveLogo mask)", "made_with_button_L": origin is not None,
+                                               "frame_shown": origin["shown"] if origin else None,
+                                               "edge_pixels": int(ref.ones) if ref is not None else None}       # (which reference this search used)
         if ref is None:
             self.msg("Cannot seek: neither a cropping value (option \"crop\") nor a reference logo has been defined for this video. "
                      "Please set one of them first (for the logo: place the DeLogo rectangle or select a RemoveLogo frame, then click the "
@@ -2431,10 +2436,26 @@ class frmMain(frmMainBase):
         self._run_seek(job, lambda frame: (self.seek_done(frame), self.record_search(stats, frame, seg), self.logo_seek_report(stats, frame, end, seg)),
                        f"Seeking with {method}")
 
+    def border_seek_report(self, stats: dict, end: bool, crop: int, seg: Segment) -> None:
+        """A search with the black border that found nothing says so (before, it ended at the last frame as if it had found something there, or failed because the end of
+        the recording cannot be read). The slider is at the last frame that could be read."""
+        if stats.get("found") is not False:
+            return
+        if end:
+            text = f"No end of the commercial was found: none of the frames that were examined had a black border of about {crop} lines, up to the end of the recording."
+        else:
+            text = f"No start of the next commercial was found: the black border stayed about {crop} lines in all frames that were examined, up to the end of the recording."
+        if stats.get("end_reason") == "unreadable":
+            text += " The last frames of the recording cannot be read (it is cut off or damaged at the end), the search stopped there."
+        where = (f"The slider is at the last frame that could be read (frame {stats['result'] - seg.first_frame})." if stats.get("end_reason") == "unreadable"
+                 else "The slider is at the end of the movie.")
+        self.msg(text + f"\n\n{where}\n\n(With the option crop above 0 the search uses the black border; to search with the reference logo set crop to 0.)")
+
     def record_search(self, stats: dict, frame: int, seg: Segment) -> None:
         """Keeps what the last search did (for the debug package)."""
         record = self._last_search
         record["result_frame"], record["result_frame_shown"] = frame, frame - seg.first_frame
+        record["found"], record["end_reason"] = stats.get("found"), stats.get("end_reason")
         probes = stats.get("confidences") or stats.get("borders") or []
         record["probe_kind"] = "logo confidence" if stats.get("confidences") else "black border lines"
         record["probes"] = [{"frame": n, "shown": n - seg.first_frame, "value": v} for n, v in probes]
@@ -2457,6 +2478,8 @@ class frmMain(frmMainBase):
         else:
             text = (f"No frame without the logo was found up to the end of the movie. The logo was recognized in all {len(found)} frames that were "
                     f"examined (confidence between {low:.2f} and {high:.2f}; below {threshold:.2f} counts as 'no logo').")
+        if stats.get("end_reason") == "unreadable":
+            text += " The last frames of the recording cannot be read (it is cut off or damaged at the end), the search stopped there."
         self.msg(text + "\n\nCheck that the DeLogo rectangle surrounds the logo and that the reference logo was created with the button \"L\" at a "
                  "frame where the logo is clearly visible.")
 

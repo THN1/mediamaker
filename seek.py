@@ -13,9 +13,9 @@ from PySide6 import QtCore
 
 import numpy as np
 
-from border import border_at, where_border
-from frames import grab_numbered
-from logo import confidence_at, where_logo
+from border import border_at, border_hit, where_border
+from frames import FrameUnreadable, grab_numbered
+from logo import confidence_at, logo_hit, where_logo
 from player import debug_log
 
 DEFAULT_STEP_END_S = 40              # step width for "Seek end of commercial" in seconds (VB6: 1000 frames at 25 FPS)
@@ -33,6 +33,15 @@ def step_seconds(opts: dict, end: bool) -> float:
         if pause > 0:
             seconds = min(seconds, pause)
     return seconds
+
+
+class SeekEndReached(Exception):
+    """The search came to frames that cannot be read at the end of the recording (cut off or damaged): there is nothing more to find behind them."""
+
+
+def _tail_frames(fps) -> int:
+    """How many frames at the end of the recording count as 'the end of the data' when one of them cannot be read: the last 10 seconds."""
+    return max(int(float(fps) * 10), 1)
 
 
 def _accepts(fn, name: str) -> bool:
@@ -98,10 +107,23 @@ def seek_border(path, fps, total, pos, value, equal, stepping, opts, border_fn=b
     debug_log(f"border search from frame {shown(pos)}: looking for {'border about' if equal else 'border different from'} {value} "
               f"(tolerance {int(opts.get('border_tol', 3))}), step width {stepping}, end at {shown(total)}")
 
+    tolerance = int(opts.get("border_tol", 3))
+    last_read: list = []                                         # the frames that could be read
+    hits: set = set()                                            # the frames that have what is looked for
+
     def border_of(n: int) -> int:
         if cancel():
             raise SeekCancelled()
-        found = border_fn(path, n, fps, opts, on_image=lambda frame, img: picture(frame, img, step_now["width"])) if images else border_fn(path, n, fps, opts)
+        try:
+            found = border_fn(path, n, fps, opts, on_image=lambda frame, img: picture(frame, img, step_now["width"])) if images else border_fn(path, n, fps, opts)
+        except FrameUnreadable as e:
+            if n >= total - _tail_frames(fps):                    # the end of a recording can be damaged: nothing more to find behind it
+                debug_log(f"border search: frame {shown(n)} cannot be read, the data ends here ({str(e)[:140]!r})")
+                raise SeekEndReached(n) from e
+            raise
+        last_read.append(n)
+        if border_hit(found, value, equal, tolerance):
+            hits.add(n)
         if stats is not None:
             stats.setdefault("borders", []).append((n, int(found)))
         text = f"frame {shown(n)}: border {found} (looking for {'about ' if equal else 'not '}{value})"
@@ -109,8 +131,20 @@ def seek_border(path, fps, total, pos, value, equal, stepping, opts, border_fn=b
         if note:
             note(text)
         return found
-    tolerance = int(opts.get("border_tol", 3))
-    result = where_border(border_of, pos, total, value, equal, stepping, lim=tolerance, probe=lambda width: step_now.__setitem__("width", width))
+    try:
+        result = where_border(border_of, pos, total, value, equal, stepping, lim=tolerance, probe=lambda width: step_now.__setitem__("width", width))
+        reason = "end"
+    except SeekEndReached:
+        result, reason = None, "unreadable"
+    if result is None or result not in hits:                      # nothing found up to the end
+        if result is None:                                        # the end of the data could not be read: the last frame that could be read is the result
+            result = max(last_read) if last_read else pos
+        debug_log(f"border search: nothing found up to the end ({'the last frames cannot be read' if reason == 'unreadable' else 'end of the movie'}), last frame read {shown(result)}")
+        if stats is not None:
+            stats.update(found=False, end_reason=reason, result=result)
+        return result
+    if stats is not None:
+        stats["found"] = True
     debug_log(f"border search: result frame {shown(result)}")
     window = int(opts.get("cut_window", 5))
     if window > 0:
@@ -139,9 +173,22 @@ def seek_logo(path, fps, total, pos, ref, equal, stepping, opts, conf_fn=confide
     images = picture is not None and _accepts(conf_fn, "on_image")
     debug_log(f"logo search from frame {shown(pos)}: looking for {'logo present' if equal else 'logo missing'}, step width {stepping}")
 
+    min_conf = float(opts.get("logo_conf", 0.2))
+    last_read: list = []
+    hits: set = set()
+
     def conf_of(n: int) -> float:
         check()
-        found = conf_fn(path, n, fps, ref, opts, on_image=lambda frame, img: picture(frame, img, step_now["width"])) if images else conf_fn(path, n, fps, ref, opts)
+        try:
+            found = conf_fn(path, n, fps, ref, opts, on_image=lambda frame, img: picture(frame, img, step_now["width"])) if images else conf_fn(path, n, fps, ref, opts)
+        except FrameUnreadable as e:
+            if n >= total - _tail_frames(fps):
+                debug_log(f"logo search: frame {shown(n)} cannot be read, the data ends here ({str(e)[:140]!r})")
+                raise SeekEndReached(n) from e
+            raise
+        last_read.append(n)
+        if logo_hit(found, equal, min_conf):
+            hits.add(n)
         if stats is not None:
             stats.setdefault("confidences", []).append((n, float(found)))
         text = f"frame {shown(n)}: logo confidence {found:.2f}"
@@ -150,9 +197,20 @@ def seek_logo(path, fps, total, pos, ref, equal, stepping, opts, conf_fn=confide
             note(text)
         return found
 
-    min_conf = float(opts.get("logo_conf", 0.2))
-
-    result = where_logo(conf_of, pos, total, equal, stepping, min_conf, probe=lambda width: step_now.__setitem__("width", width))
+    try:
+        result = where_logo(conf_of, pos, total, equal, stepping, min_conf, probe=lambda width: step_now.__setitem__("width", width))
+        reason = "end"
+    except SeekEndReached:
+        result, reason = None, "unreadable"
+    if result is None or result not in hits:
+        if result is None:
+            result = max(last_read) if last_read else pos
+        debug_log(f"logo search: nothing found up to the end ({'the last frames cannot be read' if reason == 'unreadable' else 'end of the movie'}), last frame read {shown(result)}")
+        if stats is not None:
+            stats.update(found=False, end_reason=reason, result=result)
+        return result
+    if stats is not None:
+        stats["found"] = True
     debug_log(f"logo search: result frame {shown(result)}")
     if stats is not None:
         stats["result"] = result

@@ -35,6 +35,12 @@ def border_at(path: str, frame: int, fps: Fraction, opts: dict, ffmpeg: str = "f
     return count_black_lines(img, int(opts.get("blackness", 12)), int(opts.get("allowance", 1000)))
 
 
+def border_hit(found: int, value: int, equal: bool, lim: int = 3) -> bool:
+    """Does a frame with this border have what the search looks for (a border about `value` / a different one)?"""
+    diff = abs(found - value)
+    return (equal and diff < lim) or (not equal and diff > lim)
+
+
 def where_border(border_of: Callable[[int], int], pos: int, last: int, value: int,
                  equal: bool, stepping: int, lim: int = 3, probe: Optional[Callable[[int], None]] = None) -> int:
     """Starting at frame `pos`, searches for the next frame whose border matches `value` (equal=True)
@@ -52,8 +58,7 @@ def where_border(border_of: Callable[[int], int], pos: int, last: int, value: in
         pos += stepping
         if probe is not None:
             probe(stepping)                          # (the step width of the frame that is looked at now)
-        diff = abs(border_of(pos) - value)
-        if (equal and diff < lim) or (not equal and diff > lim):
+        if border_hit(border_of(pos), value, equal, lim):
             pos -= stepping
             stepping = (stepping + 8) // 10          # reaches 1 in any case before 0
     return min(pos + 1, last)

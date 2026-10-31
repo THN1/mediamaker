@@ -35,6 +35,10 @@ def seek_before(target: Fraction, container_start: Fraction, preroll: int) -> in
     return max(0, floor(target - container_start) - preroll)
 
 
+class FrameUnreadable(RuntimeError):
+    """ffmpeg delivered no picture for the frame (past the end of the data, or damaged data like the end of a recording that was cut off)."""
+
+
 def grab_frame(path: str, frame: int, fps: Fraction, preroll: int = 2, ffmpeg: str = "ffmpeg",
                origin: str = "container") -> np.ndarray:
     """Returns frame `frame` as an RGB array (height x width x 3, row 0 = TOP edge of the picture)."""
@@ -48,7 +52,7 @@ def grab_frame(path: str, frame: int, fps: Fraction, preroll: int = 2, ffmpeg: s
             "-frames:v", "1", "-map", "[v]", "-f", "image2pipe", "-c:v", "png", "-"]
     res = subprocess.run(cmd, capture_output=True, stdin=subprocess.DEVNULL)
     if res.returncode != 0 or not res.stdout:
-        raise RuntimeError(f"Frame {frame} could not be read: {res.stderr.decode(errors='replace')[-300:]}")
+        raise FrameUnreadable(f"Frame {frame} could not be read: {res.stderr.decode(errors='replace')[-300:]}")
     return np.asarray(Image.open(io.BytesIO(res.stdout)).convert("RGB"))
 
 
