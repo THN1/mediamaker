@@ -15,6 +15,8 @@ The history and the details of every change are in [CHANGELOG.md](CHANGELOG.md).
 - *Seek next commercial / end of commercial* look for the pauses that commercials make in a recording (option `pause`; the preview shows every picture that the search reads, option `search_pictures`); *Dedup scene*
   removes a scene that is repeated at a cut; *Analyze cut point* makes a short test clip around a cut, with the filters of *Save as*,
   and opens it in Avidemux or VLC.
+  The search uses the black border (option `crop` above 0) or, with `crop = 0`, the station logo (a reference logo made with the button L); improved logo detection:
+  certain disturbances are tolerated and overlooked.
 - *Copy mode* (Edit menu): saves without re-encoding. One video is cut at the next keyframe, several files are joined in full
   length (chapters work). Cropping, logo filters, scaling and the profile are ignored in this mode.
 

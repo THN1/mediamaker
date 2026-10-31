@@ -8,7 +8,7 @@
 
 Seventh frozen state: **multitrack** (several audio tracks and subtitles in the new file, with language codes), the batch script in the home folder with "Run now?", the preview during a search
 (the pictures that the search reads, no playing of the place in VLC at the end), the new segment is not played while the search after duplicating runs, searches that survive an unreadable end of a
-recording and say when they found nothing, a logo detection that a close-up of hair no longer fools, larger symbols in the column of buttons, a README with the functions and the supported formats,
+recording and say when they found nothing, an improved logo detection (certain disturbances are tolerated and overlooked), larger symbols in the column of buttons, a README with the functions and the supported formats,
 and a debug log with milliseconds. Still to do: DVD mode, and more tests with several audio and subtitle tracks. The logo that appears again INSIDE a commercial break is found as the end of the
 break; this cannot be told apart by the logo alone.
 
