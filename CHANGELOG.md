@@ -3,6 +3,12 @@
 ## 0.7 (in progress)
 
 - Version number set to 0.7-dev.
+- **The search ends without playing the place in VLC.** The last picture of the search STAYS on screen (it is the picture of the result: `border_at` / `confidence_at` read the frame that is
+  found last); the slider, the frame info and `last_frame` are set, but VLC is not sent there (`seek_done`: `_vlc_stale`, `_slider_sync_off`). VLC is brought to the slider position (`show_at`)
+  only when the slider is moved again (`Slider1_Change`), when a marker is set (`cmdPos_Click` 7/8 -> `display_frame`) or when Play is pressed: then `Player.play_at(ms)` starts at the slider
+  position, also for a medium that was only loaded and never started (the new segment after duplicating; media option start-time, no pause afterwards), or jumps and plays if it is started.
+  If the result is not the frame of the last picture (a cut was snapped to, `cut_window`), its own picture is read by ffmpeg. Without pictures (option `search_pictures` off, the embed
+  player, a search function without `on_image`) it is as before: VLC jumps to the result.
 - **The preview shows pictures while a search runs** (option `search_pictures`, on|off, default on, group Seeking; memory player only). The preview shows the picture of EVERY probe, down to the
   step width 1 (`seek.PICTURE_MIN_STEP = 1`; the step width goes 1000 -> 100 -> 10 -> 1; first built for step widths from 10 on, then opened up because the pictures cost nothing), like a film that
   runs by; at the end VLC jumps to the result as before. The

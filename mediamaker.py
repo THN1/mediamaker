@@ -152,6 +152,9 @@ class frmMain(frmMainBase):
         self._frame_fn = frame_fn
         self._track_fn = track_fn                        # the audio and subtitle tracks of a file (for the multitrack dialog)
         self._preview_held = False                      # VLC is not touched while True (duplicate_segment until its search is over)
+        self._search_picture_frame = None               # the frame of the last picture of a search that is on screen (search_picture)
+        self._vlc_stale = False                         # a picture of a search stays on screen: VLC is not where the slider is (seek_done)
+        self._slider_sync_off = False                   # the slider is set without VLC following (seek_done)
         self.track_choice = None                        # the last choice of the multitrack dialog (tracks.Choice), None: Cancel or never asked
         self._still_frame = None                        # the frame whose picture ffmpeg put into the preview (None: VLC shows the picture)
         self._aspect_fn = display_aspect               # proportions of the picture as a player shows it
@@ -739,6 +742,8 @@ class frmMain(frmMainBase):
         seg = self.segment
         self.fraCrop[0].hide()                                        # a rectangle that was being placed belongs to the previous segment
         self._still_frame = None
+        self._vlc_stale = False
+        self._search_picture_frame = None
         self.stills.cancel()
         self.player.stop()
         self.highlight()
@@ -788,8 +793,11 @@ class frmMain(frmMainBase):
         if self.segment is None:
             return
         value = self.Slider1.value()
-        if self._preview_held:
-            pass                                                    # (duplicate_segment: the preview is not touched until the search is over)
+        if self._preview_held or self._slider_sync_off:
+            pass                                                    # (duplicate_segment: the preview is not touched until the search is over; seek_done: the picture stays)
+        elif self._vlc_stale:
+            self._vlc_stale = False                                 # the slider moves after a search: VLC is brought to its position now
+            self.display_frame(value)
         elif self.still_mode():
             self.show_still(value)                                  # the film is stopped: the picture comes from ffmpeg, VLC is not asked
         else:
@@ -816,6 +824,7 @@ class frmMain(frmMainBase):
         if self._preview_held:
             debug_log(f"display frame {frame}: not shown, the preview is held until the search is over")
             return
+        self._vlc_stale = False
         if self.still_mode():
             debug_log(f"display frame {frame}: picture from ffmpeg")
             self.show_still(frame)
@@ -863,8 +872,14 @@ class frmMain(frmMainBase):
                 self.player.pause()
             elif self.player.has_media:
                 self._ignore_time_until = 0.0                         # the user starts: time messages count again
-                self.leave_still()
-                self.player.play()
+                if self._vlc_stale:                                   # the picture on screen is the one of a search: VLC starts at the slider position
+                    self._vlc_stale = False
+                    self._still_frame = None
+                    self.stills.cancel()
+                    self.player.play_at(self.f2t(self.Slider1.value()))
+                else:
+                    self.leave_still()
+                    self.player.play()
         elif index == 4:
             self._go(slider.value() + 1)
         elif index == 5:
@@ -2449,6 +2464,7 @@ class frmMain(frmMainBase):
         """Work in the background with a wait dialog ("<message>, please wait...") and cancel; on_done(result) in the Qt thread. A held preview (duplicate_segment) is
         released when the job is over: before on_done (which shows the result), or, if it failed or was cancelled, by showing the picture at the slider."""
         worker = seek.SeekWorker(job)
+        self._search_picture_frame = None
         dialog = self.wait_dialog(message, worker.cancel)
         worker.progress.connect(lambda text: getattr(dialog, "set_text", lambda t: None)(f"{message}, please wait...\n{text}"))
         worker.done.connect(lambda result: (self.release_preview(False), dialog.close(), on_done(result)))
@@ -2469,6 +2485,7 @@ class frmMain(frmMainBase):
         if not self.player.supports_images:
             return
         height, width = array.shape[0], array.shape[1]
+        self._search_picture_frame = frame
         self.player.show_image(QtGui.QImage(array.tobytes(), width, height, width * 3, QtGui.QImage.Format.Format_RGB888).copy())
 
     def _seek_running(self) -> bool:
@@ -2519,6 +2536,21 @@ class frmMain(frmMainBase):
         if seg is None:
             return
         frame = max(seg.first_frame, min(seg.total_frames, frame))
+        if self._search_picture_frame is not None and self.player.supports_images:
+            # The last picture of the search stays on screen; VLC is NOT sent there (no playing of the place). It is brought to the slider position when the slider is moved
+            # again, a marker is set or Play is pressed (_vlc_stale). If the result is not the frame of the last picture (a cut was snapped to), its own picture is read.
+            self._vlc_stale = True
+            self._slider_sync_off = True
+            try:
+                self._go(frame)
+            finally:
+                self._slider_sync_off = False
+            if self._search_picture_frame != frame:
+                self._still_frame = frame
+                self.stills.request(seg.path, frame, seg.fps)
+            self._show_frame_info(frame)
+            debug_log(f"search done at frame {frame}: the picture stays, VLC is not sent there (picture of the search: frame {self._search_picture_frame})")
+            return
         self._go(frame)
         self.display_frame(frame)
         self._show_frame_info(frame)

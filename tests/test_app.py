@@ -6565,7 +6565,40 @@ def test_search_pictures(tmp, videos):
     big = player.log.count("image")
     check(big == len(calls) >= 6, f"the search shows the picture of EVERY probe in the preview, down to the step width 1: {big} of {len(calls)} probes")
     check(getattr(player, "preview", None) is not None and player.preview._args[1:3] == (16, 12), "(it is the picture that the search read: 16 x 12 here)")
-    check(any(l.startswith("show_at") for l in player.log), "and at the end VLC jumps to the result as before")
+    result = win.Slider1.value()
+    check(not any(l.startswith("show_at") or l.startswith("play_at") for l in player.log) and win._vlc_stale and win.last_frame == result and calls[-1] == result,
+          f"at the end the last picture STAYS, VLC is not sent to the result (no show_at): {[l for l in player.log if 'show_at' in l]}")
+    check(player.log.count("image") == len(calls), "(the result is the frame of the last picture: no further picture is read)")
+    # --- VLC is brought to the slider position when the slider moves again ...
+    player.log.clear()
+    win._go(result + 1)
+    shows = [l for l in player.log if l.startswith("show_at")]
+    check(shows == [f"show_at {win.f2t(result + 1)}"] and not win._vlc_stale, f"the slider moves again: VLC is brought to the new position: {shows}")
+    # --- ... a marker is set ...
+    win.mnuEnd_Click()
+    result = win.Slider1.value()
+    player.log.clear()
+    check(win._vlc_stale and not [l for l in player.log if l.startswith("show_at")], "(a second search: the picture stays again)")
+    win.segments[0].end = win.segments[0].total_frames                          # (the start must lie before the end)
+    win.cmdPos_Click(7)                                                         # current frame = start of the segment (marker A)
+    shows = [l for l in player.log if l.startswith("show_at")]
+    check(win.segments[0].start == result and shows and not win._vlc_stale, f"a marker is set: VLC shows that position now: {shows}")
+    # --- ... or Play is pressed: VLC starts at the slider position (not at the old position of the player)
+    win.segments[0].start = 0
+    win.mnuEnd_Click()
+    result = win.Slider1.value()
+    player.log.clear()
+    win.cmdPos_Click(3)
+    check(player.log == [f"play_at {win.f2t(result)}"] and not win._vlc_stale and player.is_playing, f"Play after a search: VLC starts at the slider position: {player.log}")
+    win.cmdPos_Click(3)                                                         # pause
+    # --- the result is not the frame of the last picture (a cut was snapped to): its own picture is read
+    fetched = []
+    win._frame_fn = lambda path, frame, fps: (fetched.append(frame), np.zeros((12, 16, 3), np.uint8))[1]
+    win.stills.grab_fn = win._frame_fn
+    win._search_picture_frame = result - 3
+    player.log.clear()
+    win.seek_done(result)
+    check(fetched == [result] and player.log.count("image") == 1 and win._vlc_stale, f"another frame than the last picture: its picture is read by ffmpeg: {fetched} {player.log}")
     win.settings.set_option("search_pictures", "off")
     calls.clear()
     player.log.clear()
@@ -6577,6 +6610,36 @@ def test_search_pictures(tmp, videos):
     win.mnuEnd_Click()
     check(player.log.count("image") == 0, "a player that cannot show pictures of its own (embed): nothing")
     print("Search pictures: OK (steps, hand-over of the picture, worker, preview, option)")
+
+
+def test_play_at(tmp, videos):
+    """Play after a search: VLC starts at the slider position, also when the medium was only loaded and never started (no pause afterwards, as show_at has)."""
+    import player as pl
+    sim = SimVlc()
+    old = sys.modules.get("vlc")
+    sys.modules["vlc"] = sim.module
+    try:
+        real = pl.MemoryVlcPlayer()
+        mp = real.mp
+        real._path = "/x/film.ts"
+        mp.state = 5                                                         # stopped: the medium was loaded, never started
+        real.play_at(5000)
+        check(mp.media.options == [":start-time=5.000"] and mp.media.path == "/x/film.ts" and mp.state == 1 and real._pending_show is None and real._awaiting_position is None,
+              f"never started: starts at the position with start-time, no pause afterwards: {mp.media.options} state {mp.state}")
+        mp.state = 4                                                         # paused: started already
+        mp.set_times.clear()
+        real.play_at(7000)
+        check(mp.set_times == [7000] and mp.state == 1, f"started: jumps there and plays: {mp.set_times}")
+        fake = pl.FakePlayer()
+        fake.path = "/x"
+        fake.play_at(1234)
+        check(fake.is_playing and fake.time == 1234 and fake.log == ["play_at 1234"], "the replacement player")
+    finally:
+        if old is not None:
+            sys.modules["vlc"] = old
+        else:
+            sys.modules.pop("vlc", None)
+    print("play_at: OK (never started, started)")
 
 
 def test_counting_note(tmp, videos):
@@ -6758,6 +6821,7 @@ def main():
     test_debug_log_lines(tmp, sys.argv[1])
     test_duplicate_preview(tmp, sys.argv[1])
     test_search_pictures(tmp, sys.argv[1])
+    test_play_at(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
     test_wait_dialog(tmp, sys.argv[1])

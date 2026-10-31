@@ -58,6 +58,12 @@ class Player(QtCore.QObject):
         """Shows the picture at `ms` in the paused state (briefly start playback, jump, pause)."""
         raise NotImplementedError
 
+    def play_at(self, ms: int) -> None:
+        """Plays from `ms`. Used when the picture on screen did not come from the player (the pictures of a search stay on screen, see seek_done), so the player is not
+        where the slider is, and may not even have been started."""
+        self.set_time(ms)
+        self.play()
+
     def describe(self) -> str:
         """What the player knows about itself, for the debug log."""
         return ""
@@ -201,6 +207,12 @@ class FakePlayer(Player):
         self._state = "paused"
         self.time_changed.emit(ms)
         self.paused.emit()
+
+    def play_at(self, ms: int) -> None:
+        self.log.append(f"play_at {ms}")
+        self.time = ms
+        self._state = "playing"
+        self.time_changed.emit(ms)
 
     @property
     def is_playing(self) -> bool:
@@ -490,6 +502,25 @@ class VlcPlayer(Player):
                 self.mp.set_media(media)
             self.mp.play()
             self._mute(True)
+            self._start_watchdog()
+
+    def play_at(self, ms: int) -> None:
+        """Plays from `ms`: a medium that is started jumps there and goes on; one that was only loaded (never started) starts there (media option start-time, as in show_at,
+        but without the pause afterwards)."""
+        State = self._vlc.State
+        if self.mp.get_state() in (State.Playing, State.Paused):
+            debug_log(lambda: f"play_at {ms} ms: the medium is started, jump and play ({self.describe()})")
+            self.mp.set_time(ms)
+            self.play()
+        else:
+            debug_log(lambda: f"play_at {ms} ms: new medium {self._path} ({self.describe()})")
+            self._pending_show = self._awaiting_position = None
+            self._last_show = ms
+            if self._path:
+                media = self.instance.media_new_path(self._path)
+                media.add_option(f":start-time={ms / 1000:.3f}")
+                self.mp.set_media(media)
+            self.mp.play()
             self._start_watchdog()
 
     @property
