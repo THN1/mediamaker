@@ -74,7 +74,7 @@ and subtitles in step, also behind the jumps at 11:50 and at the seam of the two
   more pictures than the sum of its segments, `runner.expected_frames` / `total_seconds` use the run. A cut (the second segment starts later, the first ends earlier), different parts of
   the title set or a path with `|` stay separate segments, as before. The list of subtitles takes the numbers of the PACKETS (`first = start - first_frame + U`) and the pieces of all parts of
   a run one after the other. Test `test_dvd_seam` (with the user's real seam pieces: 195 + 184 pictures on their own, 405 behind each other, the file has 405). Changed on purpose:
-  the filter graph test (three parts in a row are ONE input now; parts 1 and 3 give two inputs and the concat filter) and the tolerance of the subtitle times of the queen test (0.1 s).
+  the filter graph test (three parts in a row are ONE input now; parts 1 and 3 give two inputs and the concat filter) and the tolerance of the subtitle times of the DVD test (0.1 s).
 - **Fix: the subtitles began at once instead of after 17 s** (the user, 14 Nov): the question for the start time of the list of subtitles (`ffprobe -f concat`, also in the script as
   `SUBSTART=$(...)`) did not have `subfile` on its protocol whitelist, failed silently, answered 0 and `-itsoffset` was 0 instead of 16.8. Now it has the whitelist; test in
   `test_dvd_subtitle_jump`.
