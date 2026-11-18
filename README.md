@@ -157,7 +157,9 @@ program without `.git` reads a file `COMMIT` next to it) and the versions of Pyt
 
 MediaMaker needs `ffmpeg` and `ffprobe` and VLC (libvlc) on the computer; they are not part of the program (install them with your package manager).
 
-**AppImage** (any Linux distribution, x86_64): download `MediaMaker-1.0-x86_64.AppImage` from the releases page of the project, make it executable (`chmod +x MediaMaker-1.0-x86_64.AppImage`) and start it. Python, PySide6 and the other Python packages are inside.
+If `ffprobe` is missing when a file is opened, MediaMaker says so and, on openSUSE, Debian/Ubuntu, Fedora and Arch, offers to install FFmpeg for you: after "Yes" the package manager runs through `pkexec` (the system asks for the administrator password) and the file is opened. On other systems the message names the package to install. On openSUSE the FFmpeg of the standard repositories lacks H.264 and AAC; for those the [Packman](https://en.opensuse.org/Additional_package_repositories#Packman) repository is needed. VLC is not installed by this offer.
+
+**AppImage** (any Linux distribution, x86_64): download `MediaMaker-1.0-x86_64.AppImage` from the releases page of the project, make it executable (`chmod +x MediaMaker-1.0-x86_64.AppImage`) and start it. Python, PySide6 and the other Python packages are inside; FFmpeg and VLC come from the system (see above).
 
 **From the source** (needs Python 3.10 or newer and the Python packages in `requirements.txt`: PySide6, python-vlc, numpy, Pillow; Arch: `python-pyside6 python-vlc python-numpy python-pillow`; or `python3 -m pip install --user -r requirements.txt`):
 
