@@ -1,6 +1,6 @@
 # Changes
 
-## 1.0 (2026-11-16)
+## 1.0 (2026-11-18)
 
 - Menu entries with a check mark (Copy mode, the profile in use in Load profile) show a small green tick without a check box, the same on every system (before: the check box of Qt's style, which looks different in different Qt versions). The tick is drawn by the program (menustyle.py, a thin layer over the style); MEDIAMAKER_PLAIN_MENU=1 switches it off.
 - The dialogs of the profile and of the options match the main window when it is enlarged (UI_SCALE): they use the font of the main window, and the input fields and the room around the tabs are as much larger as the main window is (125 %: 1.25 times).
