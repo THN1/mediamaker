@@ -7525,9 +7525,9 @@ def test_dvd_mode(tmp, videos):
     check(got_cmds and "-loglevel" not in got_cmds[0] and "-reinit_filter" not in got_cmds[0] and "-itsoffset" not in got_cmds[0] and not any("setpts=N" in x for x in got_cmds[0]) and "-copyts" in got_cmds[0]
           and got_kw == [{}] and win2._last_save is None, f"a save that is not in DVD mode (two title sets): no -loglevel, no -reinit_filter, no counted times, -copyts as before, no frame progress, nothing recorded: {got_kw}")
     # --- real DVD data (a piece of a DVD with five subtitle tracks, only if the file is there)
-    queen = os.path.join(videos, "queen.vob")
-    if os.path.exists(queen):
-        qparts = split_vob(queen, os.path.join(tmp, "queenfx", "VIDEO_TS"))
+    dvd_piece = os.path.join(videos, "VTS_02_1.VOB")
+    if os.path.exists(dvd_piece):
+        qparts = split_vob(dvd_piece, os.path.join(tmp, "vobfx", "VIDEO_TS"))
         os.makedirs(os.path.join(tmp, "dvdwin3"), exist_ok=True)
         win3 = make_window(os.path.join(tmp, "dvdwin3"), thumb_fn=quick_thumbs, fresh=True, first_fn=first_frame_number)
         win3.showEvent(None)
@@ -7541,12 +7541,12 @@ def test_dvd_mode(tmp, videos):
             index = {t.stream_id: t.index for t in track_list.subtitles}
             return tracks.Choice([(0, "eng")], [(index["0x22"], "deu"), (index["0x20"], "eng"), (index["0x24"], "fra")])
         win3.ask_tracks = qask
-        qout = os.path.join(tmp, "dvdwin3", "queen.mkv")
+        qout = os.path.join(tmp, "dvdwin3", "DVD.mkv")
         win3.choose_output = lambda kind=None: qout
         win3.save_video()
-        check(win3.dvd_mode() and shown == [[(0, "0x20"), (1, "0x21"), (2, "0x22"), (3, "0x23"), (4, "0x24")]], f"queen.vob: the dialog offers the five subtitle tracks: {shown}")
+        check(win3.dvd_mode() and shown == [[(0, "0x20"), (1, "0x21"), (2, "0x22"), (3, "0x23"), (4, "0x24")]], f"VTS_02_1.VOB: the dialog offers the five subtitle tracks: {shown}")
         sizes = {}
-        for source, key in ((queen, "src"), (qout, "out")):
+        for source, key in ((dvd_piece, "src"), (qout, "out")):
             j = json.loads(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream=index,id:packet=stream_index,size", "-of", "json", source], capture_output=True, text=True).stdout)
             ids = {x["index"]: x.get("id") for x in j["streams"]}
             for x in j["packets"]:
@@ -7556,11 +7556,11 @@ def test_dvd_mode(tmp, videos):
         for x in j["packets"]:
             times.setdefault(x["stream_index"], []).append(float(x["pts_time"]))
         check(all(len(v) == 6 and all(abs(a - b) < 0.1 for a, b in zip(v, [2.12, 6.42, 13.76, 18.06, 21.36, 27.64])) for v in times.values()),
-              f"queen.vob: the pictures of the subtitles are where the picture is (the cut in relative times, the subtitle list with the start of the file; the parts are one stream now, a piece of the list starts at the stream start time of its part: within 0.1 s of the unsplit file): {[round(t, 3) for t in times.get(2, [])]}")
+              f"VTS_02_1.VOB: the pictures of the subtitles are where the picture is (the cut in relative times, the subtitle list with the start of the file; the parts are one stream now, a piece of the list starts at the stream start time of its part: within 0.1 s of the unsplit file): {[round(t, 3) for t in times.get(2, [])]}")
         want = {2: sizes["src"]["0x22"], 3: sizes["src"]["0x20"], 4: sizes["src"]["0x24"]}
-        check(sizes["out"] == want and all(len(v) == 6 for v in want.values()), f"queen.vob: every subtitle track of the new file holds the six pictures of ITS source id (compared by size): {sizes['out']}")
+        check(sizes["out"] == want and all(len(v) == 6 for v in want.values()), f"VTS_02_1.VOB: every subtitle track of the new file holds the six pictures of ITS source id (compared by size): {sizes['out']}")
     else:
-        print("   (queen.vob is not in the test folder: the test with a real DVD piece is skipped)")
+        print("   (VTS_02_1.VOB is not in the test folder: the test with a real DVD piece is skipped)")
     print("DVD mode: OK (detection, ids, dialog, cancel, copy mode, batch, real files)")
 
 
@@ -7888,7 +7888,7 @@ def test_clip_viewer(tmp, videos):
     finally:
         mediaprobe.display_aspect = original_aspect
     check(clipview.ClipController(files).aspect == "16:9", "the default display format")
-    # --- the display format: 4:3 DVD (the real IFO of the Queen DVD says 4:3) is shown as 4:3, in the viewer and in the preview
+    # --- the display format: 4:3 DVD (the real IFO of the DVD DVD says 4:3) is shown as 4:3, in the viewer and in the preview
     import ifo
     dvd_folder = os.path.join(folder, "VIDEO_TS")
     os.makedirs(dvd_folder, exist_ok=True)
@@ -7937,9 +7937,9 @@ def test_dvd_languages(tmp, videos):
     shutil.copy(os.path.join(HERE, "data", "VTS_02_0.IFO"), real)
     vob7 = os.path.join(folder, "VTS_07_1.VOB")
     open(vob7, "wb").write(b"")
-    queen = ifo.read_languages(vob7)
-    check({k: v[0] for k, v in queen["subtitle"].items()} == {"0x20": "fra", "0x21": "ita", "0x22": "deu", "0x23": "spa", "0x24": "por"} and queen["audio"] == {"0x80": ("", "")},
-          f"the real IFO file: the subtitle tracks 0x20 to 0x24 are fra, ita, deu, spa, por; the sound track has no language: {queen}")
+    dvd_piece = ifo.read_languages(vob7)
+    check({k: v[0] for k, v in dvd_piece["subtitle"].items()} == {"0x20": "fra", "0x21": "ita", "0x22": "deu", "0x23": "spa", "0x24": "por"} and dvd_piece["audio"] == {"0x80": ("", "")},
+          f"the real IFO file: the subtitle tracks 0x20 to 0x24 are fra, ita, deu, spa, por; the sound track has no language: {dvd_piece}")
     # --- the tracks get their languages (not the ones that have one)
     from mediaprobe import Track, TrackList
     audio = [Track("audio", 0, 1, "ac3", stream_id="0x80"), Track("audio", 1, 2, "ac3", stream_id="0x81", language="fra")]
@@ -7988,11 +7988,11 @@ def test_dvd_subtitle_start(tmp, videos):
     check(ffmpeg_cmd.fill_subtitle_start(cmd, "/w/s", Fake("16.800000\n"))[2] == "16.800" and ffmpeg_cmd.fill_subtitle_start(cmd, "/w/s", Fake("-0.080000\n"))[2] == "-0.080"
           and ffmpeg_cmd.fill_subtitle_start(cmd, "/w/s", Fake("N/A\n"))[2] == "0.000" and ffmpeg_cmd.fill_subtitle_start(cmd, "/w/s", Fake(""))[2] == "0.000"
           and ffmpeg_cmd.fill_subtitle_start(["ffmpeg", "-i", "x"], "/w/s", Fake("5\n")) == ["ffmpeg", "-i", "x"], "the start time: filled in, 0 if ffprobe has none, nothing to do without the placeholder")
-    queen = os.path.join(videos, "queen.vob")
-    if not os.path.exists(queen):
-        print("   (queen.vob is not in the test folder: the test of the subtitle start is skipped)")
+    dvd_piece = os.path.join(videos, "VTS_02_1.VOB")
+    if not os.path.exists(dvd_piece):
+        print("   (VTS_02_1.VOB is not in the test folder: the test of the subtitle start is skipped)")
         return
-    parts = split_vob(queen, os.path.join(tmp, "subfx", "VIDEO_TS"))
+    parts = split_vob(dvd_piece, os.path.join(tmp, "subfx", "VIDEO_TS"))
     work = os.path.join(tmp, "subwin")
     os.makedirs(work, exist_ok=True)
     win = make_window(work, thumb_fn=quick_thumbs, fresh=True, first_fn=first_frame_number)

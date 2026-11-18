@@ -114,7 +114,7 @@ break; this cannot be told apart by the logo alone.
   -0.08 s for the same list (it does not look at the first packet), which is why no test of mine saw it (and why the subtitles were 80 ms late there). `ffmpeg_cmd.subtitle_start` asks ffprobe
   (the same build as ffmpeg) for `format=start_time` of the list and the command gives it back with `-itsoffset <time>` in front of the input of the list (placeholder `SUBTITLE_START` in the command,
   filled in by `fill_subtitle_start` when the list has been written; in a batch script the script asks when it runs: `SUBSTART=$(ffprobe ...)`, `case ... N/A ... SUBSTART=0`, `-itsoffset "$SUBSTART"`).
-  Only without `-copyts` (DVD mode); a TV recording has `-copyts` and nothing is subtracted. The subtitle times of queen.vob are now exact (2.12 s for 2.764 - 0.644, 80 ms better than before; the
+  Only without `-copyts` (DVD mode); a TV recording has `-copyts` and nothing is subtracted. The subtitle times of VTS_02_1.VOB are now exact (2.12 s for 2.764 - 0.644, 80 ms better than before; the
   test accepts 60 ms). NOT checked with ffmpeg 9 (I have 6.1). Subtitles BEHIND a jump in the time of the file are still not looked at. **Batch file**: every job has the line
   `# Made by MediaMaker <version>, commit <hash> (<describe>), <date>: <title>[; LOCAL CHANGES ...]` after `# J=` (`batch.job_lines(made_by=)`, `Form.made_by()`); a script may hold jobs of several
   versions, and an old job keeps its old command (the user looked at one without `-reinit_filter 0`). The import ignores the line. The message "Changing video frame properties on the fly is not
@@ -143,7 +143,7 @@ break; this cannot be told apart by the logo alone.
   the jump in the filter graph too (all three right), which is why the fixtures made so far lost nothing. The count of the frames (35134) is right: the earlier idea that the file is only 15 minutes
   long was a wrong conclusion from the shortened output. `ffmpeg_cmd.build_command` puts `setpts=N*1/25/TB` in front of the picture chain and `asetpts=N/48000/TB` in front of every sound chain of a DVD
   structure (`regen`), so that the time is continuous whatever the stream says; the PICTURE span of a trimmed segment starts at (start - first_frame) frames, the sound span and the subtitle list keep
-  the old values (the sound of a DVD part often starts before the picture, 0.48 s in a part of queen.vob; the subtitles were 0.2 to 0.5 s late until this was separated). Tested without relying
+  the old values (the sound of a DVD part often starts before the picture, 0.48 s in a part of VTS_02_1.VOB; the subtitles were 0.2 to 0.5 s late until this was separated). Tested without relying
   on the version of ffmpeg: the command run with `-copyts` (a jump that ffmpeg does not correct) gives all frames with the counted times and 692 of 1016 (the second piece lost) without
   them. The real data of the user (`VTS_02_1_anfang.vob`: the beginning, `VTS_02_1_naht.vob`: the piece around the jump; joined to a file with the same jump to 0.085 s) are used by
   `test_dvd_mode` if both files are in the test folder. Also seen in them: the first three pictures of the file have a doubled time stamp (0.06 s), so the thumbnails of pictures 38 and 39 are missing
@@ -151,7 +151,7 @@ break; this cannot be told apart by the logo alone.
   probably the same fault (to be seen with the next save).
 - **DVD: Cancel says that it stops saving.** After the DVD test of the user (expected 41030, got 23244, the same as 23252 before, so the
   change to relative times did not help there): the segments are 35134 + 5896 frames; 23252 = 17356 + 5896, 17356 = 35134 - 17778 = the part of VTS_02_1.VOB AFTER the jump in its time (packet 17778:
-  710.98 s -> 0.085 s), so it looks as if the part BEFORE the jump is missing, not the second segment; NOT reproduced here (a jump with B pictures from the real queen.vob loses nothing; with
+  710.98 s -> 0.085 s), so it looks as if the part BEFORE the jump is missing, not the second segment; NOT reproduced here (a jump with B pictures from the real VTS_02_1.VOB loses nothing; with
   two pieces the first one survived in the absolute way). The sound of a 10 s piece of the user's output is 1.6 s ahead of the picture (cross correlation of the claps with the movement:
   0.41 at -1600 ms, 0.03 at 0). So the facts are kept now: `record_save` (the ffmpeg command, its messages, expected / written frames, the segments, the streams of the file written, and the last block of
   the progress with `drop_frames` and `dup_frames`) is kept; real saves run with `-loglevel warning` instead of `error` (the runner puts error first, the command's own flag is the
@@ -172,7 +172,7 @@ break; this cannot be told apart by the logo alone.
   lost. `ffmpeg_cmd.build_command` takes the relative way for a DVD structure (`relative`; `-ss` and trim as in VB6, `split_seek`), the list for the subtitles then holds the times in the file (start
   of the file + the jump of -ss, `shift`). Measured at the place where the two pieces meet: the picture turns red at 8.00 s, the tone changes at 7.99 s (13 ms). The hidden 6.5 s before the start in
   the user's test2.mp4 (negative time stamps, hidden by an edit list in the mp4: 915 frames in 30 s) look like the same jump; not checked with the user's files. Tests: `test_dvd_mode` (the jump file
-  `make_jump_vob`, all 400 frames, no -copyts, picture and sound meet; the subtitle times of `queen.vob`); both fail without the change. NOT solved: the subtitles AFTER a jump in the same file
+  `make_jump_vob`, all 400 frames, no -copyts, picture and sound meet; the subtitle times of `VTS_02_1.VOB`); both fail without the change. NOT solved: the subtitles AFTER a jump in the same file
   (the list uses the time as the file gives it, the demuxer cannot know the corrected one); and every other source with jumps (a TV recording) still loses frames, "Frame count differs" tells.
 - **DVD mode** (`dvd.py`; VB6: `DVDMode()` and the form `frmStreams`, which the multitrack dialog replaces). All segments are VOB files `VTS_nn_k.VOB` (k >= 1) of one title set of one folder:
   (1) saving (`save_video` and the batch file) opens the dialog for the tracks whenever there is anything to choose, whether `multitrack` is on or not; Cancel stops saving (as in VB6: streams =
@@ -183,7 +183,7 @@ break; this cannot be told apart by the logo alone.
   streams (`stream` / `exact_stream_id`, `ffmpeg_cmd.subtitle_list_text(entries, stream_ids)`), so that the concat demuxer takes the stream with THIS id from every file; (5) DVD mode has precedence over
   copy mode (`copy_mode_used`), with a note. New: `Track.stream_id`, `mediaprobe.track_list(probe_args=)`, `tracks.key_of / find / audio_spec / merge / to_ids / to_indexes`, `fits(lenient_subtitles)`
   (a subtitle track by id may be missing in a part). Tests: `test_dvd_mode` (units; a DVD made for the test with two tones, in part 3 the sound tracks in the other order; Cancel; copy mode; batch;
-  tests the real DVD piece `queen.vob` from the test folder if it is there: three of its five subtitle tracks arrive in mkv with the six pictures of THEIR source ids, compared by size; fails when the
+  tests the real DVD piece `VTS_02_1.VOB` from the test folder if it is there: three of its five subtitle tracks arrive in mkv with the six pictures of THEIR source ids, compared by size; fails when the
   choice is made by position). Not done: the language codes (the IFO files have them). Known: ffmpeg loses the last event of a DVD subtitle track in an mp4 file (also when it is run alone), mkv keeps all.
 - **While a file is saved the segments cannot be changed.** The save did not block anything (only Save, Save as AVI and Batch were off), so the middle buttons could move or remove segments or clear
   the whole list during the run. `begin_action(..., block="edit")` (the save) now switches off what changes the segments or markers (`edit_controls`: all middle buttons, set marker A and B, reset

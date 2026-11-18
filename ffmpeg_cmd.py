@@ -376,7 +376,7 @@ def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str]
             trim = (rest, trim_end(rest, seg.frames, seg.fps))
             if relative and seek == 0:
                 # The counted time of the PICTURE starts with the first picture, which has the number first_frame; the counted time of the SOUND starts with its first sample, at the start of
-                # the container (the sound of a DVD part often begins before the picture: 0.48 s in a part of queen.vob). So the picture needs its own span: from (start - first_frame) frames.
+                # the container (the sound of a DVD part often begins before the picture: 0.48 s in a part of VTS_02_1.VOB). So the picture needs its own span: from (start - first_frame) frames.
                 rest_v = _ms_floor(Fraction(max(seg.start - seg.first_frame, 0)) / seg.fps)
                 trim_v = (rest_v, trim_end(rest_v, seg.frames, seg.fps))
             if seek > 0:
