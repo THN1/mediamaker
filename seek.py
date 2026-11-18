@@ -44,6 +44,21 @@ def _tail_frames(fps) -> int:
     return max(int(float(fps) * 10), 1)
 
 
+def _progress_reporter(cancel, start: int, total: int):
+    """A function f(n) for the probes of a search: reports to the progress bar how far the search has got (the furthest frame looked at, between the start and the end of the
+    movie, at most 97 %: the rest is the last steps). Does nothing if the control has no fraction (the tests)."""
+    report = getattr(cancel, "fraction", None)
+    state = {"far": start}
+    span = max(total - start, 1)
+
+    def update(n: int) -> None:
+        if report is None:
+            return
+        state["far"] = max(state["far"], n)
+        report(min((state["far"] - start) / span, 0.97))
+    return update
+
+
 def _accepts(fn, name: str) -> bool:
     """Does the function take the keyword `name`? (The search functions of the tests do not take on_image.)"""
     try:
@@ -105,11 +120,12 @@ def seek_border(path, fps, total, pos, value, equal, stepping, opts, border_fn=b
     step_now = {"width": stepping}
     images = picture is not None and _accepts(border_fn, "on_image")
     debug_log(f"border search from frame {shown(pos)}: looking for {'border about' if equal else 'border different from'} {value} "
-              f"(tolerance {int(opts.get('border_tol', 3))}), step width {stepping}, end at {shown(total)}")
+              f"(tolerance {int(opts.get('tolerance', 3))}), step width {stepping}, end at {shown(total)}")
 
-    tolerance = int(opts.get("border_tol", 3))
+    tolerance = int(opts.get("tolerance", 3))
     last_read: list = []                                         # the frames that could be read
     hits: set = set()                                            # the frames that have what is looked for
+    reached = _progress_reporter(cancel, pos, total)
 
     def border_of(n: int) -> int:
         if cancel():
@@ -122,6 +138,7 @@ def seek_border(path, fps, total, pos, value, equal, stepping, opts, border_fn=b
                 raise SeekEndReached(n) from e
             raise
         last_read.append(n)
+        reached(n)
         if border_hit(found, value, equal, tolerance):
             hits.add(n)
         if stats is not None:
@@ -176,6 +193,7 @@ def seek_logo(path, fps, total, pos, ref, equal, stepping, opts, conf_fn=confide
     min_conf = float(opts.get("logo_conf", 0.2))
     last_read: list = []
     hits: set = set()
+    reached = _progress_reporter(cancel, pos, total)
 
     def conf_of(n: int) -> float:
         check()
@@ -187,6 +205,7 @@ def seek_logo(path, fps, total, pos, ref, equal, stepping, opts, conf_fn=confide
                 raise SeekEndReached(n) from e
             raise
         last_read.append(n)
+        reached(n)
         if logo_hit(found, equal, min_conf):
             hits.add(n)
         if stats is not None:
@@ -222,7 +241,8 @@ class SeekWorker(QtCore.QThread):
 
     done = QtCore.Signal(int)                       # frame found
     failed = QtCore.Signal(str)
-    progress = QtCore.Signal(str)                   # intermediate result for the wait window
+    progress = QtCore.Signal(str)                   # intermediate result: the text after the name of the job in the progress bar
+    fraction = QtCore.Signal(float)                 # how far the job has got, 0 to 1 (the percentage of the progress bar)
     picture = QtCore.Signal(int, object)            # a picture that the search has read (frame, rgb array) while the step width is at least PICTURE_MIN_STEP
 
     def __init__(self, job: Callable[[Callable[[], bool]], int]):
@@ -245,6 +265,9 @@ class SeekWorker(QtCore.QThread):
 
             def note(self, text: str) -> None:
                 worker.note(text)
+
+            def fraction(self, value: float) -> None:
+                worker.fraction.emit(float(max(0.0, min(1.0, value))))
 
             def picture(self, frame: int, img, step: int) -> None:
                 if step >= PICTURE_MIN_STEP:

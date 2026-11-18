@@ -29,6 +29,9 @@ class Player(QtCore.QObject):
         """Set the video area (a control of the user interface)."""
         raise NotImplementedError
 
+    def fit(self, widget) -> None:
+        """The video area has got another size (the form is scaled after the player was attached): the picture follows."""
+
     def shutdown(self) -> None:
         """End playback and release all resources. Must run before the window is closed and may be
                 called several times."""
@@ -69,6 +72,8 @@ class Player(QtCore.QObject):
         return ""
 
     supports_images = False                                  # can the program put its own pictures into the preview (show_image)? Only the memory player.
+    images_only = False                                      # True while a search shows its pictures: the player draws nothing of its own then (a late picture of VLC, e.g. the first
+                                                             # picture of the segment, would flicker in between)
 
     def show_image(self, image) -> None:
         """Shows a picture (QImage) from outside in the preview (the still pictures of ffmpeg, see stills.py)."""
@@ -139,7 +144,7 @@ def debug_log(text) -> None:
     """With MEDIAMAKER_DEBUG=1 events and jumps of the playback are logged in mediamaker_debug.log. `text` can be a function that makes the text: it is only called
     when the log is on (what it asks of VLC costs time and must not happen otherwise)."""
     if os.environ.get("MEDIAMAKER_DEBUG"):
-        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "mediamaker_debug.log"), "a") as fh:
+        with open(__import__("version").debug_log_path(), "a") as fh:
             fh.write(log_line(text() if callable(text) else text))
 
 
@@ -154,6 +159,7 @@ class FakePlayer(Player):
         self.aspect = ""
         self._state = "stopped"
         self.attached = None
+        self.fitted = []
         self.shut_down = False
         self.log: list[str] = []
 
@@ -163,6 +169,9 @@ class FakePlayer(Player):
 
     def attach(self, widget) -> None:
         self.attached = widget
+
+    def fit(self, widget) -> None:
+        self.fitted.append(widget)
 
     def load(self, path: str, size: Optional[tuple] = None) -> None:
         self.path, self.time, self.size = path, 0, size
@@ -600,7 +609,7 @@ class MemoryVlcPlayer(VlcPlayer):
         freezing of the preview after about 20 jumps, which came from the video output of VLC, can no longer occur.
     """
 
-    frame_ready = QtCore.Signal(object)                          # (bytes, width, height) in the Qt thread
+    FRAME_POLL_MS = 8                                            # how often the Qt thread looks for a new picture of VLC
 
     def __init__(self, extra_args: str = ""):
         super().__init__(extra_args)
@@ -611,12 +620,23 @@ class MemoryVlcPlayer(VlcPlayer):
         self._size = (0, 0)
         self._buf = None
         self._video_callbacks = []                               # never release: libvlc might still call them
-        self.frame_ready.connect(self._on_frame)
+        # The VLC thread only stores the picture (plain Python, no Qt call at all: a Qt signal with a Python object from a thread that Qt does not know
+        # damaged reference counts - "free(): invalid pointer", "deallocating None" at the end of the program); the Qt thread fetches it with a timer.
+        self._frame_lock = threading.Lock()
+        self._latest_frame = None
+        self._frame_timer = QtCore.QTimer(self)
+        self._frame_timer.setInterval(self.FRAME_POLL_MS)
+        self._frame_timer.timeout.connect(self._poll_frame)
+        self._frame_timer.start()
 
     def attach(self, widget) -> None:
         self.surface = VideoSurface(widget)
         self.surface.setGeometry(0, 0, widget.width(), widget.height())
         self.surface.show()
+
+    def fit(self, widget) -> None:
+        if self.surface is not None:
+            self.surface.setGeometry(0, 0, widget.width(), widget.height())
 
     def _install(self, width: int, height: int) -> None:
         """Set up memory area and callbacks for a video of this size (only call in the paused state)."""
@@ -637,13 +657,19 @@ class MemoryVlcPlayer(VlcPlayer):
         @deco.VideoDisplayCb
         def display(opaque, picture):                            # runs in the VLC thread: pass a copy on to Qt
             if not self._closed:
-                self.frame_ready.emit((bytes(buf), width, height))
+                frame = (bytes(buf), width, height)
+                with self._frame_lock:
+                    self._latest_frame = frame
 
         self._video_callbacks.append((lock, display, buf))
         self.mp.video_set_callbacks(lock, None, display, None)
         self.mp.video_set_format("RV32", width, height, width * 4)
         self.mp.video_set_aspect_ratio(f"{width}:{height}")      # picture fills the memory area without black borders of its own
         debug_log(f"memory output {width}x{height}")
+
+    def shutdown(self) -> None:
+        self._frame_timer.stop()
+        super().shutdown()
 
     def _after_recover(self) -> None:
         size, self._size = self._size, (0, 0)                    # the new media player knows nothing yet: install the video callbacks again
@@ -657,11 +683,20 @@ class MemoryVlcPlayer(VlcPlayer):
         super()._position_reached(ms)
         self.mp.set_time(ms)
 
+    def _poll_frame(self) -> None:
+        """In the Qt thread: shows the newest picture that the VLC thread has stored (pictures that came in between are not needed)."""
+        with self._frame_lock:
+            frame, self._latest_frame = self._latest_frame, None
+        if frame is not None and not self._closed:
+            self._on_frame(frame)
+
     def _on_frame(self, frame) -> None:
         data, width, height = frame
         self._progress += 1
         if self._awaiting_position is not None:
             return                                           # VLC still shows the wrong position (e.g. the start of the file)
+        if self.images_only:
+            return                                           # a search shows its own pictures: nothing of VLC in between
         self._reloads = 0
         if self.surface is not None and not self._closed:
             image = QtGui.QImage(data, width, height, width * 4, QtGui.QImage.Format.Format_RGB32).copy()
@@ -682,7 +717,7 @@ class MemoryVlcPlayer(VlcPlayer):
             QtCore.QTimer.singleShot(self.SEEK_CHECK_MS, lambda: self._verify_seek(ms, before))
 
     def _verify_seek(self, ms: int, frames_before: int) -> None:
-        if self._closed or self._awaiting_position is not None or self._last_seek != ms:
+        if self._closed or self._awaiting_position is not None or self._last_seek != ms or self.images_only:
             return                                               # superseded: another jump has come in the meantime
         if self._frames_shown == frames_before and self.mp.get_state() == self._vlc.State.Paused:
             self._reloads += 1

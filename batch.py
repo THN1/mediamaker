@@ -14,6 +14,7 @@ import os
 import re
 
 import containers
+import ffmpeg_cmd
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
@@ -36,7 +37,8 @@ def bash_quote(arg: str) -> str:
 
 
 def command_line(args: Iterable[str]) -> str:
-    return " ".join(bash_quote(a) for a in args)
+    """The command as a line of the script; the placeholder for the start time of the list of subtitles becomes the variable that the script has set (see job_lines)."""
+    return " ".join('"$SUBSTART"' if a == ffmpeg_cmd.SUBTITLE_START else bash_quote(a) for a in args)
 
 
 def encode_block(prefix: str, text: str) -> list[str]:
@@ -91,12 +93,14 @@ def map_list_text(text: str, rules: list) -> str:
 
 
 def job_lines(job: Job, command: list[str], chapters: Optional[str] = None, chapters_run: Optional[str] = None, copy_list: Optional[str] = None,
-              copy_mode: bool = False, extra_files: Optional[dict] = None) -> list[str]:
+              copy_mode: bool = False, extra_files: Optional[dict] = None, made_by: str = "") -> list[str]:
     """The lines of one job: comments with the whole job, masks, the files that the call needs, the ffmpeg call, clean-up.
     `chapters` is the text of the chapters file as it is kept in the program (the comment K= for a later import); `chapters_run` the text that the
     script writes for ffmpeg (it is the same, unless copy mode made other times: the whole files); the command then has to read chapters_temp(output).
     `copy_mode`: M=copy, no masks (copy mode has no filters); `copy_list`: the text of the list of files (the command then has to read list_temp(output))."""
     lines = [f"# J={job.output}"]
+    if made_by:
+        lines.append("# " + made_by.replace("\n", " "))                 # which version made this job (a script may hold jobs of several versions)
     lines += encode_block("P", format_kv(job.profile))
     lines += encode_block("T", format_kv(job.options))
     lines += encode_block("C", segments_to_csv(job.segments))
@@ -120,6 +124,11 @@ def job_lines(job: Job, command: list[str], chapters: Optional[str] = None, chap
         lines += text.rstrip("\n").split("\n")
         lines.append(SUBS_END)
         temps.append(path)
+    if ffmpeg_cmd.SUBTITLE_START in command:
+        # the start time that ffmpeg will subtract from the times of the list of subtitles (see ffmpeg_cmd.subtitle_start), asked of ffprobe when the script runs
+        list_path = command[command.index(ffmpeg_cmd.SUBTITLE_START) + 6]
+        lines.append("SUBSTART=$(" + command_line(ffmpeg_cmd.subtitle_start_args(list_path)) + " 2>/dev/null | head -n 1)")
+        lines.append('case "$SUBSTART" in ""|N/A) SUBSTART=0 ;; esac')
     lines.append(command_line(command))
     lines.append(CLEANUP)
     for path in temps:
@@ -181,7 +190,7 @@ def parse_jobs(text: str) -> list:
 
 
 def build_script(job: Job, command: list[str], old_text: Optional[str] = None, chapters: Optional[str] = None, chapters_run: Optional[str] = None,
-                 copy_list: Optional[str] = None, copy_mode: bool = False, extra_files: Optional[dict] = None) -> str:
+                 copy_list: Optional[str] = None, copy_mode: bool = False, extra_files: Optional[dict] = None, made_by: str = "") -> str:
     """Text of the batch file. With `old_text` (the existing file) its earlier jobs are kept but switched off: every line that is
     not a comment gets '# ' in front (the comments stay, so the old jobs can still be imported)."""
     lines = [SHEBANG]
@@ -190,7 +199,7 @@ def build_script(job: Job, command: list[str], old_text: Optional[str] = None, c
         if old and old[0].startswith("#!"):
             old = old[1:]
         lines += [line if line.startswith("#") else "# " + line for line in old]
-    lines += job_lines(job, command, chapters, chapters_run, copy_list, copy_mode, extra_files)
+    lines += job_lines(job, command, chapters, chapters_run, copy_list, copy_mode, extra_files, made_by)
     return "\n".join(lines) + "\n"
 
 

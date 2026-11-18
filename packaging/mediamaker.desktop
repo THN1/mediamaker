@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=MediaMaker
+GenericName=Video cutter
+Comment=Cuts and joins videos, finds commercial breaks in TV recordings
+Exec=mediamaker %F
+Icon=mediamaker
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+MimeType=video/mp2t;video/mp4;video/x-matroska;video/x-msvideo;
+StartupNotify=true

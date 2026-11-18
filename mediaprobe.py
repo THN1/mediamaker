@@ -8,7 +8,10 @@ program can recognise and show uncertain values.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Optional
@@ -20,6 +23,10 @@ KNOWN_FPS = [Fraction(24000, 1001), Fraction(24), Fraction(25), Fraction(30000, 
 
 class ProbeError(Exception):
     pass
+
+
+class ToolMissing(ProbeError):
+    """ffprobe is not installed."""
 
 
 @dataclass
@@ -62,12 +69,49 @@ class MediaInfo:
     warnings: list[str] = field(default_factory=list)
 
 
+def distro_ids(os_release: str = "/etc/os-release") -> set:
+    """ID and ID_LIKE of /etc/os-release (lower case)."""
+    try:
+        with open(os_release, encoding="utf-8") as f:
+            text = f.read().lower()
+    except OSError:
+        return set()
+    ids = set()
+    for line in text.splitlines():
+        if line.startswith(("id=", "id_like=")):
+            ids.update(line.split("=", 1)[1].strip().strip('"').split())
+    return ids
+
+
+def install_command(os_release: str = "/etc/os-release") -> Optional[list]:
+    """The command (without the rights of the administrator) that installs FFmpeg with the package manager of this system, None if the system is not known."""
+    ids = distro_ids(os_release)
+    if ids & {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "suse", "sles"}:
+        return ["zypper", "--non-interactive", "install", "ffmpeg"]
+    if ids & {"debian", "ubuntu"}:
+        return ["apt-get", "install", "-y", "ffmpeg"]
+    if ids & {"fedora", "rhel", "centos"}:
+        return ["dnf", "install", "-y", "ffmpeg-free"]
+    if ids & {"arch", "manjaro"}:
+        return ["pacman", "-S", "--noconfirm", "ffmpeg"]
+    return None
+
+
+def install_hint(program: str, os_release: str = "/etc/os-release") -> str:
+    """Text for a missing helper program (ffprobe/ffmpeg are not in the AppImage, they come from the system): how to install it with the package manager."""
+    command = install_command(os_release)
+    how = "sudo " + " ".join(c for c in command if c not in ("--non-interactive", "-y", "--noconfirm")) if command else 'the package "ffmpeg" of your distribution'
+    if command and command[0] == "zypper":
+        how += "\n(H.264/AAC need the Packman repository: https://en.opensuse.org/Additional_package_repositories#Packman)"
+    return f"{program} is part of FFmpeg and is not included in MediaMaker.\nPlease install it with the package manager:\n{how}"
+
+
 def _run_ffprobe(args: list[str], ffprobe: str) -> dict:
     cmd = [ffprobe, "-v", "error", "-print_format", "json", *args]
     try:
         res = subprocess.run(cmd, capture_output=True, check=True, stdin=subprocess.DEVNULL)
     except FileNotFoundError as e:
-        raise ProbeError(f"ffprobe not found: {ffprobe}") from e
+        raise ToolMissing(f"ffprobe not found: {ffprobe}.\n" + install_hint("ffprobe")) from e
     except subprocess.CalledProcessError as e:
         raise ProbeError(e.stderr.decode(errors="replace").strip() or "ffprobe failed") from e
     return json.loads(res.stdout or b"{}")
@@ -159,6 +203,8 @@ class Track:
     bitrate: int = 0
     hearing_impaired: bool = False
     audio_description: bool = False
+    stream_id: str = ""       # the id of the stream in the file as ffprobe gives it ("0x80": the sound track of a DVD), lower case; "" if there is none. It is the same in every part of a DVD,
+                              # the position (index) is not: every part is probed on its own and the streams are numbered in the order in which their first packets turn up
 
 
 @dataclass
@@ -174,9 +220,10 @@ class TrackList:
 IGNORED_SUBTITLES = ("dvb_teletext",)
 
 
-def track_list(path: str, ffprobe: str = "ffprobe") -> TrackList:
-    """The audio and subtitle tracks of a file (fast: only the list of the streams is read). Teletext tracks are not listed, but counted in `index`."""
-    data = _run_ffprobe(["-show_entries", "stream=codec_type,codec_name,channels,bit_rate:stream_tags=language,title:stream_disposition=hearing_impaired,visual_impaired,descriptions", path], ffprobe)
+def track_list(path: str, ffprobe: str = "ffprobe", probe_args: tuple = ()) -> TrackList:
+    """The audio and subtitle tracks of a file (fast: only the list of the streams is read). Teletext tracks are not listed, but counted in `index`.
+    probe_args: more arguments for ffprobe in front of the others (DVD: a longer look, see dvd.PROBE_ARGS: a subtitle stream that does not turn up early would be missed)."""
+    data = _run_ffprobe([*probe_args, "-show_entries", "stream=codec_type,codec_name,channels,bit_rate,id:stream_tags=language,title:stream_disposition=hearing_impaired,visual_impaired,descriptions", path], ffprobe)
     audio, subtitles, counts = [], [], {"audio": 0, "subtitle": 0}
     for s in data.get("streams", []):
         kind = s.get("codec_type")
@@ -190,7 +237,8 @@ def track_list(path: str, ffprobe: str = "ffprobe") -> TrackList:
         tags, disp = s.get("tags", {}), s.get("disposition", {})
         target = audio if kind == "audio" else subtitles
         target.append(Track(kind, index, len(target) + 1, codec, str(tags.get("language", "")).lower(), str(tags.get("title", "")), int(s.get("channels") or 0),
-                            int(float(s.get("bit_rate") or 0)), bool(disp.get("hearing_impaired")), bool(disp.get("visual_impaired") or disp.get("descriptions"))))
+                            int(float(s.get("bit_rate") or 0)), bool(disp.get("hearing_impaired")), bool(disp.get("visual_impaired") or disp.get("descriptions")),
+                            str(s.get("id", "")).lower()))
     return TrackList(audio, subtitles)
 
 
@@ -211,7 +259,10 @@ def display_aspect(path: str, ffprobe: str = "ffprobe") -> Optional[float]:
         return None
 
 
-def count_video_packets(path: str, ffprobe: str = "ffprobe", on_start=None) -> tuple[int, int, float]:
+PROGRESS_EVERY = 2000                       # count_video_packets: after how many packets the progress is reported
+
+
+def count_video_packets(path: str, ffprobe: str = "ffprobe", on_start=None, on_progress=None) -> tuple[int, int, float]:
     """Counts the decodable video frames via the packets (reads the whole file, but does not decode).
 
         Returns: (usable packets, discarded packets, PTS of the first keyframe).
@@ -221,20 +272,37 @@ def count_video_packets(path: str, ffprobe: str = "ffprobe", on_start=None) -> t
         these packets. If there is no keyframe at all, all packets are counted.
 
         on_start(process) receives the started ffprobe process so that the caller can terminate it if needed
-        (counting takes minutes for long recordings on a network drive).
+        (counting takes minutes for long recordings on a network drive). on_progress(seconds) is called now and then with the seconds that have been read so far, counted from the first
+        packet (the times of a TV recording do not begin at 0), so that the caller can show how far the counting has got. ffprobe runs with a low priority (nice) so that the preview and the thumbnails are not slowed down.
     """
     cmd = [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,flags",
            "-of", "csv=p=0", path]
+    nice = shutil.which("nice")
+    if nice and os.name == "posix":
+        cmd = [nice, "-n", "10"] + cmd
     try:
-        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        errors = tempfile.TemporaryFile("w+")                    # (a pipe that nobody reads while the lines are being read could block ffprobe)
+        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errors, text=True)
     except FileNotFoundError as e:
-        raise ProbeError(f"ffprobe not found: {ffprobe}") from e
+        raise ToolMissing(f"ffprobe not found: {ffprobe}.\n" + install_hint("ffprobe")) from e
     if on_start:
         on_start(proc)
-    out, err = proc.communicate()
+    rows = []
+    base = None
+    for line in proc.stdout:
+        if line.strip():
+            rows.append(line.strip().split(","))
+            if base is None:
+                base = _float(rows[0][0], None) if rows[0][0] not in ("", "N/A") else None
+            if on_progress and len(rows) % PROGRESS_EVERY == 0 and base is not None:
+                on_progress(max(0.0, _float(rows[-1][0], base) - base))
+    proc.wait()
     if proc.returncode != 0:
-        raise ProbeError(err.strip() or "ffprobe failed or was cancelled")
-    rows = [line.split(",") for line in out.splitlines() if line.strip()]
+        errors.seek(0)
+        text = errors.read().strip()
+        errors.close()
+        raise ProbeError(text or "ffprobe failed or was cancelled")
+    errors.close()
     first_key = next((i for i, r in enumerate(rows) if len(r) > 1 and "K" in r[1]), None)
     if first_key is None:
         return len(rows), 0, 0.0

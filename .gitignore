@@ -14,3 +14,11 @@ mediamaker_debug.log
 /tmp/
 sessions/
 debug/
+
+# private development notes (not public): documentation of Deploy / Create debug package
+CHANGELOG_PRIVATE.md
+
+# packaging output
+packaging/appimage/build/
+packaging/appimage/out/
+packaging/appimage/appimagetool-*

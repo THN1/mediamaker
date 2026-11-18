@@ -729,3 +729,21 @@ def name_of(code: str) -> str:
 def suggestion(code: str):
     """For a wrong input: a code that was probably meant (a two letter code of ISO 639-1: de -> deu), or None."""
     return ONE_TO_T.get((code or "").strip().lower())
+
+
+# The languages that turn up most on DVDs and in TV recordings (the drop-down list of the language code offers them in DVD mode, behind the codes that the files themselves have)
+COMMON = ("eng", "deu", "fra", "spa", "ita", "por", "nld", "swe", "nor", "dan", "fin", "pol", "ces", "hun", "rus", "tur", "ell", "jpn", "zho", "kor", "ara", "heb", "hin", "und")
+
+
+def entry(code: str) -> str:
+    """The line of the drop-down list for a code: 'deu (German)'; the code alone if the name is not known."""
+    name = name_of(code)
+    return f"{code} ({name})" if name else code
+
+
+def plain(text: str) -> str:
+    """What was typed or picked: 'deu (German)' -> 'deu'; everything else unchanged."""
+    text = (text or "").strip()
+    if len(text) > 4 and text[:3].isalpha() and text[3:5] == " (" and text.endswith(")"):
+        return text[:3]
+    return text

@@ -16,13 +16,16 @@ import tracks
 BANNER_STYLE = "background: #e1effa; color: #17354d; border: 1px solid #9bc9ec; border-radius: 3px; padding: 8px;"
 ERROR_STYLE = "color: #b3261e;"
 MUTED_STYLE = "color: gray;"
-CANCEL_TEXT = "Cancel: only the main audio track of the source file is used, and no subtitles."
+DEFAULTS = "defaults"                  # what run_dialog returns when the button Defaults is pressed (a choice, None and DEFAULTS are the three outcomes)
+BUTTON_TEXT = ("OK: use this choice. Defaults: only the main audio track, no subtitles (the normal way without this dialog). "
+               "Cancel: stop saving, no file is written.")
 
 
 class TracksDialog(QtWidgets.QDialog):
-    def __init__(self, model: tracks.TracksModel, file_text: str, parent=None):
+    def __init__(self, model: tracks.TracksModel, file_text: str, parent=None, source_note: str = ""):
         super().__init__(parent)
         self.model = model
+        self.defaults = False                                            # True: the button Defaults closed the dialog
         self.setWindowTitle("Audio and subtitle tracks")
         c = containers.info(model.output)
         target = f"Saving as {model.output.replace(chr(92), '/').rsplit('/', 1)[-1]}" + (f" · {c.name}" if c else "")
@@ -33,6 +36,10 @@ class TracksDialog(QtWidgets.QDialog):
         sub = QtWidgets.QLabel(target)
         sub.setStyleSheet(MUTED_STYLE)
         layout.addWidget(sub)
+        if source_note:
+            self.source_label = QtWidgets.QLabel(source_note)
+            self.source_label.setStyleSheet(MUTED_STYLE)
+            layout.addWidget(self.source_label)
         self.tabs = QtWidgets.QTabWidget()
         layout.addWidget(self.tabs)
         self.widgets: dict = {"audio": [], "subtitle": []}              # per kind: one dict per row (track, language, note)
@@ -49,10 +56,14 @@ class TracksDialog(QtWidgets.QDialog):
         self.error.setStyleSheet(ERROR_STYLE)
         layout.addWidget(self.error)
         bottom = QtWidgets.QHBoxLayout()
-        note = QtWidgets.QLabel(CANCEL_TEXT)
+        note = QtWidgets.QLabel(BUTTON_TEXT)
         note.setWordWrap(True)
         note.setStyleSheet(MUTED_STYLE)
         bottom.addWidget(note, 1)
+        self.defaults_button = QtWidgets.QPushButton("Defaults")
+        self.defaults_button.setToolTip("Go on with only the main audio track and no subtitles")
+        self.defaults_button.clicked.connect(self.use_defaults)
+        bottom.addWidget(self.defaults_button)
         self.buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
@@ -126,14 +137,22 @@ class TracksDialog(QtWidgets.QDialog):
         if ok is not None:
             ok.setEnabled(not model.errors())
 
+    def use_defaults(self) -> None:
+        """The button Defaults: go on without a choice (the caller decides what the defaults are)."""
+        self.defaults = True
+        self.accept()
+
     def choice(self) -> tracks.Choice:
         return self.model.choice()
 
 
-def run_dialog(parent, track_list, output: str, file_text: str, initial: Optional[tracks.Choice] = None, main_audio: int = 0) -> Optional[tracks.Choice]:
-    """Shows the dialog. The choice, or None for Cancel."""
-    dialog = TracksDialog(tracks.TracksModel(track_list, output, initial, main_audio), file_text, parent)
+def run_dialog(parent, track_list, output: str, file_text: str, initial: Optional[tracks.Choice] = None, main_audio: int = 0, dvd: bool = False, source_note: str = ""):
+    """Shows the dialog. Returns the choice (OK), DEFAULTS (the button Defaults: go on with the defaults) or None (Cancel: stop saving). dvd (DVD mode): the stream id of every track
+    is part of its line. source_note: where the languages come from (DVD mode: the IFO file), shown under the file name."""
+    dialog = TracksDialog(tracks.TracksModel(track_list, output, initial, main_audio, dvd), file_text, parent, source_note)
     try:
-        return dialog.choice() if dialog.exec() else None
+        if not dialog.exec():
+            return None
+        return DEFAULTS if dialog.defaults else dialog.choice()
     finally:
         dialog.deleteLater()

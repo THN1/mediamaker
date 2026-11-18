@@ -20,7 +20,7 @@ PRESETS = {
     "ar": ["44100", "48000"],
     "acodec_in": ["mp2", "ac3", "aac", "mp3", "eac3", "dts"],
     "acodec_out": ["aac", "ac3", "mp3"],
-    "pad": ["False", "True"],
+    "pad": ["off", "on"],
     "multitrack": ["off", "on"],
     "player": ["memory", "embed"],
     "dialog_style": ["tabs", "list"],
@@ -33,9 +33,20 @@ PRESETS = {
 }
 
 
+def onoff(value: str) -> str:
+    """"on" / "off" for the values of an on/off parameter, also the old True / False (old INI files and jobs); anything else stays as it is."""
+    v = str(value).strip()
+    return {"true": "on", "on": "on", "false": "off", "off": "off"}.get(v.lower(), v)
+
+
+def is_on(value: str) -> bool:
+    return onoff(value) == "on"
+
+
 def ordered_profile(p: dict) -> dict:
-    """Profile with `pad` (default False) in the order of PROFILE_KEYS; unknown keys follow at the end."""
-    q = {"pad": "False", **p}
+    """Profile with `pad` (on/off, default off) in the order of PROFILE_KEYS; unknown keys follow at the end."""
+    q = {"pad": "off", **p}
+    q["pad"] = onoff(q["pad"])
     ordered = {k: q[k] for k in PROFILE_KEYS if k in q}
     ordered.update({k: v for k, v in q.items() if k not in ordered})
     return ordered
@@ -44,8 +55,8 @@ def ordered_profile(p: dict) -> dict:
 def validate_profile(p: dict) -> list[str]:
     """List of understandable error messages; empty = OK."""
     errors = []
-    if "pad" in p and p["pad"] not in ("True", "False"):
-        errors.append('"pad" must be True or False.')
+    if "pad" in p and p["pad"] not in ("on", "off"):
+        errors.append('"pad" must be on or off.')
     for key in REQUIRED_PROFILE_KEYS:
         if not p.get(key, "").strip():
             errors.append(f'"{key}" must not be empty.')
@@ -74,7 +85,7 @@ def _float(value: str) -> Optional[float]:
 
 
 # options that no longer appear in the dialog:
-REMOVED_OPTIONS = {"focus", "pad", "logo_fill", "fill_sigma", "mask_fill", "mask_grow", "logo_rewind", "multilanguage", "subtitle"}   # focus: no effect; pad: now belongs to the profile;
+REMOVED_OPTIONS = {"focus", "pad", "logo_fill", "fill_sigma", "mask_fill", "mask_grow", "logo_rewind", "multilanguage", "subtitle", "avidemux", "cutpoint_avidemux", "ui_scale"}   # avidemux, cutpoint_avidemux: Avidemux was replaced by the viewer of the program; focus: no effect; pad: now belongs to the profile;
                                                                                          # logo_fill ... mask_grow: tried for the logo mask and dropped again; logo_rewind: the rewinding after a logo search was removed
 # options that were renamed (old name -> new name); the value moves at the start (old INI files):
 def multitrack_from_old(options: dict) -> bool:
@@ -82,20 +93,20 @@ def multitrack_from_old(options: dict) -> bool:
     return options.get("multilanguage") == "True" or options.get("subtitle", "0") not in ("0", "")
 
 
-RENAMED_OPTIONS = {"overlap": "dedup"}      # "Overlap segments" is "Dedup scene" now
+RENAMED_OPTIONS = {"overlap": "dedup", "border_tol": "tolerance"}      # "Overlap segments" is "Dedup scene" now
 HIDDEN_OPTIONS = {"logo_edge", "cut_diff"}   # for advanced users only, they are only in the INI file (logo_conf and logo_extra are on the page Logo of the options dialog)
 
 # grouping of the options dialog: (tab, keys)
 ADVANCED_OPTIONS = {"Logo": ("logo_conf", "logo_extra")}      # {page: keys}: on the page they appear only under the check box "Show advanced options" (see dialogs.edit_pairs)
 
 OPTION_GROUPS = (
-    ("Borders", ("crop", "blackness", "allowance", "border_tol")),
+    ("Borders", ("crop", "blackness", "allowance", "tolerance")),
     ("Seeking", ("pause", "dedup", "step_end", "step_next", "cut_window", "search_pictures")),
     ("Logo", ("overlay_opacity", "logo_conf", "logo_extra")),
     ("Audio/Subtitles", ("audio", "multitrack", "aflags")),
     ("Batch", ("path_map", "batch")),
-    ("Technical", ("floor", "detect", "player", "vlc_args", "hide_messages", "dialog_style", "file_dialog", "sessions_dir", "restore_backup", "copy_mode_notice", "paused_preview", "cutpoint_filters")),
-    ("Tools", ("avidemux", "vlc", "terminal")),
+    ("Technical", ("floor", "detect", "player", "vlc_args", "hide_messages", "dialog_style", "file_dialog", "sessions_dir", "restore_backup", "copy_mode_notice", "paused_preview", "cutpoint_filters", "known_files", "cutpoint_length")),
+    ("Tools", ("vlc", "terminal")),
 )
 
 
@@ -116,7 +127,7 @@ def validate_options(o: dict) -> list[str]:
     errors = []
     ranges = {"crop": (0, 288), "floor": (0, 60), "blackness": (0, 255), "allowance": (0, 10 ** 7), "dedup": (0, 10 ** 6),
               "audio": (1, 99), "pause": (0, 10 ** 5), "detect": (0, 10 ** 8), "step_end": (1, 3600), "step_next": (1, 36000),
-              "border_tol": (0, 50), "logo_edge": (1, 255), "cut_window": (0, 50), "cut_diff": (1, 255), "overlay_opacity": (0, 100)}
+              "tolerance": (0, 50), "logo_edge": (1, 255), "cut_window": (0, 50), "cut_diff": (1, 255), "overlay_opacity": (0, 100), "known_files": (0, 10 ** 5), "cutpoint_length": (2, 120)}
     for key, (lo, hi) in ranges.items():
         if key in o:
             v = _int(o[key])
@@ -132,7 +143,7 @@ def validate_options(o: dict) -> list[str]:
         if not equals or not source.strip() or not target.strip():
             errors.append('"path_map" must be a list of source=target pairs separated by semicolons.')
             break
-    for key in ("path_map", "batch", "vlc_args", "hide_messages", "aflags", "sessions_dir", "avidemux", "vlc", "terminal"):
+    for key in ("path_map", "batch", "vlc_args", "hide_messages", "aflags", "sessions_dir", "vlc", "terminal"):
         if '"' in o.get(key, ""):
             errors.append(f'"{key}" must not contain double quotes.')
     if "player" in o and o["player"] not in ("memory", "embed"):
@@ -197,3 +208,19 @@ def wrapped_lines(text_width: int, field_width: int, min_lines: int = 1, max_lin
         limited to min_lines..max_lines (like the height calculation of frmProfile in VB6)."""
     usable = max(field_width - 12, 1)                      # subtract border and scroll bar
     return max(min_lines, min(max_lines, -(-text_width // usable)))
+
+
+# The profiles that a new INI file starts with (the same as in the section [profiles] of MediaMaker.example.ini; a test compares them).
+DEFAULT_PROFILES = {
+    'SD': 'description="SD 720x404, 29.97 FPS, 2048 and 128 KBit/s" scale="720:404" sws_flags="lanczos" fps="29.970" bv="2048k" acodec_in="aac" acodec_out="aac" ar="44100" ba="128k"',
+    'SD [854x480]': 'description="SD 854x480 1024 KBit/s 25 FPS" scale="854:480" sws_flags="lanczos" fps="25.000" bv="1024k" acodec_in="aac" acodec_out="aac" ar="44100" ba="128k"',
+    'HD': 'description="HD 1280x720, 29.97 FPS, 3072 and 160 KBit/s" scale="1280:720" sws_flags="lanczos" fps="29.970" bv="3072k" acodec_in="aac" acodec_out="aac" ar="44100" ba="160k"',
+    'FullHD': 'description="Full HD 1920x1080, 29.97 FPS, 4096 and 192 KBit/s" scale="1920:1080" sws_flags="lanczos" fps="29.970" bv="4096k" acodec_in="aac" acodec_out="aac" ar="44100" ba="192k"',
+    'MPEG1': 'description="MPEG 16:9 (720x404), 25 FPS, 3072 and 192 KBit/s" scale="720:404" sws_flags="lanczos" fps="25.000" bv="3072k" acodec_in="mp2" acodec_out="aac" ar="48000" ba="192k"',
+    'MPEG2': 'description="MPEG 16:8 (720x360), 25 FPS, 3072 and 192 KBit/s" scale="720:360" sws_flags="lanczos" fps="25.000" bv="3072k" acodec_in="mp2" acodec_out="aac" ar="48000" ba="192k"',
+    'MPEG3': 'description="MPEG 16:7 (720x316), 25 FPS, 3072 and 192 KBit/s" scale="720:316" sws_flags="lanczos" fps="25.000" bv="3072k" acodec_in="mp2" acodec_out="aac" ar="48000" ba="192k"',
+    'TV RIP (SD)': 'description="MPEG-TS (SD 720x576), 25 FPS, 3072 and 192 KBit/s" scale="720:576" sws_flags="lanczos" fps="25.000" bv="3072k" acodec_in="mp2" acodec_out="aac" ar="48000" ba="192k"',
+    'TV RIP (HD)': 'description="MPEG-TS (HD 1280x720), 25 FPS, 5120 and 256 KBit/s" scale="1280:720" sws_flags="lanczos" fps="25.000" bv="5120k" acodec_in="mp2" acodec_out="aac" ar="48000" ba="256k"',
+    'DVD_PAL': 'description="DVD PAL 16:7 (720x304), with 25 FPS, 5120 and 192 KBit/s" scale="720:428" sws_flags="lanczos" fps="25.000" bv="5120k" acodec_in="ac3" acodec_out="aac" ar="48000" ba="192k"',
+    'DVD_NTSC': 'description="DVD NTSC 16:7 (720x304), with 29.97 FPS, 2560 and 192 KBit/s" scale="720:428" sws_flags="lanczos" fps="29.970" bv="2560k" acodec_in="ac3" acodec_out="aac" ar="48000" ba="192k"',
+}

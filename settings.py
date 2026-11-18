@@ -1,7 +1,7 @@
 """Settings: reads and writes the INI file of MediaMaker (same format as under VB6).
 
 The file stays readable and editable by hand. When writing, only the changed line is replaced; comments,
-order and all other sections remain unchanged. The paths of helper programs (avidemux, vlc) are options (group Tools).
+order and all other sections remain unchanged. The path of the helper program vlc is an option (group Tools).
 
 Important keys:
   [settings] options=  options as a key="value" list (crop, floor, blackness, allowance, ...)
@@ -48,6 +48,7 @@ class Settings:
             self._lines.pop()
 
     def save(self) -> None:
+        os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)       # (the folder of a MEDIAMAKER_INI that does not exist yet)
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8", newline="") as fh:
             fh.write(self._newline.join(self._lines) + self._newline)
@@ -160,6 +161,12 @@ class Settings:
         """Stores the profile under a name in the section [profiles] (overwrites one with the same name)."""
         self.set("profiles", name, format_kv(profile))
 
+    def seed_default_profiles(self) -> None:
+        """A new INI file starts with the example profiles (profiles.DEFAULT_PROFILES) in the section [profiles]; no profile is active yet (see ask_first_profile)."""
+        from profiles import DEFAULT_PROFILES
+        for name, value in DEFAULT_PROFILES.items():
+            self.set("profiles", name, value)
+
     @property
     def profiles(self) -> dict:
         return {name: parse_kv(value) for name, value in self.items("profiles")}
@@ -203,17 +210,56 @@ class Settings:
         folders = [directory] + [d for d in self.recent_dirs if d != directory]
         self.set("settings", "recent_dirs", "|".join(folders[:self.RECENT_LIMIT]))
 
+    # ------------------------------------------------------------------ Files whose frames have been counted ([known_files])
+    KNOWN_SECTION = "known_files"
+
+    @staticmethod
+    def known_key(path: str, size: int) -> str:
+        """Name of the entry: file name without folder, minus the size in bytes. Characters that would break the INI line are written as %xx."""
+        name = os.path.basename(path.replace("\\", "/"))
+        for ch in "%=;[]":
+            name = name.replace(ch, f"%{ord(ch):02X}")
+        return f"{name}-{size}"
+
+    def known_file(self, path: str) -> Optional[tuple]:
+        """(frames, dropped, key_pts) of a counted file with the same name and size, or None (also if the file cannot be read or the entry is damaged)."""
+        try:
+            value = self.get(self.KNOWN_SECTION, self.known_key(path, os.path.getsize(path)))
+            if value is None:
+                return None
+            frames, dropped, key_pts = value.split(",")
+            return int(frames), int(dropped), float(key_pts)
+        except (OSError, ValueError):
+            return None
+
+    def remember_file(self, path: str, frames: int, dropped: int, key_pts: float, limit: int) -> bool:
+        """Writes the result of a counting (it is the newest entry; entries beyond `limit` are dropped, the oldest first). limit 0: nothing is written."""
+        if limit <= 0:
+            return False
+        try:
+            key = self.known_key(path, os.path.getsize(path))
+        except OSError:
+            return False
+        self.delete(self.KNOWN_SECTION, key)
+        self.set(self.KNOWN_SECTION, key, f"{frames},{dropped},{key_pts!r}")
+        rng = self._section_range(self.KNOWN_SECTION)
+        rows = [i for i in range(*rng) if self._lines[i].strip() and not self._lines[i].strip().startswith(";") and "=" in self._lines[i]]
+        for i in reversed(rows[:max(len(rows) - limit, 0)]):
+            del self._lines[i]
+        self.save()
+        return True
+
     def tooltip(self, key: str) -> str:
         return self.get("ToolTipText", key, "") or DEFAULT_TOOLTIPS.get(key, "")
 
     def tool(self, name: str) -> Optional[str]:
-        """Path of a helper program (avidemux, vlc): the option of that name (group Tools), otherwise the PATH."""
+        """Path of a helper program (vlc): the option of that name (group Tools), otherwise the PATH."""
         value = (self.options.get(name) or "").strip()
         if value:
             return os.path.expanduser(value)
         return shutil.which(name)
 
-    TOOL_KEYS = ("avidemux", "vlc")
+    TOOL_KEYS = ("avidemux", "vlc")          # avidemux: only removed (Avidemux is not used any more)
     TOOL_SECTIONS = ("tools.linux", "tools.windows", "tools")
 
     def remove_section(self, section: str) -> bool:
@@ -237,7 +283,7 @@ class Settings:
                 value = self.get(section, key)
                 if value is None:
                     continue
-                if not options.get(key) and value.strip():
+                if key != "avidemux" and not options.get(key) and value.strip():
                     options[key] = value.split("|")[0].strip()
                 self.delete(section, key)
                 changed = True
@@ -268,7 +314,7 @@ class Settings:
         return changed
 
 
-OUTDATED_TOOLTIPS = {"logo_conf": ("Logo detection (advanced): min. share (0 to 1) of the reference edges that must be found for the logo to count as present",), "search_pictures": ("Seeking: on = while the search (end of commercial, next commercial) is still stepping in jumps of at least 10 frames, the preview shows the pictures that the search reads, like a film that runs by (these pictures are read anyway, the search is not slower; player = memory only); off = the preview stays as it is until the search is over; applies at once",), "batch": ("Batch: file the batch script is written to; a leading ~ is your home folder (empty: next to the INI file, with the extension .sh); applies at once",), "multitrack": ("When the box is ticked, a multitrack selection dialog opens after the name of the file has been chosen (only if the source has more than one audio track or any subtitle track), allowing to choose and configure how the audio and/or subtitle track(s) should be processed.",)}      # earlier default texts: replaced by the current one if they are still in the INI file unchanged
+OUTDATED_TOOLTIPS = {"pad": ("If True, source videos will be padded with (minimal) black border(s), else they will be stretched to the target scale", "If on, source videos will be padded with (minimal) black border(s), else they will be stretched to the target scale"), "logo_conf": ("Logo detection (advanced): min. share (0 to 1) of the reference edges that must be found for the logo to count as present",), "search_pictures": ("Seeking: on = while the search (end of commercial, next commercial) is still stepping in jumps of at least 10 frames, the preview shows the pictures that the search reads, like a film that runs by (these pictures are read anyway, the search is not slower; player = memory only); off = the preview stays as it is until the search is over; applies at once",), "batch": ("Batch: file the batch script is written to; a leading ~ is your home folder (empty: next to the INI file, with the extension .sh); applies at once",), "multitrack": ("When the box is ticked, a multitrack selection dialog opens after the name of the file has been chosen (only if the source has more than one audio track or any subtitle track), allowing to choose and configure how the audio and/or subtitle track(s) should be processed.",)}      # earlier default texts: replaced by the current one if they are still in the INI file unchanged
 
 
 def default_options() -> dict:
@@ -276,9 +322,9 @@ def default_options() -> dict:
         (40 s = 1000 frames and 240 s = 6000 frames at 25 FPS, the values from VB6)."""
     return {"crop": "0", "floor": "2", "blackness": "12", "allowance": "1000", "dedup": "400", "audio": "1",
             "pause": "160", "detect": "0", "aflags": "", "multitrack": "off",
-            "step_end": "40", "step_next": "240", "border_tol": "3", "cut_window": "5",
+            "step_end": "40", "step_next": "240", "tolerance": "3", "cut_window": "5",
             "logo_edge": "18", "logo_conf": "0.2", "logo_extra": "1.0", "cut_diff": "30", "path_map": "",
-            "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "file_dialog": "qt", "sessions_dir": "", "avidemux": "", "vlc": "", "terminal": "", "cutpoint_filters": "on", "restore_backup": "on", "copy_mode_notice": "on", "paused_preview": "vlc", "search_pictures": "on"}
+            "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "file_dialog": "qt", "sessions_dir": "", "vlc": "", "terminal": "", "cutpoint_filters": "on", "restore_backup": "on", "copy_mode_notice": "on", "paused_preview": "vlc", "search_pictures": "on", "known_files": "200", "cutpoint_length": "6"}
 
 
 # explanations for keys that are still missing in the INI file (section [ToolTipText])
@@ -306,6 +352,8 @@ DEFAULT_TOOLTIPS = {
     'multitrack': 'When set to on, a multitrack selection dialog opens after the name of the file has been chosen (only if the source has more than one audio track or any '
                   'subtitle track), allowing to choose and configure how the audio and/or subtitle track(s) should be processed.',
     # options added in the Python version
+    "cutpoint_length": "Analyze cut point: length of the clip in seconds (2 to 120); it is made of the last half of the selected segment and the first half of the next one: 6 = 3 seconds each; applies at once",
+    "known_files": "Frame counting: how many files whose frames have been counted are remembered in the INI section [known_files] (name of the file without the folder and its size in bytes = frames, frames before the first keyframe that cannot be shown, time of the first keyframe), so that the long counting of a big file on a network drive is not repeated; the oldest entries are dropped; 0 = remember nothing; applies at once",
     "search_pictures": "Seeking: on = while a search (end of commercial, next commercial) runs, the preview shows the picture of every frame that the search reads, like a film "
                        "that runs by (these pictures are read anyway, the search is not slower; player = memory only); off = the preview stays as it is until the search is over; "
                        "applies at once",
@@ -320,13 +368,12 @@ DEFAULT_TOOLTIPS = {
                         "off = without cropping and logo filters (only scaled to the profile), with a note in the picture; applies at once",
     "terminal": "Tools: command that opens a terminal window for Run now? of the batch script (the script is appended), e.g. konsole --separate -e; empty: konsole, gnome-terminal, "
                 "xfce4-terminal, mate-terminal, lxterminal, kitty, alacritty or xterm is used, whichever is installed; applies at once",
-    "avidemux": "Tools: path of Avidemux (e.g. an AppImage; it must be executable) for Edit => Analyze cut point; empty: searched in the PATH; applies at once",
     "vlc": "Tools: path of the VLC program that plays the clip of Edit => Analyze cut point; empty: searched in the PATH, then the standard player of the desktop; applies at once",
-    "pad": "If True, source videos will be padded with (minimal) black border(s), else they will be stretched to the target scale",
+    "pad": "on = source videos are padded with (minimal) black border(s) to fit the target scale; off = they are stretched to the target scale",
     "step_end": "Seeking the end of a commercial: initial step width in seconds (refined by factor 10 down to single frames)",
     "step_next": "Seeking the next commercial: initial step width in seconds (refined by factor 10 down to single frames); "
                  "limited to the value of 'pause' so that no commercial break can be skipped",
-    "border_tol": "Seeking with the black border: tolerance in scanlines when comparing the detected border with the crop value",
+    "tolerance": "Seeking with the black border: tolerance in scanlines when comparing the detected border with the crop value",
     "cut_window": "Seeking with the black border: after the border has been found, look this many frames back for a hard cut and move "
                   "the result onto it (0 = off). The border changes a little later than the picture.",
     "path_map": "Batch file: replaces the beginning of the source paths in the ffmpeg call, \"source=target;source=target\". "

@@ -5,11 +5,19 @@ The choice says which tracks of the source file go into the new file, in which o
     audio_tracks = "0:deu,3:mis"        (ffmpeg's 0:a:INDEX, then the code; the first one is the main track)
     subtitle_tracks = "2:fra,1:deu"     (0:s:INDEX; the teletext tracks are counted in the index, but cannot be chosen)
 
+DVD mode (a list of VOB files of one title set, see dvd.py) names the tracks by their STREAM ID instead of their position:
+
+    audio_tracks = "0x80:deu,0x81:eng"  subtitle_tracks = "0x21:fra"
+
+Every part of a DVD (VTS_02_1.VOB, VTS_02_2.VOB ...) is a file of its own whose streams are numbered in the order in which their first packets turn up, so the same sound
+track can be the first in one part and the second in the next (measured), while its id (0x80 for the first AC3 track, 0x20 for the first subtitle track) is the same everywhere.
+
 The two entries are part of the OPTIONS OF THE JOB, not of the settings: the batch file, a session and the import carry them, the INI file never holds them.
 Without them (the option is off, or Cancel in the dialog) only the main audio track is processed, and no subtitles.
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -21,17 +29,46 @@ AUDIO_KEY, SUBTITLE_KEY = "audio_tracks", "subtitle_tracks"
 KEYS = (AUDIO_KEY, SUBTITLE_KEY)
 
 
+def key_of(text) -> Optional[object]:
+    """The key of a track as the option writes it: an int (the position among the tracks of its kind) or a stream id ("0x80", normalised: lower case, no leading zeros);
+    None if it is neither."""
+    text = str(text).strip().lower()
+    if text.isdigit():
+        return int(text)
+    if text.startswith("0x") and len(text) > 2 and all(c in "0123456789abcdef" for c in text[2:]):
+        return f"0x{int(text, 16):x}"
+    return None
+
+
 def _parse(text: str) -> list:
     out = []
     for part in str(text or "").split(","):
         index, _, lang = part.strip().partition(":")
-        if index.strip().isdigit():
-            out.append((int(index), lang.strip().lower()))
+        key = key_of(index)
+        if key is not None:
+            out.append((key, lang.strip().lower()))
     return out
 
 
 def _join(items: list) -> str:
     return ",".join(f"{i}:{lang}" for i, lang in items)
+
+
+def by_id(choice: "Choice") -> bool:
+    """Are the tracks of the choice named by their stream id (DVD mode)?"""
+    return any(isinstance(k, str) for k, _ in [*choice.audio, *choice.subtitles])
+
+
+def find(tracks: list, key):
+    """The track with this key in a list of tracks (TrackList.audio / .subtitles): by position (int) or by stream id (str); None if there is none."""
+    if isinstance(key, int):
+        return next((t for t in tracks if t.index == key), None)
+    return next((t for t in tracks if t.stream_id and key_of(t.stream_id) == key), None)
+
+
+def audio_spec(key) -> str:
+    """The stream specifier of an audio track for the filter graph: a:3 (position) or i:0x80 (stream id)."""
+    return f"a:{key}" if isinstance(key, int) else f"i:{key}"
 
 
 @dataclass
@@ -74,10 +111,53 @@ def default_choice(tracks: TrackList, main_audio: int = 0) -> Choice:
     return Choice([(t.index, language_for(t)) for t in order], [(t.index, language_for(t)) for t in tracks.subtitles])
 
 
-def fits(choice: Choice, tracks: TrackList) -> bool:
-    """Does every track of the choice exist in this file?"""
-    return (all(any(t.index == i for t in tracks.audio) for i, _ in choice.audio)
-            and all(any(t.index == i for t in tracks.subtitles) for i, _ in choice.subtitles))
+def fits(choice: Choice, tracks: TrackList, lenient_subtitles: bool = False) -> bool:
+    """Does every track of the choice exist in this file? lenient_subtitles (DVD): a subtitle track that was chosen by its id need not be there: it has no packets in this part
+    (subtitles are sparse, a part may contain none of one track), the others are cut from the files that have them."""
+    return (all(find(tracks.audio, i) for i, _ in choice.audio)
+            and all(find(tracks.subtitles, i) or (lenient_subtitles and isinstance(i, str)) for i, _ in choice.subtitles))
+
+
+def to_ids(choice: Choice, tracks: TrackList) -> Choice:
+    """The choice with the stream ids instead of the positions (DVD mode: what the dialog gave for the first file, kept as the ids that mean the same in every part).
+    A track without an id keeps its position."""
+    def key(kind: list, i):
+        t = find(kind, i)
+        return key_of(t.stream_id) if t is not None and t.stream_id and key_of(t.stream_id) is not None else i
+    return Choice([(key(tracks.audio, i), lang) for i, lang in choice.audio], [(key(tracks.subtitles, i), lang) for i, lang in choice.subtitles])
+
+
+def to_indexes(choice: Optional[Choice], tracks: TrackList) -> Optional[Choice]:
+    """The choice with the positions in this file instead of the stream ids (to start the dialog with the choice of the last time); tracks that are not in the file are left out."""
+    if choice is None:
+        return None
+    def keep(kind: list, items: list) -> list:
+        out = []
+        for i, lang in items:
+            t = find(kind, i)
+            if t is not None:
+                out.append((t.index, lang))
+        return out
+    return Choice(keep(tracks.audio, choice.audio), keep(tracks.subtitles, choice.subtitles))
+
+
+def merge(lists: list) -> TrackList:
+    """DVD mode: ONE list from the lists of several parts of the DVD: the tracks of the first part, then those that turn up only in a later one, identified by their stream ids
+    (the subtitles of a film are sparse: the first part may have none of a track that the second one has). The positions and numbers are made anew."""
+    audio, subtitles = [], []
+    for kind, target in (("audio", audio), ("subtitles", subtitles)):
+        seen = set()
+        for tl in lists:
+            for t in getattr(tl, kind):
+                key = key_of(t.stream_id) if t.stream_id else None
+                if key is not None and key in seen:
+                    continue
+                if key is not None:
+                    seen.add(key)
+                target.append(dataclasses.replace(t))
+        for n, t in enumerate(target):
+            t.index, t.number = n, n + 1
+    return TrackList(audio, subtitles)
 
 
 def needs_dialog(tracks: TrackList) -> bool:
@@ -89,8 +169,8 @@ def needs_dialog(tracks: TrackList) -> bool:
 @dataclass
 class Streams:
     """What the ffmpeg command needs from the choice and the file type of the new file."""
-    audio: list = field(default_factory=list)          # [(index, language)]; empty: only the main audio track of the segment
-    subtitles: list = field(default_factory=list)      # [(index, language, codec of the source, value of -c:s)]
+    audio: list = field(default_factory=list)          # [(index or stream id, language)]; empty: only the main audio track of the segment
+    subtitles: list = field(default_factory=list)      # [(index or stream id, language, codec of the source, value of -c:s)]
     canvas: bool = False                               # a bitmap subtitle is converted: -canvas_size (the size of the picture) before the input
 
     def codecs(self) -> list:
@@ -104,9 +184,9 @@ def streams_for(options: dict, output: str, tracks: Optional[TrackList]) -> Stre
         return Streams()
     subtitles = []
     for index, lang in choice.subtitles:
-        t = next((t for t in (tracks.subtitles if tracks else []) if t.index == index), None)
+        t = find(tracks.subtitles if tracks else [], index)
         if t is None:
-            raise ValueError(f"The source file has no subtitle track with the index {index}.")
+            raise ValueError(f"The source file has no subtitle track with the {'index' if isinstance(index, int) else 'id'} {index}.")
         value, _, error = containers.subtitle_plan(output, t.codec)
         if error:
             raise ValueError(error)
@@ -146,8 +226,9 @@ def language_name(track: Track) -> str:
     return languages.name_of(code) or code
 
 
-def label(track: Track) -> str:
-    """The line for a track in the lists of the dialog: '1 · German · MP2 stereo, 192 kb/s' / '2 · French · DVB subtitle, hearing impaired'."""
+def label(track: Track, show_id: bool = False) -> str:
+    """The line for a track in the lists of the dialog: '1 · German · MP2 stereo, 192 kb/s' / '2 · French · DVB subtitle, hearing impaired'. show_id (DVD mode): the stream id
+    at the end ('1 · language not given · AC3 stereo, 192 kb/s · 0x80'): the tracks of a DVD often look the same and have no language."""
     parts = [str(track.number), language_name(track)]
     if track.kind == "audio":
         detail = f"{track.codec.upper()} {_CHANNELS.get(track.channels, f'{track.channels} ch') if track.channels else ''}".strip()
@@ -161,6 +242,8 @@ def label(track: Track) -> str:
         if track.hearing_impaired:
             detail += ", hearing impaired"
         parts.append(detail)
+    if show_id and track.stream_id:
+        parts.append(track.stream_id)
     return " · ".join(parts)
 
 
@@ -203,8 +286,8 @@ class Row:
 class TracksModel:
     """What the dialog shows and what the user has changed, without any widget (so it can be tested). `kind` is "audio" or "subtitle"."""
 
-    def __init__(self, tracks: TrackList, output: str, initial: Optional[Choice] = None, main_audio: int = 0):
-        self.tracks, self.output = tracks, output
+    def __init__(self, tracks: TrackList, output: str, initial: Optional[Choice] = None, main_audio: int = 0, show_ids: bool = False):
+        self.tracks, self.output, self.show_ids = tracks, output, show_ids
         choice = initial if initial and fits(initial, tracks) else default_choice(tracks, main_audio)
         self.rows = {"audio": [Row(i, lang) for i, lang in choice.audio], "subtitle": [Row(i, lang) for i, lang in choice.subtitles]}
         for kind in self.rows:                                  # as many positions as there are tracks (the rest unused)
@@ -224,7 +307,7 @@ class TracksModel:
 
     def track_labels(self, kind: str) -> list:
         """The entries of the list of a position: '-' first, then the tracks in their order."""
-        return ["-"] + [label(t) for t in self.of(kind)]
+        return ["-"] + [label(t, self.show_ids) for t in self.of(kind)]
 
     def selected(self, kind: str, row: int) -> int:
         """Position in track_labels() of what the row has chosen."""
@@ -240,7 +323,7 @@ class TracksModel:
         self.rows[kind][row] = Row(t.index, language_for(t))
 
     def set_language(self, kind: str, row: int, text: str) -> None:
-        self.rows[kind][row].language = text.strip()
+        self.rows[kind][row].language = languages.plain(text) if self.show_ids else text.strip()
 
     def language_choices(self, kind: str) -> list:
         """The codes that the source file has for these tracks (once each, in their order), for the drop-down list of the language."""
@@ -249,6 +332,8 @@ class TracksModel:
             code = language_for(t)
             if code and code not in out:
                 out.append(code)
+        if self.show_ids:                                       # DVD mode: the codes of the IFO file (if any) and then the usual ones, with their names; less typing
+            out = [languages.entry(c) for c in out] + [languages.entry(c) for c in languages.COMMON if c not in out]
         return out
 
     def note(self, kind: str, row: int) -> str:

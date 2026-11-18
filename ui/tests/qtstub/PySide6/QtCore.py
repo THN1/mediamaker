@@ -18,7 +18,10 @@ class Signal:
 
 
 class QObject(Base):
-    methods = {"setObjectName", "installEventFilter", "setParent", "objectName", "setProperty"}
+    methods = {"setObjectName", "installEventFilter", "setParent", "objectName", "setProperty", "isWidgetType"}
+
+    def _ret_isWidgetType(self):
+        return False
 
     def blockSignals(self, block):
         old = getattr(self, "_blocked", False)
@@ -39,12 +42,15 @@ class QEvent(Base):
 class Qt:
     TextElideMode = EnumGroup("Qt.TextElideMode", {"ElideNone", "ElideLeft", "ElideRight", "ElideMiddle"})
     TextInteractionFlag = EnumGroup("Qt.TextInteractionFlag", {"TextSelectableByMouse"})
+    TextFormat = EnumGroup("Qt.TextFormat", {"RichText", "PlainText", "AutoText", "MarkdownText"})
     TransformationMode = EnumGroup("Qt.TransformationMode", {"SmoothTransformation", "FastTransformation"})
     AlignmentFlag = EnumGroup("Qt.AlignmentFlag", {"AlignLeft", "AlignRight", "AlignHCenter", "AlignTop", "AlignVCenter", "AlignCenter"})
     Orientation = EnumGroup("Qt.Orientation", {"Horizontal", "Vertical"})
+    FocusPolicy = EnumGroup("Qt.FocusPolicy", {"NoFocus", "StrongFocus", "ClickFocus", "TabFocus"})
     ItemFlag = EnumGroup("Qt.ItemFlag", {"ItemIsEditable", "ItemIsEnabled", "ItemIsSelectable"})
     WindowType = EnumGroup("Qt.WindowType", {"WindowMaximizeButtonHint", "WindowMinimizeButtonHint", "FramelessWindowHint", "Widget"})
-    Key = EnumGroup("Qt.Key", {"Key_Shift"})
+    Key = EnumGroup("Qt.Key", {"Key_Shift", "Key_Left", "Key_Right", "Key_Space"})
+    AspectRatioMode = EnumGroup("Qt.AspectRatioMode", {"KeepAspectRatio", "IgnoreAspectRatio"})
     KeyboardModifier = EnumGroup("Qt.KeyboardModifier", {"ShiftModifier", "ControlModifier", "AltModifier"})
     MouseButton = EnumGroup("Qt.MouseButton", {"LeftButton", "RightButton", "MiddleButton"})
     CursorShape = EnumGroup("Qt.CursorShape", {"WaitCursor", "ArrowCursor", "SizeHorCursor", "SizeVerCursor", "SizeAllCursor", "SizeFDiagCursor", "SizeBDiagCursor"})

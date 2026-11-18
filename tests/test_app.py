@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 from fractions import Fraction
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -21,7 +22,7 @@ sys.path.insert(2, os.path.join(ROOT, "ui"))
 sys.path.insert(3, os.path.join(ROOT, "ui", "generated"))
 
 from PySide6 import QtWidgets
-from cutlist import Job, parse_batch_header, Segment
+from cutlist import Job, parse_batch_header, parse_kv, Segment
 from mediaprobe import AudioInfo, MediaInfo, VideoInfo
 from player import FakePlayer
 from project import load_segments, save_segments, segment_row, timeof
@@ -84,9 +85,9 @@ def test_project(tmp):
     legacy = load_segments(os.path.join(tmp, "legacy.csv"))
     check(len(legacy) == 1 and legacy[0].fps == 25 and legacy[0].end == 1000, "CSV-Import")
     check(load_segments(os.path.join(tmp, "doesnotexist.json")) == [], "missing file")
-    robocop = parse_batch_header(open(os.path.join(HERE, "sample_MediaMaker.sh"), encoding="latin-1").read())
-    check(len(robocop.segments) == 6, "RoboCop list")
-    row = segment_row(robocop.segments[0], 1)
+    sample_job = parse_batch_header(open(os.path.join(HERE, "sample_MediaMaker.sh"), encoding="latin-1").read())
+    check(len(sample_job.segments) == 6, "sample job list")
+    row = segment_row(sample_job.segments[0], 1)
     check(len(row) == 19 and row[0] == "01" and row[7] == "25.000" and row[5] == "00:31:26", f"row: {row[:8]}")
     check(timeof(7509, Fraction(25)) == "00:05:00.360", timeof(7509, Fraction(25)))
     print("Project file: OK (JSON lossless, old CSV importable, 19 list columns)")
@@ -99,6 +100,7 @@ def make_window(tmp, probe=None, fresh=False, thumb_fn=None, first_fn=None, **kw
     ini = os.path.join(tmp, "MediaMaker.ini")
     if not os.path.exists(ini):
         shutil.copy(os.path.join(HERE, "sample_MediaMaker.ini"), ini)
+    mediamaker.frmMain.UI_SCALE = kwargs.pop("ui_scale", 100)    # (the layout tests count in the pixels of the form; test_ui_scale asks for 125)
     win = mediamaker.frmMain(Settings(ini), FakePlayer(), os.path.join(tmp, "MediaMaker.json"),
                              **({"probe": probe} if probe else {}), **({"thumb_fn": thumb_fn} if thumb_fn else {}), fresh=fresh,
                              first_fn=first_fn or (lambda path, fps: 0), **kwargs)
@@ -268,8 +270,24 @@ def test_audio_choice(tmp):
     check(win.segments[-1].audio_sel == "2" and any("no audio track" in m for m in win.messages), "track does not exist")
     win.settings.set_profile(dict(win.profile, acodec_in="aac"))
     n = len(win.segments)
-    check(not win.OpenVideo(f) and len(win.segments) == n and any("no audio stream of type" in m for m in win.messages),
-          "codec does not exist")
+    # --- no saved profile fits the file: explained, nothing to choose
+    winx = make_window(tmp, probe=lambda p: fake_info(p, [a(1, "opus", "eng"), a(2, "opus", "deu")]))
+    winx.showEvent(None)
+    check(not winx.OpenVideo(f) and any('expects an audio stream of type "mp2"' in m and "opus" in m and "No saved profile" in m for m in winx.messages),
+          "codec does not exist and no saved profile fits: explained")
+    win.settings.seed_default_profiles()
+    win.settings.set_profile(dict(win.settings.profiles["SD"]))                 # (SD expects aac, the file has mp2)
+    seen = []
+    win.ask = lambda text: (_ for _ in ()).throw(AssertionError("no yes / no question: the explanation and the list are ONE dialog"))
+    win.ask_choice = lambda title, label, items, current=0: (seen.append((label, items)), None)[1]          # Cancel
+    check(not win.OpenVideo(f) and len(win.segments) == n and win.profile["acodec_in"] == "aac" and len(seen) == 1, "Cancel: the file is not opened, the profile is unchanged")
+    label, offered = seen[-1][0], [seen[-1][1]]
+    check('the profile "SD"' in label and 'expects an audio stream of type "aac"' in label and "mp2" in label and "Cancel" in label, f"the explanation is part of the dialog: {label[:90]}")
+    check(sorted(i.split(":")[0] for i in offered[-1]) == sorted(n_ for n_, p in win.settings.profiles.items() if p["acodec_in"] in ("mp2", "ac3")) and len(offered[-1]) >= 7,
+          f"offered: only profiles for the types of the file (ac3, mp2): {offered[-1]}")
+    win.ask_choice = lambda title, label, items, current=0: next(i for i, t in enumerate(items) if t.startswith("TV RIP (SD): "))
+    check(win.OpenVideo(f) and len(win.segments) == n + 1 and win.profile["acodec_in"] == "mp2" and win.matching_profile_name() == "TV RIP (SD)"
+          and win.segments[-1].audio_sel == "2", "chosen: profile switched and the file is opened")
     win3 = make_window(tmp, probe=lambda p: fake_info(p, []))
     check(not win3.OpenVideo(f) and any("no audio stream" in m for m in win3.messages), "without sound")
     print("Audio track selection: OK (n-th track with matching codec, warnings, cancel)")
@@ -353,7 +371,7 @@ def test_profiles(tmp, videos):
     check(len(bad(bv="3072")) == 1 and len(bad(ba="0k")) == 1 and bad(ba="64k") == [], "bit rates")
     check(len(bad(ar="48")) == 1 and bad(ar="44100") == [] and len(bad(acodec_out="")) == 1, "ar, Codec")
     check(validate_options({"crop": "72", "floor": "2", "multitrack": "off"}) == [], "options valid")
-    check(len(validate_options({"crop": "-1"})) == 1 and len(bad(pad="yes")) == 1 and bad(pad="True") == []
+    check(len(validate_options({"crop": "-1"})) == 1 and len(bad(pad="yes")) == 1 and bad(pad="on") == [] and bad(pad="off") == [] and len(bad(pad="True")) == 1
           and len(validate_options({"multitrack": "maybe"})) == 1 and validate_options({"multitrack": "on"}) == []
           and len(validate_options({"audio": "0"})) == 1, "options invalid")
     check(valid_profile_name("My profile [1]") is None and valid_profile_name("a=b") and valid_profile_name("[x") and
@@ -392,7 +410,16 @@ def test_profiles(tmp, videos):
     win.showEvent(None)
     check(len(win.profile_actions) == 11 and win.mnuLoadProfile.called("setEnabled") == [(True,)], "profile menu filled")
     check(win.Frame1.called("setToolTip")[-1] == ("MPEG-TS (SD 720x576), 25 FPS, 3072 and 192 KBit/s",), "tooltip description")
+    # the profile in use has a tick in the menu; without a matching saved profile there is none
+    ticks = lambda: [a.text_ for a in win.profile_actions if a.called("setChecked") and a.called("setChecked")[-1] == (True,)]
     # load profile via the menu
+    hd = next(a for a in win.profile_actions if a.text_ == "HD")
+    hd.triggered.emit(False)
+    win.refresh_profile_menu()
+    check(ticks() == ["HD"] and win.matching_profile_name() == "HD", f"tick at the profile in use: {ticks()}")
+    win.settings.update_profile({"bv": "1234k"})
+    win.refresh_profile_menu()
+    check(ticks() == [] and win.matching_profile_name() is None, "profile changed: no tick")
     hd = next(a for a in win.profile_actions if a.text_ == "HD")
     hd.triggered.emit(False)
     check(win.profile["scale"] == "1280:720" and win.lblText[2].text() == "1280:720" and win.lblText[3].text() == "29.970",
@@ -467,16 +494,20 @@ def test_profiles(tmp, videos):
     win.segments[0].vbitrate_kbit, win.segments[1].vbitrate_kbit = 4000, 2000
     avg = weighted_bitrate(win.segments, "video")
     asked = []
-    win.ask_text = lambda title, label, default="": (asked.append((label, default)), "3000")[1]
+    win.ask_rates = lambda title, label, video, audio: (asked.append((label, video, audio)), ("3000", "160k"))[1]
     win.mnuCalcVideo_Click()
-    check(asked[0][1] == str(avg) and win.profile["bv"] == "3000k", f"estimate video: {asked} {win.profile['bv']}")
-    win.ask_text = lambda title, label, default="": "160k"
-    win.mnuCalcAudio_Click()
-    check(win.profile["ba"] == "160k" and win.lblText[5].text() == "160k", "estimate audio")
-    win.ask_text = lambda title, label, default="": "abc"
+    check(asked[0][1] == str(avg) and win.profile["bv"] == "3000k" and win.profile["ba"] == "160k" and win.lblText[5].text() == "160k" and "(video)" in asked[0][0] and "(audio)" in asked[0][0],
+          f"estimate: one dialog for both rates: {asked} {win.profile['bv']} {win.profile['ba']}")
+    win.ask_rates = lambda title, label, video, audio: ("", "200")
+    win.mnuCalcVideo_Click()
+    check(win.profile["bv"] == "3000k" and win.profile["ba"] == "200k", "an empty field keeps the old value")
+    win.ask_rates = lambda title, label, video, audio: None
+    win.mnuCalcVideo_Click()
+    check(win.profile["bv"] == "3000k" and win.profile["ba"] == "200k", "cancel: nothing changes")
+    win.ask_rates = lambda title, label, video, audio: ("2500", "abc")
     before = win.profile["bv"]
     win.mnuCalcVideo_Click()
-    check(win.profile["bv"] == before and "not a valid bitrate" in win.messages[-1], "invalid bit rate")
+    check(win.profile["bv"] == before and win.profile["ba"] == "200k" and "not a valid bitrate" in win.messages[-1], "invalid bit rate: nothing is saved")
     print("Profile and options: OK (checking, INI file, dialogs, profile menu, saving, copying from sample video, estimate)")
 
 
@@ -486,7 +517,7 @@ def test_dialog():
     from profiles import PRESETS
     from PySide6.QtWidgets import FontMetrics, QComboBox, QDialog, QFormLayout, QLineEdit
     pairs = {"description": "MPEG-TS (SD 720x576), 25 FPS, 3072 and 192 KBit/s", "scale": "720:576", "fps": "25.000",
-             "aflags": "", "pad": "False"}
+             "aflags": "", "pad": "off"}
     QDialog.exec_result = 1
     QDialog.on_exec = None
     QFormLayout.instances.clear()
@@ -609,6 +640,7 @@ def test_memory_player():
         check(planes[0].value == ctypes.addressof(player._buf), "callback delivers the memory area")
         ctypes.memmove(player._buf, b"\x01\x02\x03\xff" * (720 * 576), 720 * 576 * 4)
         display(None, None)
+        player._poll_frame()                                  # the Qt thread fetches the stored picture (timer)
         image = player.surface.image
         check(image is not None and image._args[0] == b"\x01\x02\x03\xff" * (720 * 576) and image._args[1:4] == (720, 576, 2880),
               "picture arrives in the drawing area")
@@ -628,7 +660,7 @@ def test_memory_player():
         lock3, _, display3, _ = mp.cb_calls[-1]
         ctypes.memmove(player._buf, b"\x07\x07\x07\xff" * (1280 * 720), 1280 * 720 * 4)
         player.show_at(193_000)
-        display3(None, None)
+        display3(None, None); player._poll_frame()
         check(player.surface.image is None, "picture from the start of the file is discarded as long as the position is missing")
         player._awaiting_position = None                            # (position counts as reached)
         # jump in the paused state: if no picture arrives, the medium is reloaded with the start position
@@ -646,7 +678,7 @@ def test_memory_player():
         mp.state, mp.t = 4, 90_000                                  # paused again (reloading has stopped)
         player._do_seek(2000)
         player.surface.image = None
-        display3(None, None)                                        # picture has arrived
+        display3(None, None); player._poll_frame()                                        # picture has arrived
         loads = mp.calls_play
         QTimer.pending.pop(0)[1]()
         check(mp.calls_play == loads, "picture arrived: no reloading")
@@ -670,13 +702,13 @@ def test_memory_player():
         player.playing.emit()
         QTimer.pending.pop(0)[1]()
         check(player._awaiting_position is None and mp.set_times[-1] == 193_000, "position reached: another jump for a fresh picture")
-        display3(None, None)
+        display3(None, None); player._poll_frame()
         check(player.surface.image is not None, "afterwards pictures are shown")
         image_before = player.surface.image
         player.shutdown()
         lock2, _, display2, _ = mp.cb_calls[1]
         display2(None, None)
-        display3(None, None)
+        display3(None, None); player._poll_frame()
         check(player.surface.image is image_before and mp.released, "no more pictures after shutdown, player released")
     finally:
         del sys.modules["vlc"]
@@ -825,13 +857,35 @@ def quick_thumbs(path, first, count, fps, size, on_start=None):
     return {n: np.zeros((h, w, 3), np.uint8) for n in range(max(first, 0), first + count)}
 
 
-class FakeWait:
+class ActionRecord:
+    """What the blue wait window used to show, noted from the progress bar: the name of the action, the texts that the bar showed, whether it has ended."""
     def __init__(self, message, cancel):
         self.message, self.cancel, self.closed, self.texts = message, cancel, False, []
-    def set_text(self, text):
-        self.texts.append(text)
-    def close(self):
-        self.closed = True
+
+
+def watch_actions(win):
+    """Notes the actions of the window in win.dialogs (the name, every text of the bar after the name, closed when it has ended)."""
+    win.dialogs = []
+    win.bars = []
+    real_begin, real_note, real_end, real_bar = win.begin_action, win.action_note, win.end_action, win.bar
+
+    def begin(message, cancel, block=False, text=None):
+        ok = real_begin(message, cancel, block, text)
+        if ok:
+            win.dialogs.append(ActionRecord(message, cancel))
+        return ok
+
+    def note(text):
+        real_note(text)
+        if win._action is not None and win.dialogs:
+            win.dialogs[-1].texts.append(win._action["text"])
+
+    def end():
+        if win._action is not None and win.dialogs:
+            win.dialogs[-1].closed = True
+        real_end()
+    win.begin_action, win.action_note, win.end_action = begin, note, end
+    win.bar = lambda percent, text: (win.bars.append((percent, text)), real_bar(percent, text))[1]
 
 
 def seek_window(tmp, videos, names=("sample2.ts",), workdir="seekwin", **kwargs):
@@ -839,8 +893,7 @@ def seek_window(tmp, videos, names=("sample2.ts",), workdir="seekwin", **kwargs)
     os.makedirs(work, exist_ok=True)
     win = make_window(work, thumb_fn=quick_thumbs, fresh=True, **kwargs)
     win.showEvent(None)
-    win.dialogs = []
-    win.wait_dialog = lambda message, cancel: win.dialogs.append(FakeWait(message, cancel)) or win.dialogs[-1]
+    watch_actions(win)
     for name in names:
         win.OpenVideo(os.path.join(videos, name))
     return win
@@ -927,7 +980,10 @@ def test_segments(tmp, videos):
     win.lvwSegments_Click()
     seg.end = seg.total_frames
     win.cmdCommand_Click(4)
-    check(len(win.segments) == 2 and "nothing left" in win.messages[-1], "duplicate at the end of the file")
+    n_msg = len(win.messages)
+    check(len(win.segments) == 3 and len(win.messages) == n_msg and win.current == 1, "duplicate of an uncut segment: added, no error message")
+    d = win.segments[1]
+    check(d is not seg and (d.start, d.end, d.path) == (seg.first_frame, seg.total_frames, seg.path), f"full length again, directly behind the current one: {d.start}/{d.end}")
     # several source files in the list: the search runs anyway (unlike VB6)
     win = seek_window(tmp, videos, ("sample3.ts", "sample2.ts"), workdir="dupwin2", border_fn=border)
     win.settings.set_option("pause", 1)
@@ -938,12 +994,12 @@ def test_segments(tmp, videos):
     win.cmdPos_Click(8)
     win.cmdCommand_Click(4)
     check(win.multiple() and probes != [] and win.Slider1.value() == 130, f"several sources: search runs, frame {win.Slider1.value()}")
-    # intermediate results in the wait window
+    # intermediate results in the bar
     texts = win.dialogs[-1].texts
     probe_texts = [t for t in texts if "looking for about 72" in t]
-    check(texts and texts[0].startswith("Seeking with crop = 72, please wait...\nframe ") and "border" in texts[0] and "about 72" in texts[0]
+    check(texts and texts[0].startswith("Seeking with crop = 72...  frame ") and "border" in texts[0] and "about 72" in texts[0]
           and any("border 72" in t for t in texts) and len(probe_texts) == len(probes)
-          and "looking for a cut" in texts[-1], f"wait window shows every probe and the cut search: {texts[:2]}")
+          and "looking for a cut" in texts[-1], f"the bar shows every probe and the cut search: {texts[:2]}")
     # neither crop nor logo: message, no search
     win = seek_window(tmp, videos, workdir="dupwin3", border_fn=border)
     win.settings.set_option("crop", 0)
@@ -1498,18 +1554,18 @@ def test_option_changes(tmp, videos):
     from settings import DEFAULT_TOOLTIPS, default_options
     # --- defaults and checking
     d = default_options()
-    check("pad" not in d and "focus" not in d and d["step_end"] == "40" and d["step_next"] == "240" and d["border_tol"] == "3"
+    check("pad" not in d and "focus" not in d and d["step_end"] == "40" and d["step_next"] == "240" and d["tolerance"] == "3"
           and "logo_rewind" not in d and d["logo_edge"] == "18" and d["logo_conf"] == "0.2", "defaults")
     check(validate_options(d) == [], "defaults are valid")
-    check(len(validate_options({"step_end": "0"})) == 1 and len(validate_options({"border_tol": "-1"})) == 1
+    check(len(validate_options({"step_end": "0"})) == 1 and len(validate_options({"tolerance": "-1"})) == 1
           and validate_options({"logo_rewind": "abc"}) == []
           and len(validate_options({"logo_conf": "1.5"})) == 1 and len(validate_options({"logo_edge": "0"})) == 1, "checking of the new values")
-    check(all(k in DEFAULT_TOOLTIPS for k in ("pad", "step_end", "step_next", "border_tol", "logo_edge", "logo_conf")),
+    check(all(k in DEFAULT_TOOLTIPS for k in ("pad", "step_end", "step_next", "tolerance", "logo_edge", "logo_conf")),
           "explanations for new keys")
     grouped = [k for _, keys in OPTION_GROUPS for k in keys]
     check(sorted(grouped + sorted(HIDDEN_OPTIONS)) == sorted(d), f"every option belongs to a group or is hidden: {sorted(set(d) ^ set(grouped + sorted(HIDDEN_OPTIONS)))}")
     check(list(ordered_profile({"ba": "192k", "scale": "720:576", "fps": "25.000"})) == ["scale", "pad", "fps", "ba"]
-          and ordered_profile({"scale": "1:2"})["pad"] == "False", "profile: pad after sws_flags, default False")
+          and ordered_profile({"scale": "1:2"})["pad"] == "off" and ordered_profile({"pad": "True"})["pad"] == "on", "profile: pad after sws_flags, default off (True / False of old files read as on / off)")
     # --- step widths in seconds
     check(seek.step_frames(40, Fraction(25)) == 1000 and seek.step_frames(240, Fraction(25)) == 6000
           and seek.step_frames(40, Fraction(30000, 1001)) == 1199 and seek.step_frames(0, Fraction(25)) == 1, "step width from seconds")
@@ -1526,7 +1582,7 @@ def test_option_changes(tmp, videos):
     # --- tolerance of the border search
     near = lambda path, n, fps, opts: 74 if n >= 130 else 0
     args = ("/x", Fraction(25), 300, 0, 72, True, 100)
-    check(seek.seek_border(*args, {"border_tol": "3"}, near) == 130 and seek.seek_border(*args, {"border_tol": "1"}, near) == 300,
+    check(seek.seek_border(*args, {"tolerance": "3"}, near) == 130 and seek.seek_border(*args, {"tolerance": "1"}, near) == 300,
           "tolerance 3 finds the border 74 (target 72), tolerance 1 does not")
     # --- logo: no rewinding any more (rewind(), diff(), average() of VB6 and the option logo_rewind were removed), edge threshold, minimum match
     check(not hasattr(logo, "rewind") and not hasattr(logo, "bottom_line_average") and not hasattr(logo, "INITIAL_REWIND"), "rewind and its helpers are gone from logo.py")
@@ -1557,29 +1613,40 @@ def test_option_changes(tmp, videos):
     win = make_window(work)
     win.showEvent(None)
     st = Settings(ini)
-    check(st.profile.get("pad") == "True" and "pad" not in st.options and "focus" not in st.options and st.options["logo_edge"] == "20",
+    check(st.profile.get("pad") == "on" and "pad" not in st.options and "focus" not in st.options and st.options["logo_edge"] == "20",
           f"migration: pad into the profile, focus dropped, hidden value stays: {st.profile.get('pad')} {sorted(st.options)}")
-    check(win.profile["pad"] == "True" and list(win.profile)[:4] == ["description", "scale", "sws_flags", "pad"], "profile with pad in the order")
+    check(win.profile["pad"] == "on" and list(win.profile)[:4] == ["description", "scale", "sws_flags", "pad"], "profile with pad in the order")
     check("pad" not in win.options and "focus" not in win.options, "options without pad and focus")
     # profile already has pad: stays unchanged
     st.set_option("pad", "False")
     st.save()
     win2 = make_window(work)
     win2.showEvent(None)
-    check(Settings(ini).profile["pad"] == "True" and "pad" not in Settings(ini).options, "existing pad in the profile wins")
+    check(Settings(ini).profile["pad"] == "on" and "pad" not in Settings(ini).options, "existing pad in the profile wins")
+    # old INI file: pad="True" / "False" in profile= and in the named profiles becomes on / off (once, the file is written)
+    st = Settings(ini)
+    st.update_profile({"pad": "True"})
+    st.save_profile("Old", {"description": "x", "scale": "720:404", "pad": "False"})
+    st.save_profile("Old2", {"description": "y", "scale": "720:404", "pad": "True"})
+    st.save()
+    win3 = make_window(work)
+    win3.showEvent(None)
+    st = Settings(ini)
+    check(st.profile["pad"] == "on" and st.profiles["Old"]["pad"] == "off" and st.profiles["Old2"]["pad"] == "on" and 'pad="True"' not in open(ini, encoding="utf-8").read()
+          and 'pad="False"' not in open(ini, encoding="utf-8").read(), "old INI: pad True / False in profile= and [profiles] become on / off")
     # options dialog: grouped, without hidden keys; saving keeps hidden values
     shown = []
-    win.edit_pairs = lambda title, pairs, groups=None, start=0: (shown.append((title, list(pairs), groups)), dict(pairs, border_tol="5"))[1]
+    win.edit_pairs = lambda title, pairs, groups=None, start=0: (shown.append((title, list(pairs), groups)), dict(pairs, tolerance="5"))[1]
     win.mnuOptions_Click()
     title, keys, groups = shown[-1]
     check(title == "Options" and groups == OPTION_GROUPS and not (set(keys) & HIDDEN_OPTIONS) and "pad" not in keys and "focus" not in keys
-          and "border_tol" in keys and "step_end" in keys, f"options dialog: {keys}")
+          and "tolerance" in keys and "step_end" in keys, f"options dialog: {keys}")
     st = Settings(ini)
-    check(st.options["border_tol"] == "5" and st.options["logo_edge"] == "20" and "focus" not in st.options, "saved: change and hidden value")
+    check(st.options["tolerance"] == "5" and st.options["logo_edge"] == "20" and "focus" not in st.options, "saved: change and hidden value")
     # profile dialog shows pad; saving writes it into the profile
-    win.edit_pairs = lambda title, pairs, groups=None, start=0: (shown.append((title, list(pairs), groups)), dict(pairs, pad="False"))[1]
+    win.edit_pairs = lambda title, pairs, groups=None, start=0: (shown.append((title, list(pairs), groups)), dict(pairs, pad="off"))[1]
     win.mnuProfile_Click()
-    check(shown[-1][1][:4] == ["description", "scale", "sws_flags", "pad"] and shown[-1][2] is None and Settings(ini).profile["pad"] == "False",
+    check(shown[-1][1][:4] == ["description", "scale", "sws_flags", "pad"] and shown[-1][2] is None and Settings(ini).profile["pad"] == "off",
           "profile dialog with pad")
     # --- dialog with headings
     import dialogs
@@ -1686,7 +1753,16 @@ def test_info(tmp, videos):
     widths = {a[0]: a[1] for a in dialog.lvwInfo.called("setColumnWidth")}
     check(1 not in widths and widths[6] > widths[4] and widths[2] > widths[0], f"column widths from the font: {widths}")
     check(dialog.lblSummary.text() == summary and dialog.lblSummary.called("setWordWrap") == [(True,)], "summary below the list")
-    print("Information: OK (segment overview, position in the finished film, summary, menu, dialog)")
+    # --- the size follows the main window (UI_SCALE): 125 % = font and window 1.25 times as big; 100 % as before
+    check(dialog.called("resize")[-1] == (1100, 420) and dialog.called("setMinimumSize")[-1] == (520, 240), "100 %: size as designed")
+    win.UI_SCALE = 125
+    big = frmInfo(rows, summary, win)
+    fonts = big.called("setFont")
+    check(big.called("resize")[-1] == (1375, 525) and big.called("setMinimumSize")[-1] == (650, 300) and fonts
+          and abs(fonts[-1][0].pointSizeF() - 1.25 * dialog.font().pointSizeF()) < 0.01 and big.lvwInfo.called("setFont") and big.cmdClose.called("setFont"),
+          f"125 %: window 1375 x 525, font 1.25 times as big: {big.called('resize')[-1]} {fonts and fonts[-1][0].pointSizeF()}")
+    del win.UI_SCALE
+    print("Information: OK (segment overview, position in the finished film, summary, menu, dialog, size follows the main window)")
 
 
 def test_tooltip_wrap(tmp, videos):
@@ -1770,7 +1846,7 @@ def test_cut_snap(tmp, videos):
     check(seek.snap_to_cut("/x", fps, 1001, 5, 30, boom) == 1001, "an error in reading the frames leaves the result unchanged")
     # inside seek_border: border says film until 1000 (frame 1000 is the first commercial frame, but still has the border)
     border = lambda path, n, fps_, opts: 72 if n <= 1000 else 0
-    opts = {"border_tol": "3", "cut_window": "5", "cut_diff": "30"}
+    opts = {"tolerance": "3", "cut_window": "5", "cut_diff": "30"}
     args = ("/x", fps, 3000, 0, 72, False, 100, opts, border)
     check(seek.seek_border(*args, frames_fn=make_frames({1000})) == 1000, "border search: late by one frame -> moved onto the cut")
     check(seek.seek_border(*args[:7], dict(opts, cut_window="0"), border, frames_fn=make_frames({1000})) == 1001, "cut_window 0: no refinement")
@@ -1779,7 +1855,7 @@ def test_cut_snap(tmp, videos):
     s2 = os.path.join(videos, "sample2.ts")
     check(seek.snap_to_cut(s2, fps, 78, 5, 30) == 76, "real recording: a result two frames late moves onto the cut at 76")
     check(seek.snap_to_cut(s2, fps, 76, 5, 30) == 76 and seek.snap_to_cut(s2, fps, 70, 5, 30) == 70, "real recording: no change on the cut or in the movie")
-    real = seek.seek_border(s2, fps, 158, 10, 72, False, 100, {"border_tol": "3", "cut_window": "5", "cut_diff": "30", "floor": "2", "blackness": "12", "allowance": "1000"})
+    real = seek.seek_border(s2, fps, 158, 10, 72, False, 100, {"tolerance": "3", "cut_window": "5", "cut_diff": "30", "floor": "2", "blackness": "12", "allowance": "1000"})
     check(real == 76, f"real recording: next commercial stays at 76: {real}")
     # options
     d = default_options()
@@ -1963,9 +2039,17 @@ def test_save_video(tmp, videos):
     answers = {"file": os.path.join(out_dir, "film"), "ask3": ["yes"]}
     win.ask_save_file = lambda title, suggestion, filters: (asked.append((title, suggestion, filters)), answers["file"])[1]
     win.ask3 = lambda text: answers["ask3"].pop(0)
+    during = []
+    real_progress = win.render_progress
+    win.render_progress = lambda p: (during.append((win.edit_blocked(), [(w.called("setEnabled") or [(True,)])[-1] for w in win.edit_controls()],
+                                                    (win.mnuOpen.called("setEnabled") or [(True,)])[-1], win.mnuExit.called("setEnabled"), win._cover)), real_progress(p))[1]
     win.mnuSaveMP4_Click()
     result = os.path.join(out_dir, "film.mp4")
     expected = expected_frames(win.make_job(result))
+    last_state = lambda w: (w.called("setEnabled") or [(True,)])[-1]
+    check(during and all(blocked and all(e == (False,) for e in edits) and opened == (False,) and not exit_calls and cover is None for blocked, edits, opened, exit_calls, cover in during),
+          f"DURING the save (every progress message): the middle buttons, the markers and the timeline are off, Open is off, Exit is untouched, no cover: {len(during)} messages")
+    check(win.edit_blocked() is False and all(last_state(w) == (True,) for w in win.edit_controls()) and last_state(win.mnuOpen) == (True,), "after the save: everything is enabled again")
     import containers
     check(asked[0][0] == "Save as" and asked[0][2] == containers.filters("mp4") and asked[0][2].startswith("MP4 video file (*.mp4);;") and all(f"(*.{e})" in asked[0][2] for e in ("mkv", "avi", "ts")),
           f"ONE file dialog for all file types, mp4 at the top: {asked[0]}")
@@ -1976,8 +2060,8 @@ def test_save_video(tmp, videos):
           and bars[-1] == (0, "") and win._bar == (0, ""), f"progress bar: {bars[:3]} ... {bars[-1]}")
     check(max(pct for pct, _ in bars) == 100 and win._render is None and win._render_worker is None, "100 % at the end, nothing is running any more")
     enabled = lambda action: [a[0] for a in action.called("setEnabled")]
-    check(enabled(win.mnuCancel)[-2:] == [True, False] and enabled(win.mnuSaveMP4)[-2:] == [False, True] and enabled(win.mnuSaveAVI)[-2:] == [False, True]
-          and enabled(win.mnuBatch)[-2:] == [False, True], "menus: Cancel save only while saving, Save and Batch blocked meanwhile")
+    check(enabled(win.cmdCancelButton)[-2:] == [True, False] and enabled(win.mnuSaveMP4)[-2:] == [False, True] and enabled(win.mnuSaveAVI)[-2:] == [False, True]
+          and enabled(win.mnuBatch)[-2:] == [False, True], "the button Cancel only while saving, Save and Batch blocked meanwhile")
     check(not [d for d in os.listdir(tempfile.gettempdir()) if d.startswith("mediamaker_") and os.path.isdir(os.path.join(tempfile.gettempdir(), d))
                 and os.listdir(os.path.join(tempfile.gettempdir(), d))], "no temporary files left")
     # --- overwriting: the file dialog itself asks about an existing file (also on a double click on it); MediaMaker only asks when it
@@ -2056,9 +2140,9 @@ def test_save_video(tmp, videos):
     # --- cancel, ffmpeg error, ffmpeg cannot be started
     def cancelling(cmd, total, on_progress, cwd=None, cancel=None):
         open(cmd[-1], "wb").write(b"x" * 10)
-        check(win.mnuCancel.called("setEnabled")[-1] == (True,), "Cancel save is enabled during the run")
-        win.mnuCancel_Click()
-        check(cancel() is True and win.mnuCancel.called("setEnabled")[-1] == (False,), "Cancel save: ffmpeg is told to stop")
+        check(win.cmdCancelButton.called("setEnabled")[-1] == (True,), "the button Cancel is enabled during the run")
+        win.cmdCancelButton_Click()
+        check(cancel() is True and win.cmdCancelButton.called("setEnabled")[-1] == (False,), "the button Cancel: ffmpeg is told to stop")
         return RunResult(-15, True, 0.5, "")
     win._render_fn = cancelling
     target = os.path.join(out_dir, "cancelled.mp4")
@@ -3103,8 +3187,7 @@ def test_first_frame_check(tmp, videos):
         win = make_window(work, thumb_fn=thumbs_from(real), fresh=True, first_fn=lambda p, fps: assumed)
         win.verify_first_frame = True
         win.showEvent(None)
-        win.dialogs = []
-        win.wait_dialog = lambda message, cancel: win.dialogs.append(FakeWait(message, cancel)) or win.dialogs[-1]
+        watch_actions(win)
         win.OpenVideo(path)
         return win
     marks = lambda win: "".join("X" if c[0] == "cross" else "B" if c[0] == "image" else "?" for c in win.timeline_cells())
@@ -3169,8 +3252,7 @@ def test_first_frame_check(tmp, videos):
 
 
 def test_cutpoint(tmp, videos):
-    """Analyze cut point: clip of the last 3 seconds of the selected segment and the first 3 seconds of the next one, played in VLC, then
-    Avidemux can be opened."""
+    """Analyze cut point: clip of the last 3 seconds of the selected segment and the first 3 seconds of the next one, shown in the viewer of the program."""
     import ffmpeg_cmd
     import logo
     import numpy as np
@@ -3195,6 +3277,17 @@ def test_cutpoint(tmp, videos):
     job_on = win.cutpoint_job(0)
     check((job_on.segments[0].start, job_on.segments[0].end) == (a.end - 75, a.end) and job_on.segments[0].mask == a.mask and job_on.segments[1].mask == b.mask
           and job_on.options["crop"] == "72", "filters on: masks and cropping stay as in the list")
+    check(win.options["cutpoint_length"] == "6", "the default length of the clip: 6 seconds")
+    win.settings.set_option("cutpoint_length", "10")
+    long_job = win.cutpoint_job(0)
+    check((long_job.segments[0].start, long_job.segments[0].end) == (a.end - 125, a.end) and long_job.segments[1].end == b.start + 125, f"10 seconds: 5 + 5 seconds = 125 frames each: {(long_job.segments[0].start, long_job.segments[1].end)}")
+    win.settings.set_option("cutpoint_length", "7")
+    check(win.cutpoint_job(0).segments[0].start == a.end - round(3.5 * 25), "7 seconds: 3.5 + 3.5")
+    win.settings.set_option("cutpoint_length", "x")
+    check(win.cutpoint_job(0).segments[0].start == a.end - 75, "nonsense: 6 seconds")
+    win.settings.set_option("cutpoint_length", "6")
+    from profiles import validate_options
+    check(validate_options({"cutpoint_length": "1"}) != [] and validate_options({"cutpoint_length": "121"}) != [] and validate_options({"cutpoint_length": "30"}) == [], "the range 2 to 120 seconds")
     win.settings.set_option("cutpoint_filters", "off")
     job = win.cutpoint_job(0)
     x, y = job.segments
@@ -3209,28 +3302,39 @@ def test_cutpoint(tmp, videos):
     commands, results = [], []
     def fake_render(cmd, total, on_progress, cwd=None, cancel=None):
         commands.append(cmd)
+        on_progress(types.SimpleNamespace(percent=40.0))                  # (ffmpeg reports 40 %)
         return results.pop(0) if results else RunResult(0, False, 0.1, "")
     win._render_fn = fake_render
     external, answers = [], []
     win._external_fn = lambda cmd: (external.append(cmd), (0, ""))[1]
-    win.ask3 = lambda text: (asked.append(text), answers.pop(0))[1]
-    asked = []
-    win.settings.set_option("vlc", "/opt/vlc/vlc")
-    win.settings.set_option("avidemux", "/opt/avidemux/avidemux_2.8.1.appImage")
     win.lvwSegments.select_row(0)
     win.lvwSegments_Click()
-    answers[:] = ["yes"]
+    shown_clips = []
+    win._clip_viewer_fn = lambda ctl, title: shown_clips.append(ctl.count)
+    def fake_pictures(cmd, **kwargs):
+        for n in (1, 2):
+            open(os.path.join(os.path.dirname(cmd[-1]), f"f{n:05d}.jpg"), "wb").close()
+        return types.SimpleNamespace(returncode=0, stderr=b"")
+    win._clip_run_fn = fake_pictures
+    win.bars.clear()
     win.mnuCutPoints_Click()
+    shown = [(p, t) for p, t in win.bars]
+    check(shown[0] == (1, "Creating preview...") and (5.0, "Creating preview...  making the masks") in shown and (43.0, "Creating preview...  making the clip, 40 %") in shown and shown[-1] == (0, ""),
+          f"the clip around a cut in the bar: the masks (5 %), then the clip with ffmpeg's percentage mapped to 5 to 100 %: {shown}")
     cmd = commands[0]
     graph = cmd[cmd.index("-filter_complex") + 1]
     check(cmd.count("-i") == 2 and "concat=n=2" in graph and graph.count("setsar=1") == 2 and "scale=720:576" in graph and graph.count("drawtext=text='Note\\: cropping, delogo and resizing functions disabled!'") == 2
           and "crop=" not in graph and "delogo=" not in graph and "removelogo" not in graph and cmd[-1] == win.cutpoint_path() and "-b:v" in cmd and cmd[cmd.index("-b:v") + 1] == "3072k",
           f"command: two sources, concat, setsar=1, the profile's scale, the note, no crop or logo filter: {graph[:150]}")
-    check(external == [["/opt/vlc/vlc", win.cutpoint_path()], ["/opt/avidemux/avidemux_2.8.1.appImage", win.cutpoint_path()]] and asked == ["Open cut point video clip with AVIDEMUX now?"],
-          f"VLC first (from the options), then, after Yes, Avidemux: {external}")
+    check(external == [] and shown_clips == [2], f"the clip is shown in the viewer of the program (in every mode); no other program is started: {external}")
+    # --- Avidemux is gone: the options are not known any more (an old INI file loses them at the start), the group Tools has VLC and the terminal
+    from profiles import OPTION_GROUPS, PRESETS, REMOVED_OPTIONS
+    from settings import DEFAULT_TOOLTIPS, default_options
+    check("cutpoint_avidemux" not in default_options() and "avidemux" not in default_options() and "cutpoint_avidemux" not in PRESETS and "cutpoint_avidemux" not in DEFAULT_TOOLTIPS
+          and dict(OPTION_GROUPS)["Tools"] == ("vlc", "terminal") and {"avidemux", "cutpoint_avidemux"} <= REMOVED_OPTIONS, "the options of Avidemux are removed")
     # --- the same with the filters on (the default): crop and both logo filters in the command, no note, the masks in a folder that is removed afterwards
     win.settings.set_option("cutpoint_filters", "on")
-    commands.clear(), external.clear(), asked.clear()
+    commands.clear(), external.clear()
     seen_folders = []
     def render_on(cmd, total, on_progress, cwd=None, cancel=None):
         seen_folders.append((cwd, sorted(os.listdir(cwd)) if cwd and os.path.isdir(cwd) else None))
@@ -3248,18 +3352,14 @@ def test_cutpoint(tmp, videos):
     check(not os.path.exists(folder_used), "the folder with the masks is removed afterwards")
     win._render_fn = fake_render
     win.settings.set_option("cutpoint_filters", "off")
-    commands.clear(), external.clear(), asked.clear()
+    commands.clear(), external.clear()
     # without drawtext when the first run fails
-    commands.clear(), external.clear(), asked.clear()
+    commands.clear(), external.clear()
     results[:] = [RunResult(1, False, 0.1, "No such filter: drawtext")]
     answers[:] = ["no"]
     win.mnuCutPoints_Click()
     check(len(commands) == 2 and "drawtext" in " ".join(commands[0]) and "drawtext" not in " ".join(commands[1]), "the first run fails: again without the text")
-    check(external == [["/opt/vlc/vlc", win.cutpoint_path()]] and asked == ["Open cut point video clip with AVIDEMUX now?"], "answer No: no Avidemux")
-    answers[:] = ["cancel"]
-    external.clear()
-    win.mnuCutPoints_Click()
-    check(len(external) == 1, "answer Cancel: no Avidemux")
+    check(external == [] and len(shown_clips) == 3, f"the clip is shown in the viewer after the run without the text: {shown_clips}")
     # both runs fail
     commands.clear(), external.clear()
     results[:] = [RunResult(1, False, 0.1, "bad"), RunResult(1, False, 0.1, "worse")]
@@ -3271,36 +3371,6 @@ def test_cutpoint(tmp, videos):
     results[:] = [RunResult(-15, True, 0.1, "")]
     win.mnuCutPoints_Click()
     check(external == [] and len(win.messages) == n, "cancelled: nothing is played, no message")
-    # --- VLC cannot be started: xdg-open instead; both fail: message
-    commands.clear(), external.clear()
-    win._external_fn = lambda cmd: (external.append(cmd), (-1, "No such file") if cmd[0] == "/opt/vlc/vlc" else (0, ""))[1]
-    answers[:] = ["no"]
-    win.mnuCutPoints_Click()
-    check(external == [["/opt/vlc/vlc", win.cutpoint_path()], ["xdg-open", win.cutpoint_path()]], f"VLC missing: xdg-open: {external}")
-    external.clear()
-    win._external_fn = lambda cmd: (external.append(cmd), (-1, "No such file"))[1]
-    answers[:] = ["no"]
-    win.mnuCutPoints_Click()
-    check("could not be played" in win.messages[-1] and win.cutpoint_path() in win.messages[-1], "neither works: message with the place of the clip")
-    # --- Avidemux: not configured / cannot be started
-    win.settings.set_option("avidemux", "")
-    win.settings.set_option("vlc", "")
-    old_path = os.environ.get("PATH", "")
-    os.environ["PATH"] = os.path.join(tmp, "nothing_here")
-    try:
-        external.clear()
-        win._external_fn = lambda cmd: (external.append(cmd), (0, ""))[1]
-        answers[:] = ["yes"]
-        win.mnuCutPoints_Click()
-        check(external == [["vlc", win.cutpoint_path()]] and "group Tools" in win.messages[-1] and "avidemux" in win.messages[-1], f"no VLC in the INI: 'vlc'; Avidemux not configured: message: {win.messages[-1][:60]!r}")
-    finally:
-        os.environ["PATH"] = old_path
-    win.settings.set_option("avidemux", "/x/avidemux.appImage")
-    external.clear()
-    win._external_fn = lambda cmd: (external.append(cmd), (-1, "Permission denied") if "avidemux" in cmd[0] else (0, ""))[1]
-    answers[:] = ["yes"]
-    win.mnuCutPoints_Click()
-    check("Avidemux could not be started" in win.messages[-1] and "Permission denied" in win.messages[-1] and "chmod +x" in win.messages[-1], "Avidemux cannot be started: message with the reason and chmod hint")
     # --- real run with ffmpeg: the clip has the two pieces
     win._render_fn = run_render = __import__("runner").run_ffmpeg
     external.clear()
@@ -3310,7 +3380,7 @@ def test_cutpoint(tmp, videos):
     out = win.cutpoint_path()
     info = probe(out)
     check(os.path.exists(out) and 148 <= info.video.frames <= 152 and (info.video.width, info.video.height) == (720, 576), f"the clip: {info.video.frames} frames (2 x 75), {info.video.width}x{info.video.height}")
-    check(external and external[-1][-1] == out, "VLC was started with the clip")
+    check(external == [] and len(shown_clips) == 4, "the viewer was opened with the clip")
     os.remove(out)
     # --- really with the filters on (the default): cropping, DeLogo and the RemoveLogo mask (written to a folder for the run) work in ffmpeg;
     # small masks (removelogo with a mask over the whole picture is extremely slow)
@@ -3357,7 +3427,7 @@ def test_cutpoint(tmp, videos):
     different.mnuCutPoints_Click()
     check(sar_of(different.cutpoint_path()) == "1:1", f"two DIFFERENT files: setsar=1 (needed for concat): {sar_of(different.cutpoint_path())}")
     os.remove(different.cutpoint_path())
-    print("Analyze cut point: OK (job, command, fallback, errors, VLC, Avidemux, real clip, aspect ratio)")
+    print("Analyze cut point: OK (job, command, fallback, errors, viewer, real clip, aspect ratio)")
 
 
 def test_save_dialog(tmp, videos):
@@ -3565,6 +3635,14 @@ def test_player_recovery():
         player.surface.image = None
         player._on_frame((b"\x00" * (720 * 576 * 4), 720, 576))
         check(player._reloads == 0 and player._frames_shown >= 1, "a picture resets the counter")
+        # while a search shows its pictures, VLC draws nothing (a late picture of VLC flickered in between)
+        shown_before, player.surface.image = player._frames_shown, "search picture"
+        player.images_only = True
+        player._on_frame((b"\x00" * (720 * 576 * 4), 720, 576))
+        check(player.surface.image == "search picture" and player._frames_shown == shown_before, "images_only: a picture of VLC is not drawn")
+        player.images_only = False
+        player._on_frame((b"\x00" * (720 * 576 * 4), 720, 576))
+        check(player.surface.image != "search picture" and player._frames_shown == shown_before + 1, "after the search VLC draws again")
         # --- the base player (embedded in a window) gets its window again
         player2 = pl.VlcPlayer()
         holder2 = holder[-1]
@@ -3913,7 +3991,7 @@ def origin_rgb_same(win, marked, rect) -> bool:
 
 def test_debug_package(tmp, videos):
     """Deploy => Create debug package: cut values, DeLogo, reference logo, last search, an unchanged piece around the slider position, all as a folder and a zip;
-    the wait window of a search says whether crop or the reference logo is used."""
+    the bar says during a search whether crop or the reference logo is used."""
     import json
     import zipfile
     import numpy as np
@@ -3942,7 +4020,7 @@ def test_debug_package(tmp, videos):
     win.current = -1
     win.mnuDebug_Click()
     check(win.messages[-1] == "Please select a segment first." and not os.path.exists(folder_base), "no segment: message, nothing is made")
-    # --- the wait window of a search says what is used
+    # --- the bar says during a search what is used
     win.lvwSegments.select_row(0)
     win.lvwSegments_Click()
     seg.mask = f"{632 / 720 - 0.003:.6f} {81 / 576 - 0.004:.6f} {37 / 720:.6f} {42 / 576:.6f}"
@@ -3951,8 +4029,8 @@ def test_debug_package(tmp, videos):
     win.Slider1.setValue(first)
     win.mnuNext_Click()
     texts = win.dialogs[-1].texts
-    check(win.dialogs[-1].message == "Seeking with reference logo" and texts and texts[0].startswith("Seeking with reference logo, please wait...\nframe ") and "logo confidence" in texts[0],
-          f"crop = 0: the wait window says it seeks with the reference logo: {texts[:1]}")
+    check(win.dialogs[-1].message == "Seeking with reference logo" and texts and texts[0].startswith("Seeking with reference logo...  ") and "logo confidence" in texts[0],
+          f"crop = 0: the bar says it seeks with the reference logo: {texts[:1]}")
     win.Slider1.setValue(first)
     win.mnuEnd_Click()
     check(win.dialogs[-1].message == "Seeking with reference logo", "also for Seek end of commercial")
@@ -3960,7 +4038,7 @@ def test_debug_package(tmp, videos):
     win._border_fn = lambda path, n, fps, opts: 60 if n < first + 100 else 0
     win.Slider1.setValue(first)
     win.mnuNext_Click()
-    check(win.dialogs[-1].message == "Seeking with crop = 60" and win.dialogs[-1].texts[0].startswith("Seeking with crop = 60, please wait...\nframe "), "crop > 0: \"Seeking with crop = 60\"")
+    check(win.dialogs[-1].message == "Seeking with crop = 60" and win.dialogs[-1].texts[0].startswith("Seeking with crop = 60...  frame "), "crop > 0: \"Seeking with crop = 60\"")
     check(win._last_search["method"] == "black border (crop)" and win._last_search["crop"] == 60 and win._last_search["probe_kind"] == "black border lines"
           and win._last_search["probes"] and abs(win._last_search["result_frame"] - (first + 100)) <= 1, f"the search is recorded: {win._last_search['result_frame']}")
     win.mnuEnd_Click()
@@ -3980,7 +4058,13 @@ def test_debug_package(tmp, videos):
     original = sessions.new_stamp
     sessions.new_stamp = lambda now=None: next(stamps)
     try:
+        win.bars.clear()
         win.mnuDebug_Click()
+        texts = [t for p_, t in win.bars]
+        percents = [p_ for p_, t in win.bars][1:-1]
+        check(texts[0] == "Creating debug package..." and texts[-1] == "" and any(t.endswith("segment.json") for t in texts) and any(t.endswith("reference logo") for t in texts)
+              and texts[-2].endswith("packing the zip file") and percents == sorted(percents) and 5 < percents[-2] < 95 and percents[-1] == 95.0,
+              f"the debug package in the bar: every item, then the zip file (95 %): {texts[1:3]} ... {texts[-3:-1]} {percents[-3:]}")
         folder = os.path.join(folder_base, "2026.10.26_09-30-00")
         names = sorted(os.listdir(folder))
         expected = ["README.txt", "clip.ts", "clip_info.txt", "debug_log_tail.txt", "delogo.json", "frame_at_slider.png", "last_search.json", "list.json", "logo_area_at_slider.png",
@@ -4015,9 +4099,11 @@ def test_debug_package(tmp, videos):
         edges = Image.open(os.path.join(folder, "reference_logo_edges.png"))
         check(edges.size == (ref.edges.shape[1] * 6, ref.edges.shape[0] * 6), f"edge picture enlarged: {edges.size}")
         check(Image.open(os.path.join(folder, "frame_at_slider.png")).size == (720, 576) and Image.open(os.path.join(folder, "logo_area_at_slider.png")).size[0] > 200, "pictures at the slider")
+        check("last_save.json" not in os.listdir(folder), "last_save.json is only there after a save in DVD mode (the package is the same as before without one)")
         last = read("last_search.json")
         check(last["method"] == "reference logo" and last["probes"] == search["probes"] and last["result_frame"] == search["result_frame"], "last search in the package")
         check('crop="0"' in open(os.path.join(folder, "options.txt")).read() and open(os.path.join(folder, "versions.txt")).read().startswith("MediaMaker "), "options and versions")
+        check(open(os.path.join(folder, "versions.txt")).read().splitlines()[1].startswith("Commit "), "versions.txt has the commit")
         info = open(os.path.join(folder, "clip_info.txt")).read()
         piece = probe(os.path.join(folder, "clip.ts"))
         lines = info.splitlines()
@@ -4111,7 +4197,7 @@ def test_debug_package(tmp, videos):
 
 
 def test_ini_tooltips_and_tools(tmp, videos):
-    """[ToolTipText] has a help text for EVERY option and profile parameter; the paths of Avidemux and VLC are options (group Tools) and the old
+    """[ToolTipText] has a help text for EVERY option and profile parameter; the path of VLC is an option (group Tools) and the old
     section [tools.linux] is moved there."""
     import mediamaker
     import shutil as sh
@@ -4143,24 +4229,26 @@ def test_ini_tooltips_and_tools(tmp, videos):
     st.sync_tooltips(wanted, obsolete)
     check(set(dict(st.items("ToolTipText"))) == set(keys), "no section yet: it is created")
     # --- migrate_tools
-    open(ini, "w", encoding="utf-8").write('[settings]\noptions=crop="0"\n[tools.linux]\n; optional: helper programs\navidemux=/opt/ad/avidemux.AppImage|/second\nvlc=/usr/bin/vlc\n[profiles]\nSD=scale="1:1"\n')
+    open(ini, "w", encoding="utf-8").write('[settings]\noptions=crop="0"\n[tools.linux]\n; optional: helper programs\navidemux=/opt/ad/avidemux.AppImage|/second\nvlc=/usr/bin/vlc|/second\n[profiles]\nSD=scale="1:1"\n')
     st = Settings(ini)
-    check(st.migrate_tools() and st.options["avidemux"] == "/opt/ad/avidemux.AppImage" and st.options["vlc"] == "/usr/bin/vlc" and st.options["crop"] == "0", "avidemux and vlc move into options (the first of several paths)")
+    check(st.migrate_tools() and "avidemux" not in st.options and st.options["vlc"] == "/usr/bin/vlc" and st.options["crop"] == "0", "vlc moves into the options (the first of several paths), avidemux is dropped")
     check(st._section_range("tools.linux") is None and "[profiles]" in "\n".join(st._lines) and "optional: helper" not in "\n".join(st._lines), "the section is gone, with its comment")
     check(not st.migrate_tools(), "a second time: nothing")
-    open(ini, "w", encoding="utf-8").write('[settings]\noptions=avidemux="/mine"\n[tools.linux]\navidemux=/old\nffmpeg=/opt/ffmpeg\n')
+    open(ini, "w", encoding="utf-8").write('[settings]\noptions=vlc="/mine"\n[tools.linux]\nvlc=/old\nffmpeg=/opt/ffmpeg\n')
     st = Settings(ini)
     st.migrate_tools()
-    check(st.options["avidemux"] == "/mine" and st.items("tools.linux") == [("ffmpeg", "/opt/ffmpeg")], "an option that is set wins; a section with other keys stays with them")
-    open(ini, "w", encoding="utf-8").write('[settings]\noptions=\n[tools]\navidemux=/in/tools\n[tools.windows]\nvlc=C:\\vlc\\vlc.exe\n')
+    check(st.options["vlc"] == "/mine" and st.items("tools.linux") == [("ffmpeg", "/opt/ffmpeg")], "an option that is set wins; a section with other keys stays with them")
+    open(ini, "w", encoding="utf-8").write('[settings]\noptions=\n[tools]\nvlc=/in/tools\n[tools.windows]\navidemux=C:\\ad.exe\n')
     st = Settings(ini)
     st.migrate_tools()
-    check(st.options["avidemux"] == "/in/tools" and st.options["vlc"] == "C:\\vlc\\vlc.exe" and st._section_range("tools") is None and st._section_range("tools.windows") is None, "[tools] and [tools.windows], too")
+    check(st.options["vlc"] == "/in/tools" and "avidemux" not in st.options and st._section_range("tools") is None and st._section_range("tools.windows") is None, "[tools] and [tools.windows], too")
     # --- tool(): the option, otherwise the PATH
-    st.set_options({"avidemux": "~/ad/avidemux", "vlc": ""})
-    check(st.tool("avidemux") == os.path.expanduser("~/ad/avidemux") and st.tool("vlc") == sh.which("vlc") and st.tool("nonexistent_program") is None, "tool(): the option (with ~), otherwise the PATH")
+    st.set_options({"vlc": "~/v/vlc"})
+    check(st.tool("vlc") == os.path.expanduser("~/v/vlc"), "tool(): the option (with ~)")
+    st.set_options({"vlc": ""})
+    check(st.tool("vlc") == sh.which("vlc") and st.tool("nonexistent_program") is None, "tool(): the option (with ~), otherwise the PATH")
     # --- the group Tools
-    check(dict(OPTION_GROUPS)["Tools"] == ("avidemux", "vlc", "terminal") and default_options()["avidemux"] == "" and default_options()["terminal"] == "" and validate_options(default_options()) == [], "group Tools")
+    check(dict(OPTION_GROUPS)["Tools"] == ("vlc", "terminal") and default_options()["terminal"] == "" and validate_options(default_options()) == [], "group Tools")
     from profiles import GROUP_TEXTS
     check("PATH" in GROUP_TEXTS["Tools"], "text of the group")
     # --- an old INI file with the dropped option logo_rewind: option and help text are removed at the start
@@ -4177,12 +4265,22 @@ def test_ini_tooltips_and_tools(tmp, videos):
     w2 = os.path.join(tmp, "tooltips_window")
     os.makedirs(w2, exist_ok=True)
     ini2 = os.path.join(w2, "MediaMaker.ini")
-    open(ini2, "w", encoding="utf-8").write('[settings]\noptions=crop="0"\n[ToolTipText]\ncrop=my words\nfocus=gone\n[tools.linux]\navidemux=/x/avidemux\n')
+    open(ini2, "w", encoding="utf-8").write('[settings]\noptions=crop="0"\n[ToolTipText]\ncrop=my words\nfocus=gone\n[tools.linux]\nvlc=/x/vlc\navidemux=/x/avidemux\n')
     win = make_window(w2)
     win.showEvent(None)
     after = Settings(ini2)
     check(set(dict(after.items("ToolTipText"))) == set(keys) and after.get("ToolTipText", "crop") == "my words" and after.get("ToolTipText", "focus") is None
-          and after.get("tools.linux", "avidemux") is None and win.options["avidemux"] == "/x/avidemux" and win.settings.tool("avidemux") == "/x/avidemux", "at the start: help texts complete, tools moved")
+          and after.get("tools.linux", "avidemux") is None and win.options["vlc"] == "/x/vlc" and win.settings.tool("vlc") == "/x/vlc" and "avidemux" not in win.options, "at the start: help texts complete, tools moved")
+    # --- an old INI file with the options of Avidemux: they are removed at the start, with their help texts
+    w4 = os.path.join(tmp, "tooltips_avidemux")
+    os.makedirs(w4, exist_ok=True)
+    ini4 = os.path.join(w4, "MediaMaker.ini")
+    open(ini4, "w", encoding="utf-8").write('[settings]\noptions=crop="72" avidemux="/x/ad" cutpoint_avidemux="yes" vlc="/x/vlc"\n[ToolTipText]\navidemux=old text\ncutpoint_avidemux=old text\n')
+    win = make_window(w4)
+    win.showEvent(None)
+    gone = Settings(ini4)
+    check("avidemux" not in gone.options and "cutpoint_avidemux" not in gone.options and gone.options["crop"] == "72" and gone.options["vlc"] == "/x/vlc"
+          and gone.get("ToolTipText", "avidemux") is None and gone.get("ToolTipText", "cutpoint_avidemux") is None and "avidemux" not in win.options, "old INI: the options of Avidemux and their help texts are removed, the others stay")
     first_version = open(ini2, "rb").read()
     win2 = make_window(w2)
     win2.showEvent(None)
@@ -4478,7 +4576,13 @@ def test_dedup(tmp, videos):
         return win, a, b
     # a) a repeat of 60 frames: found at step 61, B back by 30, A forward by 30
     win, a, b = window("a", 60)
+    win.bars.clear()
     win.mnuDeDup_Click()
+    texts = [t for p_, t in win.bars]
+    percents = [p_ for p_, t in win.bars][1:-1]
+    check(texts[0] == "Performing duplicate scene removal search..." and texts[-1] == "" and any("reading the pictures before marker B" in t for t in texts)
+          and any("comparing the pictures, step " in t for t in texts) and percents == sorted(percents) and percents[0] <= 20 and percents[-1] > 20,
+          f"dedup in the bar: reading the pictures (up to 20 %), then the comparison with its step: {texts[:3]} ... {percents[-3:]}")
     shown = (a.end - a.first_frame, b.start - b.first_frame)
     check(shown == (190, 55), f"repeat of 60 frames: Marker B {shown[0]} (220 - 30), Marker A {shown[1]} (25 + 30)")
     check(len(win.asked) == 2 and "successfully removed" in win.asked[1] and "The duplicate scene of 60 frame(s) was cut in the middle: Marker B moved 30 frame(s) back, Marker A 30 frame(s) forward" in win.asked[1]
@@ -4547,7 +4651,7 @@ def test_renamed_option(tmp, videos):
     """The option overlap is called dedup now: old INI files are taken over, the VB6 INI file with dedup is read as it is."""
     from profiles import OPTION_GROUPS, RENAMED_OPTIONS, validate_options
     from settings import DEFAULT_TOOLTIPS, Settings, default_options
-    check(RENAMED_OPTIONS == {"overlap": "dedup"} and default_options()["dedup"] == "400" and "overlap" not in default_options() and "overlap" not in DEFAULT_TOOLTIPS, "dedup replaces overlap")
+    check(RENAMED_OPTIONS == {"overlap": "dedup", "border_tol": "tolerance"} and default_options()["dedup"] == "400" and "overlap" not in default_options() and "overlap" not in DEFAULT_TOOLTIPS, "dedup replaces overlap")
     check(dict(OPTION_GROUPS)["Seeking"].count("dedup") == 1 and "overlap" not in dict(OPTION_GROUPS)["Seeking"], "in the group Seeking")
     check(DEFAULT_TOOLTIPS["dedup"] == "Max. number of frames examined during duplicate scene removal search (menu Edit => Dedup scene)", "the help text as in the VB6 INI file")
     check(len(validate_options({"dedup": "abc"})) == 1 and len(validate_options({"dedup": "-1"})) == 1 and validate_options({"dedup": "250"}) == [], "checking of the value")
@@ -4565,6 +4669,15 @@ def test_renamed_option(tmp, videos):
     first_version = open(ini, "rb").read()
     make_window(work).showEvent(None)
     check(open(ini, "rb").read() == first_version, "the next start does not change the file")
+    # --- border_tol is called tolerance now; ui_scale (tried and dropped) disappears
+    work3 = os.path.join(tmp, "renamed3")
+    os.makedirs(work3, exist_ok=True)
+    ini3 = os.path.join(work3, "MediaMaker.ini")
+    open(ini3, "w", encoding="utf-8").write('[settings]\noptions=crop="72" border_tol="7" ui_scale="125"\n[ToolTipText]\nborder_tol=old text\n')
+    make_window(work3).showEvent(None)
+    st3 = Settings(ini3)
+    check(st3.options.get("tolerance") == "7" and "border_tol" not in st3.options and "ui_scale" not in st3.options and st3.get("ToolTipText", "border_tol") is None
+          and st3.get("ToolTipText", "tolerance") == DEFAULT_TOOLTIPS["tolerance"], f"border_tol -> tolerance (value and help text), ui_scale is dropped: {st3.options}")
     # --- both names: the new one wins
     work2 = os.path.join(tmp, "renamed2")
     os.makedirs(work2, exist_ok=True)
@@ -4800,7 +4913,7 @@ def test_import_job(tmp, videos):
     # the current state differs from job 1: other list, other options, other profile; the paths of the programs are local
     win.segments.pop()
     win.settings.set_option("crop", "60")
-    win.settings.set_option("avidemux", "/local/avidemux")
+    win.settings.set_option("vlc", "/local/vlc")
     win.settings.set_option("batch", script_path)
     win.settings.set_profile({**win.profile, "scale": "1280:720"})
     win._save()
@@ -4818,7 +4931,7 @@ def test_import_job(tmp, videos):
     check([s.first_frame for s in now] == [a.first_frame, b.first_frame] and [s.total_frames for s in now] == [a.total_frames, b.total_frames], "first frame and length found again")
     check(win.lvwSegments.row_count() == 2 and win.current == 0 and win.lvwSegments.current_row() == 0, "the list shows them, the first entry is selected as a whole")
     check(win.options["crop"] == "0" and win.profile["scale"] == "720:404" and Settings(win.settings.path).profile["scale"] == "720:404", "options and profile of the job are taken over (and saved)")
-    check(win.options["avidemux"] == "/local/avidemux" and win.options["batch"] == script_path, "the options of this computer (programs, batch file) stay")
+    check(win.options["vlc"] == "/local/vlc" and win.options["batch"] == script_path, "the options of this computer (programs, batch file) stay")
     auto = sessions.list_sessions(win.sessions_directory())
     check(len(auto) == 1 and auto[0].note == "automatic backup before importing a job from the batch file" and auto[0].segments == 1, "the state before is saved as a session")
     check(load_segments(win.project_path)[1].crop_left == 8, "saved")
@@ -5823,8 +5936,9 @@ def test_containers(tmp, videos):
           and "-metadata:s:a:0" in cmd, f"a bitmap subtitle into mp4: converted to dvd_subtitle, the size of the picture before the input: {cmd} / {win.messages[-2:]}")
     win._track_fn = real
     win._render = None
-    # no subtitle chosen: avi is fine (copy mode, no subtitles); Cancel of the dialog: only the main audio track
-    picked["choice"] = None
+    # no subtitle chosen: avi is fine (copy mode, no subtitles); the button Defaults of the dialog: only the main audio track
+    import tracks_dialog
+    picked["choice"] = tracks_dialog.DEFAULTS
     win._render_fn = run_ffmpeg_real
     if os.path.exists(out("avi")):
         os.remove(out("avi"))
@@ -6200,12 +6314,18 @@ def test_multitrack_window(tmp, videos):
     check(win.track_choice == picked["choice"] and win.tracks_options() == picked["choice"].options(), "the choice is kept for the next time")
     save("again.mp4")
     check(asked[-1][4] == picked["choice"], "the next time the dialog starts with the last choice")
-    # --- Cancel: only the main audio track, no subtitles, and nothing of the choice is kept
+    # --- Cancel stops saving (nothing is started, the last choice stays); the button Defaults goes on with the main audio track only
+    import tracks_dialog
+    kept = win.track_choice
     picked["choice"] = None
     n = len(commands)
     save("cancel.mp4")
+    check(len(commands) == n and win._render is None and win.track_choice == kept and not os.path.exists(out("cancel.mp4")), "Cancel: saving stops, nothing is started, the last choice stays")
+    picked["choice"] = tracks_dialog.DEFAULTS
+    save("defaults.mp4")
     c = commands[-1]
-    check(len(commands) == n + 1 and "-metadata:s:a:0" not in c and c.count("-i") == 1 and "-c:s:0" not in c and win.track_choice is None and win.tracks_options() == {}, "Cancel: the main audio track only, no subtitles")
+    check(len(commands) == n + 1 and "-metadata:s:a:0" not in c and c.count("-i") == 1 and "-c:s:0" not in c and win.track_choice is None and win.tracks_options() == {},
+          "Defaults: the main audio track only, no subtitles, and nothing of the choice is kept")
     # --- nothing to choose: one audio track and no subtitles: no dialog
     w2 = seek_window(tmp, videos, ("sample2.ts",), workdir="mtwin2", first_fn=first_frame_number)
     w2.settings.set_option("multitrack", "on")
@@ -6268,7 +6388,7 @@ def test_multitrack_window(tmp, videos):
     from settings import OUTDATED_TOOLTIPS
     number = 3
     for key in ("multitrack", "batch", "search_pictures", "logo_conf"):
-        for text, expected in ((OUTDATED_TOOLTIPS[key][0], DEFAULT_TOOLTIPS[key]), ("my own words", "my own words")):
+        for text, expected in [(o, DEFAULT_TOOLTIPS[key]) for o in OUTDATED_TOOLTIPS[key]] + [("my own words", "my own words")]:
             number += 1
             w = os.path.join(tmp, f"mttip{number}")
             os.makedirs(w, exist_ok=True)
@@ -6555,16 +6675,25 @@ def test_search_pictures(tmp, videos):
     win.segments[0].end = 20
     calls = []
 
+    flags = []
+    infos = []
+
     def fake_border(path, n, fps, opts, on_image=None):
         calls.append(n)
         if on_image:
             on_image(n, np.zeros((12, 16, 3), np.uint8))
+            flags.append(player.images_only)
+            infos.append((win.lblInfo.text(), f"Frame {win.shown(n)}"))
+            win.action_note(f"frame {win.shown(n)}: border 0 (looking for about 72)")
+            infos.append((win._action["text"].split("...  ", 1)[1], "border 0 (looking for about 72)"))
         return 72 if n >= 140 else 0
     win._border_fn = fake_border
     win.settings.set_option("step_end", "4")
     win.settings.set_option("cut_window", "0")
     player.log.clear()
     win.mnuEnd_Click()
+    check(flags and all(flags) and player.images_only and win._vlc_stale, f"while the search shows its pictures the player draws none of its own; the picture of the result STAYS and VLC (still at its old position) stays blocked: {flags[:3]}")
+    check(infos and all(a == b for a, b in infos), f"during the search lblInfo shows the frame number of the picture on screen, the bar no longer has it: {[x for x in infos if x[0] != x[1]][:2]}")
     big = player.log.count("image")
     check(big == len(calls) >= 6, f"the search shows the picture of EVERY probe in the preview, down to the step width 1: {big} of {len(calls)} probes")
     check(getattr(player, "preview", None) is not None and player.preview._args[1:3] == (16, 12), "(it is the picture that the search read: 16 x 12 here)")
@@ -6575,6 +6704,7 @@ def test_search_pictures(tmp, videos):
     # --- VLC is brought to the slider position when the slider moves again ...
     player.log.clear()
     win._go(result + 1)
+    check(not player.images_only, "(VLC may draw again from then on)")
     shows = [l for l in player.log if l.startswith("show_at")]
     check(shows == [f"show_at {win.f2t(result + 1)}"] and not win._vlc_stale, f"the slider moves again: VLC is brought to the new position: {shows}")
     # --- ... a marker is set ...
@@ -6844,6 +6974,1574 @@ def test_advanced_options(tmp, videos):
     print("Advanced options: OK (check box, rows, values, error in an advanced value)")
 
 
+def test_cancel_stays_usable(tmp, videos):
+    """The button Cancel and Ctrl+C must work in every state of the window: while a job runs (the cover over the window) and while a file is saved (the segments are protected)."""
+    from PySide6 import QtGui
+    from mediaprobe import first_frame_number
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="cancelok", first_fn=first_frame_number)
+    button, bar = win.cmdCancelButton, win.picProgress
+    entries = [a for a in vars(win).values() if isinstance(a, QtGui.QAction)]
+    sequences = [a.called("setShortcut")[-1][0]._args for a in entries if a.called("setShortcut") and a.called("setShortcut")[-1][0]._args]
+    check(button.called("setShortcut")[-1][0]._args == ("Ctrl+C",) and ("Ctrl+C",) not in sequences,
+          "Ctrl+C is the shortcut of the button, and of no menu entry (a second one would make it ambiguous: neither would work)")
+    for level in ("all", "edit"):
+        stopped = []
+        calls_before = len(button.called("setEnabled"))
+        check(win.begin_action("Test", lambda: stopped.append(level), block=level), f"{level}: the action starts")
+        after = [c[0] for c in button.called("setEnabled")[calls_before:]]
+        check(after == [True], f"{level}: the blocking does not touch the button, it is enabled: {after}")
+        if level == "all":
+            cover = win._cover.called("setGeometry")[-1]
+            check(cover[1] + cover[3] <= bar.called("setGeometry")[-1][1] and button.called("setGeometry")[-1][1] >= cover[1] + cover[3],
+                  f"the cover (down to y = {cover[1] + cover[3]}) ends above the bar and the button (y = {button.called('setGeometry')[-1][1]})")
+        check(button.isEnabled() and button.isVisible() if hasattr(button, "isVisible") else button.isEnabled(), f"{level}: enabled and visible")
+        button.click()
+        check(stopped == [level] and button.called("setEnabled")[-1] == (False,), f"{level}: a click on the button cancels the action")
+        win.end_action()
+    # --- also with a real job: pressed from inside the search, with the cover over the window
+    seen = []
+
+    def border(path, n, fps_, opts, on_image=None):
+        seen.append(n)
+        if len(seen) == 2:
+            check(win._cover is not None and button.isEnabled(), "during the search the cover is there and the button is enabled")
+            button.click()
+        return 0
+    win._border_fn = border
+    win.settings.set_option("crop", "72")
+    win.messages.clear()
+    win.mnuEnd_Click()
+    check(len(seen) == 2 and win.messages == [] and win._action is None, f"the search ends after the click: {len(seen)} probes")
+    print("Cancel stays usable: OK (button and Ctrl+C with the cover and while saving)")
+
+
+def test_actions_in_bar(tmp, videos):
+    """Every job (searches, auto crop, dedup, the clip around a cut, the debug package) shows its progress in the bar at the bottom instead of the blue wait window: '<name>...  <what
+    it does>', the percentage from the job; the button Cancel (Ctrl+C) cancels it; the window cannot be used meanwhile; only one action at a time."""
+    import numpy as np
+    import seek
+    from PySide6 import QtGui
+    from mediaprobe import first_frame_number
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="actions", first_fn=first_frame_number)
+    seg = win.segments[0]
+    win.settings.set_option("crop", "72")
+    win.settings.set_option("cut_window", "0")
+    win.settings.set_option("step_end", "4")
+    seg.end = 20
+    actions = [a for a in vars(win).values() if isinstance(a, QtGui.QAction)]
+    seen = {}
+
+    def fake_border(path, n, fps_, opts, on_image=None):
+        if not seen:                                                         # (the first probe: what the window looks like during the job)
+            seen["action"] = dict(win._action) if win._action else None
+            seen["cover"] = win._cover
+            seen["actions_off"] = all(a.called("setEnabled")[-1] == (False,) for a in actions if a.called("setEnabled"))
+            seen["button"] = win.cmdCancelButton.called("setEnabled")[-1]
+            win.messages.clear()
+            win.mnuAutoCrop_Click()                                          # another job at the same time: refused
+            seen["second"] = list(win.messages)
+        return 72 if n >= 140 else 0
+    win._border_fn = fake_border
+    win.bars.clear()
+    win.mnuEnd_Click()
+    texts = [t for p, t in win.bars]
+    percents = [p for p, t in win.bars]
+    check(win.bars[0] == (1, "Seeking with crop = 72...") and win.bars[-1] == (0, "") and all(t.startswith("Seeking with crop = 72...") for t in texts[:-1]),
+          f"the bar: the name of the job, then what it does, at the end it is empty: {win.bars[:2]} ... {win.bars[-1]}")
+    middle = percents[1:-1]
+    check(middle and middle == sorted(middle) and 1 <= middle[0] and middle[-1] <= 97 and len(set(middle)) > 2, f"the percentage grows with the search and stays below 100: {middle[:3]} ... {middle[-2:]}")
+    check(seen["action"] and seen["action"]["block"] and seen["cover"] is not None and seen["actions_off"] and seen["button"] == (True,),
+          "during the job: the window is blocked (a transparent cover, the menu entries disabled), the button Cancel is enabled")
+    check(seen["second"] == ["Another action is still running. Wait until it has ended, or cancel it with the red button (Ctrl+C)."] and len(win.dialogs) == 1, f"a second job is refused: {seen['second']}")
+    check(win._action is None and win._cover is None and win.cmdCancelButton.called("setEnabled")[-1] == (False,)
+          and all(a.called("setEnabled")[-1] == (True,) for a in actions if a is not win.mnuCancel and a.called("setEnabled")), "afterwards: nothing runs, no cover, the entries are enabled again")
+    check(win.mnuCancel.called("setEnabled")[-1] == (False,), "(the hidden menu entry mnuCancel keeps its state: it was disabled before)")
+    # --- cancel with the button during a search: the job ends, no error, the window is free again
+    calls = []
+
+    def cancelling_border(path, n, fps_, opts, on_image=None):
+        calls.append(n)
+        if len(calls) == 3:
+            win.cmdCancelButton.click()                                    # (the button itself, as the user presses it)
+        return 0
+    win._border_fn = cancelling_border
+    win.messages.clear()
+    win.bars.clear()
+    win.mnuEnd_Click()
+    check(len(calls) == 3 and win.messages == [] and win._action is None and win._cover is None and win.bars[-1] == (0, ""), f"cancelled by the button after the 3rd probe: {len(calls)} probes, no message, free again")
+    # --- a job that fails: the message, the window is free again
+    real_run = seek.SeekWorker.run
+    seek.SeekWorker.run = lambda self: self.failed.emit("boom")
+    try:
+        win.messages.clear()
+        win._run_job(None, "Test job", lambda result: None)
+    finally:
+        seek.SeekWorker.run = real_run
+    check(win.messages == ["Test job failed: boom"] and win._action is None and win._cover is None, f"failure: {win.messages}")
+    # --- the save: what changes the segments or the markers is switched off, looking at the pictures stays possible; a job is refused
+    stopped = []
+    entries = {name: a for name, a in vars(win).items() if isinstance(a, QtGui.QAction)}
+    edit = win.edit_controls()
+    before = {id(w): len(w.called("setEnabled")) for w in edit}
+    win.begin_action("Saving", lambda: stopped.append(1), block="edit", text="Preparing job...")
+    check(win._cover is None and win.bars[-1] == (1, "Preparing job...") and win.cmdCancelButton.called("setEnabled")[-1] == (True,), "the save has no cover over the window")
+    check(all(w.called("setEnabled")[-1] == (False,) for w in edit) and len(edit) == len(list(win.cmdCommand)) + 4,
+          f"switched off: all {len(list(win.cmdCommand))} middle buttons (remove, move, clear the list, duplicate, ...), set marker A and B, reset the markers, the timeline")
+    check(all(win.cmdPos[i].called("setEnabled") == [] or win.cmdPos[i].called("setEnabled")[-1] == (True,) for i in (0, 1, 2, 3, 4, 5, 6, 9, 10))
+          and win.Slider1.called("setEnabled") in ([], [(True,)]), "still usable: the slider and the buttons that move through the film and go to the markers")
+    allowed = win.ALLOWED_WHILE_SAVING
+    check(set(allowed) == {"mnuExit", "mnuInfo", "mnuMediaInfo", "mnuReadme", "mnuAbout"}, "what stays usable while saving: Exit, Information, Media info and the two entries of the menu Help")
+    check(all(a.called("setEnabled")[-1] == (False,) for n, a in entries.items() if n not in allowed and n != "mnuCancel" and a.called("setEnabled"))
+          and entries["mnuOpen"].called("setEnabled")[-1] == (False,) and all(not entries[n].called("setEnabled") or entries[n].called("setEnabled")[-1] != (False,) for n in allowed),
+          "all menu entries are off except Exit, Information, Media info and Help")
+    win.messages.clear()
+    win.mnuAutoCrop_Click()
+    dropped = []
+    win.OpenVideo = lambda f: dropped.append(f)
+    win.lvwSegments_OLEDragDrop(["/x/y.ts"])
+    check(win.messages == ["Another action is still running. Wait until it has ended, or cancel it with the red button (Ctrl+C)."] * 1 + ["The list cannot be changed while a file is being saved or a job is running."] and dropped == [],
+          f"a job while the save runs: refused; files dropped on the list: refused: {win.messages}")
+    win.cmdCancelButton.click()
+    check(stopped == [1], "the button cancels the save")
+    win.end_action()
+    check(all(w.called("setEnabled")[-1] == (True,) for w in edit) and entries["mnuOpen"].called("setEnabled")[-1] == (True,) and win.edit_blocked() is False,
+          "afterwards everything is back as it was")
+    del win.OpenVideo
+    win.OpenVideo = type(win).OpenVideo.__get__(win)
+    # --- auto crop
+    win._border_fn = lambda path, n, fps_, opts, on_image=None: 73
+    win.bars.clear()
+    win.ask = lambda text: True
+    win.mnuAutoCrop_Click()
+    check([t for p, t in win.bars][:2] == ["Auto-cropping...", f"Auto-cropping...  reading the picture at frame {win.shown(win.Slider1.value())}"] and (50.0, f"Auto-cropping...  reading the picture at frame {win.shown(win.Slider1.value())}") in win.bars,
+          f"auto crop: {win.bars[:3]}")
+    print("Actions in the bar: OK (progress, blocking, cancel, failure, only one at a time, auto crop)")
+
+
+def _probe_ids(path):
+    j = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=id,codec_type", "-of", "json", path], capture_output=True, text=True).stdout)
+    return [x.get("id") for x in j.get("streams", []) if x["codec_type"] == "audio"]
+
+
+def make_dvd(folder, dvb=None, seconds=8):
+    """VIDEO_TS with the title set VTS_02 in three parts: two sound tracks (0x80: 440 Hz, 0x81: 880 Hz), with `dvb` (a recording with DVB subtitles) two subtitle tracks too.
+    In the third part the first sound packet of 0x80 is labelled 0x81: that part lists the sound tracks in the other order, as parts of a real DVD do (measured)."""
+    os.makedirs(folder, exist_ok=True)
+    whole = os.path.join(folder, "whole.vob")
+    cmd = ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc=size=720x576:rate=25:duration={seconds}", "-f", "lavfi", "-i", f"sine=frequency=440:sample_rate=48000:duration={seconds}",
+           "-f", "lavfi", "-i", f"sine=frequency=880:sample_rate=48000:duration={seconds}"]
+    maps = ["-map", "0:v", "-map", "1:a", "-map", "2:a"]
+    if dvb:
+        cmd += ["-t", str(seconds), "-i", dvb]
+        maps += ["-map", "3:s:1", "-map", "3:s:2"]
+    cmd += maps + ["-c:v", "mpeg2video", "-b:v", "2M", "-g", "12", "-c:a", "ac3", "-ac", "2", "-b:a", "192k"] + (["-c:s", "dvdsub"] if dvb else []) + ["-f", "vob", whole]
+    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr[-300:])
+    data = open(whole, "rb").read()
+    os.remove(whole)
+    starts, pos = [], 0
+    while True:                                                    # the beginnings of the groups of pictures (the packs before their sequence headers): where a DVD is cut
+        seq = data.find(b"\x00\x00\x01\xb3", pos)
+        if seq < 0:
+            break
+        pack = data.rfind(b"\x00\x00\x01\xba", 0, seq)
+        if pack > 0:
+            starts.append(pack)
+        pos = seq + 4
+    cuts = [0, starts[len(starts) // 3], starts[2 * len(starts) // 3], len(data)]
+    parts = [bytearray(data[cuts[n]:cuts[n + 1]]) for n in range(3)]
+    # part 3: the first sound packet of 0x80 gets the id 0x81
+    p, pes = parts[2], 0
+    while True:
+        pes = p.find(b"\x00\x00\x01\xbd", pes)
+        if pes < 0:
+            raise RuntimeError("no sound packet in part 3")
+        sub_id = p[pes + 9 + p[pes + 8]]
+        if sub_id == 0x80:
+            p[pes + 9 + p[pes + 8]] = 0x81
+            break
+        pes += 4
+    names = []
+    for n, part in enumerate(parts, 1):
+        path = os.path.join(folder, f"VTS_02_{n}.VOB")
+        open(path, "wb").write(bytes(part))
+        names.append(path)
+    open(os.path.join(folder, "VTS_02_0.VOB"), "wb").write(data[:4096])           # the menu of the title set and the main menu: not films
+    open(os.path.join(folder, "VIDEO_TS.VOB"), "wb").write(data[:4096])
+    return names
+
+
+def split_vob(src, folder, title="04", fractions=(0.08, 0.5)):
+    """A VOB file cut into three parts like a DVD does (at the beginning of a group of pictures: the pack before a sequence header): VTS_<title>_1.VOB ... _3.VOB."""
+    data = open(src, "rb").read()
+
+    def cut(target):
+        seq = data.find(b"\x00\x00\x01\xb3", int(len(data) * target))
+        return data.rfind(b"\x00\x00\x01\xba", 0, seq)
+    cuts = [0, cut(fractions[0]), cut(fractions[1]), len(data)]
+    os.makedirs(folder, exist_ok=True)
+    out = []
+    for n in range(3):
+        path = os.path.join(folder, f"VTS_{title}_{n + 1}.VOB")
+        open(path, "wb").write(data[cuts[n]:cuts[n + 1]])
+        out.append(path)
+    return out
+
+
+def make_jump_vob(folder, seconds=8):
+    """VTS_02_1.VOB made of two pieces one after the other: the time of the second one starts again (a jump in the time of the stream, as at a cell of a DVD). The first piece is the
+    test picture with a tone of 440 Hz, the second a red picture with 880 Hz: the red picture and the change of the tone mark the place where the pieces meet."""
+    os.makedirs(folder, exist_ok=True)
+    pieces = []
+    for name, video, tone in (("a", f"testsrc=size=720x576:rate=25:duration={seconds}", 440), ("b", f"color=c=red:size=720x576:rate=25:duration={seconds}", 880)):
+        path = os.path.join(folder, name + ".vob")
+        r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", video, "-f", "lavfi", "-i", f"sine=frequency={tone}:sample_rate=48000:duration={seconds}", "-map", "0:v", "-map", "1:a",
+                            "-c:v", "mpeg2video", "-b:v", "2M", "-g", "12", "-c:a", "ac3", "-ac", "2", "-b:a", "192k", "-f", "vob", path], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr[-300:])
+        pieces.append(path)
+    target = os.path.join(folder, "VTS_02_1.VOB")
+    with open(target, "wb") as out:
+        for path in pieces:
+            out.write(open(path, "rb").read())
+            os.remove(path)
+    return target
+
+
+def red_and_tone_change(path):
+    """(number of frames, time at which the picture turns red, time at which the tone changes from 440 to 880 Hz) of a file made from make_jump_vob."""
+    import numpy as np
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-vf", "scale=32:24", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"], capture_output=True, stdin=subprocess.DEVNULL).stdout
+    frames = np.frombuffer(raw, np.uint8).reshape(-1, 24, 32, 3).astype(float)
+    red = ((frames[:, :, :, 0] > 200) & (frames[:, :, :, 1] < 60) & (frames[:, :, :, 2] < 60)).mean(axis=(1, 2))
+    pcm = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-map", "0:a:0", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"], capture_output=True, stdin=subprocess.DEVNULL).stdout
+    x, w = np.frombuffer(pcm, np.int16).astype(float), 400
+    freq = [np.argmax(np.abs(np.fft.rfft(x[i:i + w] * np.hanning(w)))) * 8000 / w for i in range(0, len(x) - w, 100)]
+    return len(frames), int(np.argmax(red > 0.9)) / 25, next((i for i, f in enumerate(freq) if f > 660), 0) * 100 / 8000
+
+
+def packets_of(path):
+    """The number of video packets of a file (ffprobe)."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets", "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", path], capture_output=True, text=True,
+                         stdin=subprocess.DEVNULL).stdout
+    return int(out.strip().strip(",") or 0)
+
+
+def run_with_copyts(command, output, plain=False):
+    """Runs a save command of the program with -copyts added: then ffmpeg leaves a jump in the time of the stream as it is (as ffmpeg 8 does in a filter graph also without it: measured by
+    the user). plain=True: the same command without the counted times (setpts=N ..., asetpts=N ...), i.e. as it was before. Returns the number of frames of the file."""
+    cmd = [x.replace("setpts=N*", "setpts=PTS+0*N*") if False else x for x in command]
+    if plain:
+        import re
+        cmd = [re.sub(r"a?setpts=N[^,;\[]*,", "", x) for x in cmd]
+    cmd = cmd[:1] + ["-copyts"] + cmd[1:]
+    cmd[cmd.index(command[-1])] = output
+    subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    return packets_of(output)
+
+
+def streams_of(path):
+    """(duration, [(type letter, codec, language or title)]) of a file."""
+    j = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type,codec_name:stream_tags=language,title", "-of", "json", path],
+                                  capture_output=True, text=True).stdout)
+    return float(j["format"]["duration"]), [(s["codec_type"][0], s["codec_name"], s.get("tags", {}).get("language", s.get("tags", {}).get("title", ""))) for s in j["streams"]]
+
+
+def tone_of(path, stream, start, length):
+    """The dominant frequency (Hz) of an audio stream between start and start + length seconds."""
+    import numpy as np
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-map", f"0:a:{stream}", "-ss", str(start), "-t", str(length), "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
+                         capture_output=True, stdin=subprocess.DEVNULL).stdout
+    x = np.frombuffer(raw, np.int16).astype(float)
+    if len(x) < 800:
+        return None
+    return round(int(np.argmax(np.abs(np.fft.rfft(x * np.hanning(len(x)))))) * 8000 / len(x))
+
+
+def test_dvd_mode(tmp, videos):
+    """DVD mode: all segments are VOB files of one title set (VTS_nn_1.VOB, VTS_nn_2.VOB ...). The dialog for the tracks always opens, the tracks are named by their STREAM ID (the
+    parts of a DVD are analysed one by one, and the order of their streams differs: measured), Cancel stops saving, copy mode is not used, ffmpeg runs with the concat filter."""
+    import dvd
+    import ffmpeg_cmd
+    import mediaprobe
+    import tracks
+    from mediaprobe import Track, TrackList, first_frame_number
+    V = "/m/VIDEO_TS/"
+    # --- which lists are a DVD structure
+    check(dvd.split(V + "VTS_02_3.VOB") == (V + "VTS_02_", 3) and dvd.split(V + "vts_10_1.vob") == (V + "vts_10_", 1) and dvd.split(V + "VTS_02_0.VOB") is None
+          and dvd.split(V + "VIDEO_TS.VOB") is None and dvd.split("/m/film.vob") is None and dvd.split(V + "VTS_02_1.IFO") is None, "dvd.split: VTS_nn_k.VOB with k >= 1, nothing else")
+    check(dvd.is_dvd_structure([V + "VTS_02_1.VOB", V + "VTS_02_2.VOB", V + "vts_02_3.vob"]) and dvd.is_dvd_structure([V + "VTS_02_2.VOB"]) and dvd.title_set(V + "VTS_02_3.VOB") == "VTS_02"
+          and not dvd.is_dvd_structure([]) and not dvd.is_dvd_structure([V + "VTS_02_1.VOB", V + "VTS_03_1.VOB"]) and not dvd.is_dvd_structure([V + "VTS_02_1.VOB", "/m/film.ts"])
+          and not dvd.is_dvd_structure([V + "VTS_02_0.VOB"]) and not dvd.is_dvd_structure([V + "VTS_02_1.VOB", "/n/VIDEO_TS/VTS_02_2.VOB"]),
+          "a DVD structure: one title set, the same folder; not: two title sets, other files, the menu part, a mixture of folders, nothing")
+    # --- the keys of the tracks: positions or stream ids
+    check([tracks.key_of(x) for x in ("0x80", "0X0080", "3", "x", "0x", " 12 ")] == ["0x80", "0x80", 3, None, None, 12], "keys: a position or a stream id, normalised")
+    choice = tracks.Choice.from_options({"audio_tracks": "0x81:eng,0x80:deu", "subtitle_tracks": "0x21:fra"})
+    check(choice.audio == [("0x81", "eng"), ("0x80", "deu")] and choice.subtitles == [("0x21", "fra")] and choice.options() == {"audio_tracks": "0x81:eng,0x80:deu", "subtitle_tracks": "0x21:fra"}
+          and tracks.by_id(choice) and not tracks.by_id(tracks.Choice([(0, "")], [])), "the choice by ids is read and written back")
+    tl = TrackList([Track("audio", 0, 1, "ac3", stream_id="0x80"), Track("audio", 1, 2, "ac3", stream_id="0x81")],
+                   [Track("subtitle", 0, 1, "dvd_subtitle", stream_id="0x21"), Track("subtitle", 1, 2, "dvd_subtitle", stream_id="0x20")])
+    check(tracks.find(tl.audio, "0x81").index == 1 and tracks.find(tl.audio, 1).stream_id == "0x81" and tracks.find(tl.audio, "0x99") is None and tracks.audio_spec(2) == "a:2"
+          and tracks.audio_spec("0x80") == "i:0x80", "find by position or id; the specifier a:2 / i:0x80")
+    by_index = tracks.Choice([(1, "eng"), (0, "deu")], [(1, "fra")])
+    by_ids = tracks.to_ids(by_index, tl)
+    check(by_ids == tracks.Choice([("0x81", "eng"), ("0x80", "deu")], [("0x20", "fra")]) and tracks.to_indexes(by_ids, tl) == by_index
+          and tracks.to_indexes(tracks.Choice([("0x99", "")], [("0x20", "x")]), tl) == tracks.Choice([], [(1, "x")]) and tracks.to_indexes(None, tl) is None,
+          "to_ids / to_indexes: positions of the first file <-> ids; what the file does not have is left out")
+    check(not tracks.fits(tracks.Choice([("0x80", "")], [("0x30", "")]), tl) and tracks.fits(tracks.Choice([("0x80", "")], [("0x30", "")]), tl, lenient_subtitles=True)
+          and not tracks.fits(tracks.Choice([("0x90", "")], []), tl, lenient_subtitles=True), "fits: a subtitle track by id may be missing in a part (sparse), a sound track may not")
+    tl_a = TrackList([Track("audio", 0, 1, "ac3", stream_id="0x80"), Track("audio", 1, 2, "ac3", stream_id="0x81")], [])
+    tl_b = TrackList([Track("audio", 0, 1, "ac3", stream_id="0x81"), Track("audio", 1, 2, "ac3", stream_id="0x80")], tl.subtitles)
+    merged = tracks.merge([tl_a, tl_b])
+    check([(t.index, t.number, t.stream_id) for t in merged.audio] == [(0, 1, "0x80"), (1, 2, "0x81")] and [(t.index, t.number, t.stream_id) for t in merged.subtitles] == [(0, 1, "0x21"), (1, 2, "0x20")],
+          "merge: the tracks of the first part first, then those that turn up later; once per id, numbered anew")
+    check(tracks.label(tl.audio[0], True).endswith(" · 0x80") and "0x80" not in tracks.label(tl.audio[0]), "the line in the dialog shows the id in DVD mode only")
+    st = tracks.streams_for({"subtitle_tracks": "0x20:fra"}, "x.mkv", tl)
+    try:
+        tracks.streams_for({"subtitle_tracks": "0x99:fra"}, "x.mkv", tl)
+        missing = ""
+    except ValueError as e:
+        missing = str(e)
+    check(st.subtitles == [("0x20", "fra", "dvd_subtitle", "copy")] and "no subtitle track with the id 0x99" in missing, f"streams_for with ids: {st.subtitles} / {missing}")
+    text = ffmpeg_cmd.subtitle_list_text([("/m/a.vob", 1.0, 2.0, 1.0)], ["0x21", "0x20"])
+    check(text.startswith("ffconcat version 1.0\nstream\nexact_stream_id 0x21\nstream\nexact_stream_id 0x20\nfile '/m/a.vob'\n") and "stream" not in ffmpeg_cmd.subtitle_list_text([("/m/a.vob", 1.0, 2.0, 1.0)]),
+          "the list for the subtitles declares the streams by their ids (stream / exact_stream_id), without ids it is as before")
+    print("DVD mode, units: OK")
+    # --- a DVD made for the test: the title set VTS_02 in three parts, two sound tracks (0x80: 440 Hz, 0x81: 880 Hz); in part 3 they are listed in the other order
+    folder = os.path.join(tmp, "dvdfx", "VIDEO_TS")
+    dvb = os.path.join(videos, "test_3.ts")
+    names = make_dvd(folder, dvb if os.path.exists(dvb) else None)
+    check([_probe_ids(n) for n in names] == [["0x80", "0x81"], ["0x80", "0x81"], ["0x81", "0x80"]], f"the test DVD: the order of the sound tracks in the parts: {[_probe_ids(n) for n in names]}")
+    work = os.path.join(tmp, "dvdwin")
+    os.makedirs(work, exist_ok=True)
+    win = make_window(work, thumb_fn=quick_thumbs, fresh=True, first_fn=first_frame_number)
+    win.showEvent(None)
+    watch_actions(win)
+    win.settings.set_profile(dict(win.profile, acodec_in="ac3"))                  # (the profile of a DVD: the sound is AC3)
+    for n in names:
+        win.OpenVideo(n)
+    check(len(win.segments) == 3 and win.dvd_mode() and not win.messages, f"the three parts are in the list, DVD mode: {win.messages[:2]}")
+    seen = []
+
+    def ask(track_list, output, file_text, initial, main_audio, dvd=False):
+        seen.append((track_list, dvd, initial))
+        return tracks.Choice([(1, "eng"), (0, "deu")], [(t.index, "") for t in track_list.subtitles][:1] and [(0, "fra")] if track_list.subtitles else [])
+    win.ask_tracks = ask
+    out = os.path.join(work, "dvd.mp4")
+    win.choose_output = lambda kind=None: out
+    check(win.options.get("multitrack") == "off", "(the option multitrack is off)")
+    win.save_video()
+    saved = win._last_save
+    check(saved and saved["dvd_mode"] is True and saved["returncode"] == 0 and saved["frames_expected"] == win_expected(win) and isinstance(saved["frames_written"], int) and saved["command"][0] == "ffmpeg"
+          and "-copyts" not in saved["command"] and saved["command"][1:3] == ["-loglevel", "warning"] and "drop_frames" in saved["ffmpeg_progress_at_end"] and "dup_frames" in saved["ffmpeg_progress_at_end"]
+          and saved["ffmpeg_progress_at_end"].get("progress") == "end" and len(saved["segments"]) == 3 and "ffmpeg_messages" in saved and len(saved["output_probe"]["streams"]) >= 3 and saved["commit"],
+          f"the save keeps what it did (for the debug package): the command, the messages, the frames expected {saved and saved['frames_expected']} / written {saved and saved['frames_written']}, the streams of the file")
+    # --- the debug package after a DVD save: bytes around the slider, seams, last_save.json with the list of subtitles
+    win.Slider1.setValue(win.segment.start + 40)
+    win.mnuDebug_Click()
+    in_debug = sorted(os.listdir(os.path.join(work, "debug")))
+    folder = os.path.join(work, "debug", [f for f in in_debug if not f.endswith(".zip")][-1])
+    package = sorted(os.listdir(folder))
+    info_dvd = json.load(open(os.path.join(folder, "dvd_info.json"))) if "dvd_info.json" in package else {}
+    seams = [n for n in package if n.startswith("dvd_seam_")]
+    check(info_dvd.get("files") and "dvd_at_slider.vob" in package and len(seams) == 4 and all(os.path.getsize(os.path.join(folder, n)) > 0 for n in seams),
+          f"DVD debug package: dvd_info.json, the bytes around the slider, the end and the beginning at both seams (1/2 and 2/3): {package}")
+    ends = [n for n in seams if "_end_" in n]
+    first_end = next(n for n in ends if n.startswith("dvd_seam_1_"))
+    part1 = [p for p in info_dvd["pieces"] if p["file"] == first_end][0]
+    check(part1["start_byte"] % 2048 == 0 and part1["start_byte"] + part1["bytes"] == os.path.getsize(win.segments[0].path)
+          and open(os.path.join(folder, first_end), "rb").read()[-1000:] == open(win.segments[0].path, "rb").read()[-1000:], "the end of part 1 is the last bytes of the file, from a sector border")
+    last_saved = json.load(open(os.path.join(folder, "last_save.json")))
+    check(isinstance(last_saved.get("subtitle_lists"), list), "last_save.json has the lists of subtitles of the save (empty if none was written)")
+    check(len(seen) == 1 and seen[0][1] is True and [t.stream_id for t in seen[0][0].audio] == ["0x80", "0x81"], f"the dialog opens although multitrack is off, with the ids shown: {[t.stream_id for t in seen[0][0].audio]}")
+    check(win.track_choice.audio == [("0x81", "eng"), ("0x80", "deu")], f"the choice is kept by ids: {win.track_choice}")
+    streams = streams_of(out)[1] if os.path.exists(out) else []
+    check(streams[1:3] == [("a", "aac", "eng"), ("a", "aac", "deu")], f"the file has the two sound tracks with their codes: {streams}")
+    dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out], capture_output=True, text=True).stdout or 0)
+    tones0 = [tone_of(out, 0, t, 1.2) for t in (0.4, dur / 2, dur - 1.8)]
+    tones1 = [tone_of(out, 1, t, 1.2) for t in (0.4, dur / 2, dur - 1.8)]
+    check(all(x is not None and abs(x - 880) < 30 for x in tones0) and all(x is not None and abs(x - 440) < 30 for x in tones1),
+          f"the first track is 0x81 (880 Hz) at the beginning, in the middle and at the end, although part 3 lists it first or second: {tones0} / {tones1}")
+    # --- the command: ids in the filter graph
+    job = win.make_job(os.path.join(work, "cmd.mkv"))
+    job.options.update({"audio_tracks": "0x81:eng,0x80:deu"})
+    merged_cmd = ffmpeg_cmd.build_command(job)
+    merged_graph = merged_cmd[merged_cmd.index("-filter_complex") + 1]
+    check(merged_cmd.count("-i") == 1 and merged_cmd[merged_cmd.index("-i") + 1].startswith("concat:") and merged_cmd[merged_cmd.index("-i") + 1].count("|") == 2
+          and "[0:i:0x81]" in merged_graph and "[0:i:0x80]" in merged_graph and "concat=" not in merged_graph and merged_cmd.count("-reinit_filter") == 1,
+          f"DVD: the three parts that follow each other are ONE input (the bytes joined, concat protocol): {merged_cmd[merged_cmd.index('-i') + 1][-60:]}, {merged_graph[:120]}")
+    job_split = dataclasses.replace(job, segments=[job.segments[0], job.segments[2]])          # (parts 1 and 3 do not continue each other: two inputs)
+    cmd = ffmpeg_cmd.build_command(job_split)
+    graph = cmd[cmd.index("-filter_complex") + 1]
+    check("[0:i:0x81]" in graph and "[1:i:0x81]" in graph and "[1:i:0x80]" in graph and ":a:" not in graph and "concat=n=2:v=1:a=2" in graph,
+          f"the filter graph takes the sound tracks by id from every input and joins them with the concat filter: {graph[:150]}")
+    # --- Cancel stops saving
+    asked, before = [], win.track_choice
+    win.ask_tracks = lambda *a, **k: (asked.append(1), None)[1]
+    gone = os.path.join(work, "cancelled.mp4")
+    win.choose_output = lambda kind=None: gone
+    win.save_video()
+    check(asked == [1] and not os.path.exists(gone) and win._render is None and win.track_choice == before, "Cancel in the dialog: nothing is saved (as in VB6), the last choice is kept")
+    # --- copy mode is not used
+    win.ask_tracks = ask
+    win.mnuCopyMode.setChecked(True)
+    copied = os.path.join(work, "copy_on.mp4")
+    win.choose_output = lambda kind=None: copied
+    win.messages.clear()
+    seen.clear()
+    win.save_video()
+    codecs = [x[1] for x in streams_of(copied)[1]] if os.path.exists(copied) else []
+    check(win.copy_mode_used() is False and any("DVD mode is used" in m for m in win.messages) and codecs[:1] == ["h264"], f"copy mode on: the note, and the film is encoded (h264): {win.messages[:1]} {codecs[:1]}")
+    win.mnuCopyMode.setChecked(False)
+    # --- batch: the job in the script names the tracks by id
+    script = win.batch_path()
+    win.ask_output = lambda title, suggestion: os.path.join(work, "batch_out")
+    win.ask3 = lambda text: "no"
+    win.mnuBatch_Click()
+    text = open(script).read()
+    import batch
+    import cutlist
+    jobs = batch.parse_jobs(text)
+    job_options = cutlist.parse_kv(jobs[0].options) if jobs else {}
+    check("i:0x81" in text and len(jobs) == 1 and job_options.get("audio_tracks") == "0x81:eng,0x80:deu",
+          f"the batch script names the sound tracks by id, in the command and in the job that an import reads: {job_options.get('audio_tracks')}")
+    # --- DVD mode cuts by relative times (no -copyts): a jump in the time of the stream (a new cell) does not lose pictures
+    check("-copyts" not in cmd and "-copyts" in ffmpeg_cmd.build_command(job, stream_times={p: (0, 0) for p in {s.path for s in job.segments}}), "DVD mode: no -copyts (the times are made continuous by ffmpeg), the other way is still there")
+    absolute = ffmpeg_cmd.build_command(job, stream_times={p: (0, 0) for p in {s.path for s in job.segments}})
+    check(cmd.count("-reinit_filter") == 2 and all(cmd[i + 1] == "0" and cmd[i + 2] == "-i" for i, x in enumerate(cmd) if x == "-reinit_filter") and "-reinit_filter" not in absolute,
+          "DVD mode: -reinit_filter 0 in front of every input (newer ffmpeg builds the filter graph anew when the colour space or the field order changes, which resets all the counters); not for a TV recording")
+    jump_folder = os.path.join(tmp, "jumpfx", "VIDEO_TS")
+    jump = make_jump_vob(jump_folder)
+    os.makedirs(os.path.join(tmp, "dvdwinj"), exist_ok=True)
+    winj = make_window(os.path.join(tmp, "dvdwinj"), thumb_fn=quick_thumbs, fresh=True, first_fn=first_frame_number)
+    winj.showEvent(None)
+    watch_actions(winj)
+    winj.settings.set_profile(dict(winj.profile, acodec_in="ac3"))
+    winj.OpenVideo(jump)
+    winj.ask_tracks = lambda *a, **k: tracks.Choice([(0, "")], [])
+    jump_out = os.path.join(tmp, "dvdwinj", "jump.mp4")
+    winj.choose_output = lambda kind=None: jump_out
+    winj.save_video()
+    frames, red, tone = red_and_tone_change(jump_out)
+    check(frames == 400 and not any("Frame count differs" in m for m in winj.messages),
+          f"a file whose time jumps in the middle (two pieces of 8 s): all 400 frames, no 'Frame count differs' (cut by absolute times it was 202 of 400, and 23252 of 41030 on a DVD): {frames} {winj.messages[-1:]}")
+    check(abs(red - 8.0) < 0.1 and abs(tone - 8.0) < 0.1 and abs(red - tone) < 0.06, f"picture and sound meet at the same place: the picture turns red at {red:.2f} s, the tone changes at {tone:.2f} s")
+    # --- the dialog has three outcomes: OK (the choice), Defaults, Cancel (stop saving), and says so
+    import tracks_dialog
+    from PySide6 import QtWidgets as W
+    outcomes = {}
+    for name, result, hook in (("OK", 1, None), ("Defaults", 1, lambda dialog: dialog.use_defaults()), ("Cancel", 0, None)):
+        W.QDialog.exec_result, W.QDialog.on_exec = result, hook
+        before_labels, before_buttons = len(W.QLabel.instances), len(W.QPushButton.instances)
+        outcomes[name] = tracks_dialog.run_dialog(None, tl, "x.mkv", "VTS_02_1.VOB", tracks.Choice([(0, "")], []), 0, True)
+        texts = [l._args[0] for l in W.QLabel.instances[before_labels:] if l._args and isinstance(l._args[0], str)]
+        buttons = [b._args[0] for b in W.QPushButton.instances[before_buttons:] if b._args and isinstance(b._args[0], str)]
+        check(tracks_dialog.BUTTON_TEXT in texts and "Defaults" in buttons, f"the dialog ({name}): the note says what the three buttons do, the button Defaults is there")
+    W.QDialog.exec_result, W.QDialog.on_exec = 1, None
+    check(isinstance(outcomes["OK"], tracks.Choice) and outcomes["Defaults"] == tracks_dialog.DEFAULTS and outcomes["Cancel"] is None, f"the three outcomes: a choice, DEFAULTS, None: {outcomes}")
+    # --- Defaults in DVD mode: the first sound track BY ITS ID (a position is not the same in every part); Cancel stops saving
+    win.track_choice = None
+    win.ask_tracks = lambda *a, **k: tracks_dialog.DEFAULTS
+    check(win.pick_tracks(os.path.join(work, "d.mp4")) and win.track_choice.audio[0][0] == "0x80" and len(win.track_choice.audio) == 1 and win.track_choice.subtitles == []
+          and win.tracks_options()["audio_tracks"].startswith("0x80:"), f"Defaults in DVD mode: the first sound track by its id, no subtitles: {win.track_choice}")
+    win.ask_tracks = lambda *a, **k: None
+    check(win.pick_tracks(os.path.join(work, "d.mp4")) is False, "Cancel in DVD mode: pick_tracks says no (saving stops)")
+    check(win._languages_note.startswith("No valid IFO file found (VTS_02_0.IFO)"), f"the dialog says that there is no IFO file: {win._languages_note}")
+    win.ask_tracks = ask
+    # --- a save whose frame count differs points to the debug package
+    from runner import RunResult
+    win.messages.clear()
+    out_file = os.path.join(work, "differs.mp4")
+    shutil.copy(out, out_file)
+    win._render = {"job": win.make_job(out_file), "output": out_file, "dir": os.path.join(work, "tmpdir"), "expected": 12345, "total": 1.0, "plan": None, "chapters": False, "command": ["ffmpeg", "-i", "x"], "dvd": True}
+    os.makedirs(win._render["dir"], exist_ok=True)
+    win.render_done(RunResult(0, False, 1.0, "[mpeg2video] Non-monotonous DTS"))
+    shown = win.messages[-1] if win.messages else ""
+    check("Frame count differs: expected 12345" in shown and "debug package" not in shown and win._last_save["frames_expected"] == 12345 and win._last_save["frames_ok"] is False
+          and "Non-monotonous DTS" in win._last_save["ffmpeg_messages"] and win._last_save["command"] == ["ffmpeg", "-i", "x"], f"'Frame count differs' tells where the facts are kept; the ffmpeg messages are kept: {shown[:90]!r}")
+    # --- the times of the pictures and the samples are made from their COUNT in DVD mode (setpts=N ..., asetpts=N ...): ffmpeg 8 does not make the time continuous in a filter graph
+    saved_j = winj._last_save
+    graph_j = saved_j["command"][saved_j["command"].index("-filter_complex") + 1]
+    check("setpts=N*1/25/TB," in graph_j and "asetpts=N/48000/TB," in graph_j and "-copyts" not in saved_j["command"], f"the chain of a DVD counts the times: {graph_j[:110]}")
+    check("setpts=N*" not in ffmpeg_cmd.build_command(job, stream_times={p: (0, 0) for p in {s.path for s in job.segments}})[ffmpeg_cmd.build_command(job, stream_times={p: (0, 0) for p in {s.path for s in job.segments}}).index("-filter_complex") + 1],
+          "the other way (a TV recording) does not")
+    kept = run_with_copyts(saved_j["command"], os.path.join(tmp, "dvdwinj", "kept.mp4"))
+    lost = run_with_copyts(saved_j["command"], os.path.join(tmp, "dvdwinj", "lost.mp4"), plain=True)
+    check(kept >= 398 and lost < 300, f"a jump in the time that ffmpeg does NOT correct (-copyts): with the counted times {kept} of 400 frames, without them {lost} (the pieces after the jump were lost: the user's 17357 dropped frames)")
+    # --- the same with the real data of the user's DVD (the beginning of VTS_02_1.VOB and the piece behind its jump; only if both files are there)
+    real_a, real_n = os.path.join(videos, "VTS_02_1_anfang.vob"), os.path.join(videos, "VTS_02_1_naht.vob")
+    if os.path.exists(real_a) and os.path.exists(real_n):
+        data_n = open(real_n, "rb").read()
+        probe_rows = [l.split(",") for l in subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=dts_time,pos", "-of", "csv=p=0", real_n], capture_output=True,
+                                                          text=True, stdin=subprocess.DEVNULL).stdout.split("\n") if l.strip()]
+        jump_at = next(i for i in range(1, len(probe_rows)) if probe_rows[i][0] not in ("N/A", "") and probe_rows[i - 1][0] not in ("N/A", "") and float(probe_rows[i][0]) > float(probe_rows[i - 1][0]) + 1000)
+        pos_nav = data_n.rfind(b"\x00\x00\x01\xbf", 0, int(probe_rows[jump_at][1]))
+        second = data_n[data_n.rfind(b"\x00\x00\x01\xba", 0, pos_nav + 1):]
+        data_a = open(real_a, "rb").read()
+        real_folder = os.path.join(tmp, "realfx", "VIDEO_TS")
+        os.makedirs(real_folder, exist_ok=True)
+        real_vob = os.path.join(real_folder, "VTS_02_1.VOB")
+        open(real_vob, "wb").write(data_a[:data_a.rfind(b"\x00\x00\x01\xba")] + second)
+        os.makedirs(os.path.join(tmp, "dvdwinr"), exist_ok=True)
+        winr = make_window(os.path.join(tmp, "dvdwinr"), thumb_fn=quick_thumbs, fresh=True, first_fn=first_frame_number)
+        winr.showEvent(None)
+        watch_actions(winr)
+        winr.settings.set_profile(dict(winr.profile, acodec_in="ac3"))
+        winr.OpenVideo(real_vob)
+        winr.ask_tracks = lambda *a, **k: tracks.Choice([(0, "")], [])
+        real_out = os.path.join(tmp, "dvdwinr", "real.mp4")
+        winr.choose_output = lambda kind=None: real_out
+        winr.save_video()
+        want = packets_of(real_vob)
+        got = packets_of(real_out)
+        check(abs(got - want) <= 2 and not any("Frame count differs" in m for m in winr.messages), f"the real data (the beginning of the user's VTS_02_1.VOB + the piece behind its jump to 0.085 s): {got} of {want} frames, {winr.messages[-1:]}")
+        kept_r = run_with_copyts(winr._last_save["command"], os.path.join(tmp, "dvdwinr", "kept.mp4"))
+        lost_r = run_with_copyts(winr._last_save["command"], os.path.join(tmp, "dvdwinr", "lost.mp4"), plain=True)
+        check(kept_r >= want - 3 and lost_r < want - 200, f"the real data with a jump that ffmpeg does not correct: counted times {kept_r} of {want} frames, before {lost_r}")
+    else:
+        print("   (VTS_02_1_anfang.vob and VTS_02_1_naht.vob are not in the test folder: the test with the user's real DVD data is skipped)")
+    # --- not a DVD structure: no dialog without the option multitrack
+    other = os.path.join(folder, "VTS_03_1.VOB")
+    shutil.copy(names[0], other)
+    os.makedirs(os.path.join(tmp, "dvdwin2"), exist_ok=True)
+    win2 = make_window(os.path.join(tmp, "dvdwin2"), thumb_fn=quick_thumbs, fresh=True, first_fn=first_frame_number)
+    win2.showEvent(None)
+    win2.settings.set_profile(dict(win2.profile, acodec_in="ac3"))
+    win2.OpenVideo(names[0])
+    win2.OpenVideo(other)
+    called = []
+    win2.ask_tracks = lambda *a, **k: (called.append(1), None)[1]
+    check(not win2.dvd_mode() and win2.pick_tracks(os.path.join(work, "x.mp4")) and called == [], "two title sets: not a DVD structure, no dialog (multitrack is off)")
+    from runner import RunResult as _RR
+    got_cmds, got_kw = [], []
+    def _fake_render(command, total, on_progress, cwd=None, cancel=None, **kw):
+        got_cmds.append(list(command))
+        got_kw.append(kw)
+        return _RR(0, False, 1.0, "")
+    win2._render_fn = _fake_render
+    win2.choose_output = lambda kind=None: os.path.join(tmp, "dvdwin2", "plain.mp4")
+    win2.save_video()
+    check(got_cmds and "-loglevel" not in got_cmds[0] and "-reinit_filter" not in got_cmds[0] and "-itsoffset" not in got_cmds[0] and not any("setpts=N" in x for x in got_cmds[0]) and "-copyts" in got_cmds[0]
+          and got_kw == [{}] and win2._last_save is None, f"a save that is not in DVD mode (two title sets): no -loglevel, no -reinit_filter, no counted times, -copyts as before, no frame progress, nothing recorded: {got_kw}")
+    # --- real DVD data (a piece of a DVD with five subtitle tracks, only if the file is there)
+    queen = os.path.join(videos, "queen.vob")
+    if os.path.exists(queen):
+        qparts = split_vob(queen, os.path.join(tmp, "queenfx", "VIDEO_TS"))
+        os.makedirs(os.path.join(tmp, "dvdwin3"), exist_ok=True)
+        win3 = make_window(os.path.join(tmp, "dvdwin3"), thumb_fn=quick_thumbs, fresh=True, first_fn=first_frame_number)
+        win3.showEvent(None)
+        win3.settings.set_profile(dict(win3.profile, acodec_in="ac3"))
+        for n in qparts:
+            win3.OpenVideo(n)
+        shown = []
+
+        def qask(track_list, output, file_text, initial, main_audio, dvd=False):
+            shown.append([(t.index, t.stream_id) for t in track_list.subtitles])
+            index = {t.stream_id: t.index for t in track_list.subtitles}
+            return tracks.Choice([(0, "eng")], [(index["0x22"], "deu"), (index["0x20"], "eng"), (index["0x24"], "fra")])
+        win3.ask_tracks = qask
+        qout = os.path.join(tmp, "dvdwin3", "queen.mkv")
+        win3.choose_output = lambda kind=None: qout
+        win3.save_video()
+        check(win3.dvd_mode() and shown == [[(0, "0x20"), (1, "0x21"), (2, "0x22"), (3, "0x23"), (4, "0x24")]], f"queen.vob: the dialog offers the five subtitle tracks: {shown}")
+        sizes = {}
+        for source, key in ((queen, "src"), (qout, "out")):
+            j = json.loads(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream=index,id:packet=stream_index,size", "-of", "json", source], capture_output=True, text=True).stdout)
+            ids = {x["index"]: x.get("id") for x in j["streams"]}
+            for x in j["packets"]:
+                sizes.setdefault(key, {}).setdefault(ids[x["stream_index"]] if key == "src" else x["stream_index"], []).append(int(x["size"]))
+        times = {}
+        j = json.loads(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "packet=stream_index,pts_time", "-of", "json", qout], capture_output=True, text=True).stdout)
+        for x in j["packets"]:
+            times.setdefault(x["stream_index"], []).append(float(x["pts_time"]))
+        check(all(len(v) == 6 and all(abs(a - b) < 0.1 for a, b in zip(v, [2.12, 6.42, 13.76, 18.06, 21.36, 27.64])) for v in times.values()),
+              f"queen.vob: the pictures of the subtitles are where the picture is (the cut in relative times, the subtitle list with the start of the file; the parts are one stream now, a piece of the list starts at the stream start time of its part: within 0.1 s of the unsplit file): {[round(t, 3) for t in times.get(2, [])]}")
+        want = {2: sizes["src"]["0x22"], 3: sizes["src"]["0x20"], 4: sizes["src"]["0x24"]}
+        check(sizes["out"] == want and all(len(v) == 6 for v in want.values()), f"queen.vob: every subtitle track of the new file holds the six pictures of ITS source id (compared by size): {sizes['out']}")
+    else:
+        print("   (queen.vob is not in the test folder: the test with a real DVD piece is skipped)")
+    print("DVD mode: OK (detection, ids, dialog, cancel, copy mode, batch, real files)")
+
+
+def test_help_menu(tmp, videos):
+    """The menu Help (the last one): Readme shows README.md formatted, About shows name, version and the COMMIT (git, or the file COMMIT next to a delivered program)."""
+    import buildinfo
+    import debugpack
+    import mediamaker
+    from PySide6 import QtWidgets as W
+    # --- buildinfo: the commit from git, from the file COMMIT, or unknown
+    repo = os.path.join(tmp, "buildrepo")
+    os.makedirs(repo, exist_ok=True)
+    git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-C", repo, *a], capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout.strip()
+    git("init", "-q")
+    open(os.path.join(repo, "a.txt"), "w").write("one\n")
+    git("add", "a.txt")
+    git("commit", "-q", "-m", "First commit")
+    info = buildinfo.commit_info(repo)
+    check(info["source"] == "git" and info["hash"] == git("rev-parse", "HEAD") and info["short"] == info["hash"][:7] and info["subject"] == "First commit" and info["dirty"] == [] and info["date"][:4] == "2026" or info["date"][:2] == "20",
+          f"commit_info of a clone: {info['short']} {info['subject']!r} {info['describe']}")
+    open(os.path.join(repo, "a.txt"), "w").write("two\n")
+    open(os.path.join(repo, "new.txt"), "w").write("not tracked\n")
+    info2 = buildinfo.commit_info(repo)
+    check(info2["dirty"] == ["a.txt"] and "LOCAL CHANGES in 1 file(s): a.txt" in buildinfo.one_line(info2) and info2["short"] == info["short"], f"local changes of tracked files are noted, untracked ones are not: {info2['dirty']}")
+    plain = os.path.join(tmp, "delivered")
+    os.makedirs(plain, exist_ok=True)
+    check(buildinfo.commit_info(plain)["hash"] == "" and buildinfo.one_line(buildinfo.commit_info(plain)).startswith("(unknown"), "neither git nor COMMIT: unknown, said so")
+    open(os.path.join(plain, "COMMIT"), "w").write("0db2bc3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n2026-11-13T16:40:00+01:00\nDVD mode\n")
+    fi = buildinfo.commit_info(plain)
+    check(fi["source"] == "file" and fi["short"] == "0db2bc3" and fi["subject"] == "DVD mode" and buildinfo.one_line(fi).startswith("0db2bc3, 2026-11-13 16:40: DVD mode"), f"the file COMMIT of a delivered program: {buildinfo.one_line(fi)}")
+    sub_folder = os.path.join(repo, "inner")
+    os.makedirs(sub_folder, exist_ok=True)
+    check(buildinfo.commit_info(sub_folder)["hash"] == "", "a program in a folder INSIDE another repository does not take that repository's commit")
+    text = debugpack.versions_text("0.8-dev", commit="0db2bc3 (v0.7-17)")
+    check(text.splitlines()[:2] == ["MediaMaker 0.8-dev", "Commit 0db2bc3 (v0.7-17)"] and "Commit" not in debugpack.versions_text("0.8-dev"), "versions.txt of the debug package has the commit line")
+    # --- the menu
+    work = os.path.join(tmp, "helpwin")
+    os.makedirs(work, exist_ok=True)
+    win = make_window(work, thumb_fn=quick_thumbs, fresh=True)
+    win.showEvent(None)
+    bar_menus = [c[0] for c in win.menuBar().called("addMenu")]
+    check(bar_menus[-3:] == ["&File", "&Edit", "&Deploy", "&Help"][-3:] and bar_menus[-1] == "&Help", f"Help is the last menu: {bar_menus}")
+    check([a.text_ for a in win.mnuHelp.actions_] == ["&Readme", "&About MediaMaker"] and win.mnuReadme.called("setShortcut")[-1][0]._args == ("F1",), "Readme (F1) and About")
+    # --- Readme: README.md of the program as formatted text
+    W.QDialog.exec_result, W.QDialog.on_exec = 1, None
+    before = len(W.QTextBrowser.instances)
+    win.mnuReadme_Click()
+    browser = W.QTextBrowser.instances[-1]
+    readme = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "README.md"), encoding="utf-8").read()
+    check(len(W.QTextBrowser.instances) == before + 1 and browser.called("setMarkdown")[-1] == (readme,) and browser.called("setOpenExternalLinks")[-1] == (True,) and "# MediaMaker" in readme,
+          "Readme: README.md is shown as Markdown, links open in the browser")
+    real_file = mediamaker.__file__
+    mediamaker.__file__ = os.path.join(plain, "mediamaker.py")                       # (a folder without README.md)
+    try:
+        win.messages.clear()
+        win.mnuReadme_Click()
+    finally:
+        mediamaker.__file__ = real_file
+    check(len(win.messages) == 1 and win.messages[0].startswith("README.md was not found next to the program"), f"no README.md: said so: {win.messages}")
+    # --- About: name, version, commit; the button copies the information
+    win.mnuAbout_Click()
+    labels = [l for l in W.QLabel.instances[-12:] if l.called("setText")]
+    shown = " ".join(str(l.called("setText")[-1][0]) for l in labels)
+    here = buildinfo.commit_info()
+    check("MediaMaker" in shown and mediamaker.VERSION in shown and (here["short"] in shown if here["hash"] else "Commit unknown" in shown) and "github.com/THN1/mediamaker" in shown,
+          f"About: the name, the version {mediamaker.VERSION}, the commit {here['short'] or '(unknown)'}, the link")
+    copy = [b for b in W.QPushButton.instances[-4:] if b.called("setText") and b.called("setText")[-1][0] == "Copy information" or b._args[:1] == ("Copy information",)][-1]
+    copy.click()
+    copied = W.QApplication._Clipboard.text_
+    check(copied.startswith(f"MediaMaker {mediamaker.VERSION}\nCommit ") and "Python " in copied and "ffmpeg" in copied.lower(), f"'Copy information': {copied.splitlines()[:2]}")
+    # --- the commit is in every job of a batch file, not only in DVD mode: an ordinary recording, with filters and in copy mode
+    from mediaprobe import first_frame_number
+    bw = seek_window(tmp, videos, ("sample2.ts",), workdir="helpbatch", first_fn=first_frame_number)
+    bw.ask3 = lambda text: "no"
+    bw.ask = lambda text: False
+    for copy_mode in (False, True):
+        bw.mnuCopyMode.setChecked(copy_mode)
+        bw.ask_output = lambda title, suggestion: os.path.join(tmp, "helpbatch", "out_copy.mkv" if copy_mode else "out.mp4")
+        bw.mnuBatch_Click()
+        lines = open(bw.batch_path(), encoding="utf-8").read().splitlines()
+        made = [i for i, l in enumerate(lines) if l.startswith("# Made by MediaMaker ")]
+        last_job = max(i for i, l in enumerate(lines) if l.startswith("# J="))
+        here = buildinfo.commit_info()
+        check(made and made[-1] == last_job + 1 and lines[made[-1]].startswith(f"# Made by MediaMaker {mediamaker.VERSION}, commit ") and (here["short"] in lines[made[-1]] if here["hash"] else "unknown" in lines[made[-1]])
+              and len(made) == len([l for l in lines if l.startswith("# J=")]), f"batch file, {'copy mode' if copy_mode else 'ordinary job'} (no DVD): every job has the commit line right after # J=: {lines[made[-1]][:70] if made else made}")
+    print("Help menu: OK (commit from git / COMMIT / unknown, Readme, About, copy, versions.txt, batch file)")
+
+
+def test_dvd_subtitle_jump(tmp, videos):
+    """DVD: the time stamps of a file jump (a new cell: the time starts again). The demuxer of the list of subtitles does not correct that, so the subtitles behind the jump got wrong
+    times (measured by the user: for 12 minutes none). The list therefore holds every piece between two jumps as a file of its own (protocol subfile), with the length of its pictures."""
+    import dvd
+    import ffmpeg_cmd
+    # --- the search for jumps in a list of packets: video, audio and data count, subtitles do not (they are silent for a long time); the cut is the first packet behind the jump
+    rows = [(0, 0.0, 0), (1, 0.1, 2048), (2, 0.0, 4096), (3, 0.0, 6144), (0, 5.0, 8192), (1, 5.1, 10240), (3, 40.0, 12288), (2, 5.0, 14336), (2, 0.1, 18000), (0, 5.1, 20480), (0, 0.2, 22528),
+            (1, 0.3, 24576), (3, 41.0, 26000)]
+    kinds = {0: "video", 1: "audio", 2: "data", 3: "subtitle"}
+    check(dvd.jumps_from_packets(rows, kinds) == [18000 // 2048 * 2048], f"jump: the first packet of any stream behind it, to the sector, a silent subtitle stream is no jump: {dvd.jumps_from_packets(rows, kinds)}")
+    check(dvd.jumps_from_packets([(0, 1.0, 0), (0, 1.04, 100)], kinds) == [] and dvd.jumps_from_packets([], kinds) == [], "no jump, no packets: no cut")
+    # --- a real file with a jump: two pieces, the second starts where the time starts again
+    jump = make_jump_vob(os.path.join(tmp, "jumpsub", "VIDEO_TS"))
+    pieces = dvd.pieces_of(jump)
+    check(len(pieces) == 2 and pieces[0].start_byte == 0 and pieces[0].end_byte == pieces[1].start_byte and pieces[1].end_byte == os.path.getsize(jump) and pieces[1].start_byte % dvd.SECTOR == 0
+          and pieces[0].first_picture == 0 and pieces[1].first_picture == 200, f"two pieces, the second begins with picture 200 at a sector: {pieces}")
+    start_of_second = ffmpeg_cmd.stream_times_of(pieces[1].url(jump))
+    check(start_of_second[0] < 1 and start_of_second[1] < 1, f"the second piece opens like a file of its own, its time starts again: {start_of_second}")
+    check(dvd.pieces_of(jump) is pieces, "the result is kept for the same file")
+    # --- the real piece (the user's file around the jump of VTS_02_1.VOB)
+    naht = os.path.join(videos, "VTS_02_1_naht.vob")
+    if not os.path.exists(naht):
+        print("   (VTS_02_1_naht.vob is not in the test folder: the test with the real jump is skipped)")
+        return
+    folder = os.path.join(tmp, "jumpreal", "VIDEO_TS")
+    os.makedirs(folder, exist_ok=True)
+    target = os.path.join(folder, "VTS_02_1.VOB")
+    shutil.copy(naht, target)
+    parts = dvd.pieces_of(target)
+    check(len(parts) == 2 and parts[1].first_picture == 375 and parts[1].start_byte == 9037824, f"the jump of the real piece: bytes 9037824, picture 375 (packets without a time stamp count): {parts}")
+    from cutlist import Job, Segment
+    import mediaprobe
+    seg = Segment(1, target, "VTS_02_1.VOB", 0, 700, 700, Fraction(25), 720, 576, 9000, 448, "a", 0, 0, 0, 0, 48000, "", 0)
+    job = Job(os.path.join(tmp, "jumpreal", "out.mkv"), {"scale": "720:576", "sws_flags": "lanczos", "fps": "25.000", "bv": "2000k", "ba": "192k", "acodec_out": "aac", "ar": "48000"},
+              {"audio_tracks": "0x80:", "subtitle_tracks": "0x21:,0x22:", "multitrack": "off"}, [seg])
+    files = {}
+    command = ffmpeg_cmd.build_command(job, subtitle_list="sub.ffconcat", files=files, track_list=mediaprobe.track_list(target, probe_args=dvd.PROBE_ARGS))
+    text = files["sub.ffconcat"]
+    check(text.count("file 'subfile,,start,") == 2 and "duration 14.200" in text and "duration 13.800" in text and "-protocol_whitelist" in command
+          and command.index("-protocol_whitelist") < command.index("-f", command.index("-protocol_whitelist")), f"the list has a file for every piece, with the lengths of their pictures (355 and 345 pictures: the first 20 packets of the piece cannot be decoded):\n{text}")
+    work = os.path.join(tmp, "jumpreal")
+    open(os.path.join(work, "sub.ffconcat"), "w").write(text)
+    probed = subprocess.run(ffmpeg_cmd.subtitle_start_args(os.path.join(work, "sub.ffconcat")), capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    check(probed.returncode == 0 and "whitelist" not in probed.stderr and "Impossible to open" not in probed.stderr,
+          f"the question for the start time of the list can read the pieces (protocol subfile on the whitelist; without it the answer was nothing, 0 s, and the subtitles came 16.8 s too early): {probed.stderr[-200:]}")
+    command = ffmpeg_cmd.fill_subtitle_start(command, os.path.join(work, "sub.ffconcat"))
+    command = [os.path.join(work, "out.mkv") if c == job.output else c for c in command]
+    r = subprocess.run(command, cwd=work, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    check(r.returncode == 0, f"the command runs: {r.stderr[-300:]}")
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "s:0", "-show_entries", "packet=pts_time", "-of", "csv=p=0", os.path.join(work, "out.mkv")], capture_output=True, text=True).stdout
+    times = [float(x) for x in out.split()]
+    check(len(times) == 3 and times[0] < 6 and 19 < times[1] < 21.5 and 25 < times[2] < 27.5, f"the subtitles behind the jump come at their place (before it 4.8 s; behind it about 20 s and 26 s): {times}")
+    print("DVD subtitle jump: OK (jumps, pieces, the list, the real piece run with ffmpeg)")
+
+
+def test_dvd_seam(tmp, videos):
+    """The seam between two parts of a DVD (the real end of VTS_02_1.VOB and the real beginning of VTS_02_2.VOB, from the debug package of the user): a part ends and the next one begins
+    in the middle of a group of pictures and of an AC3 block. Read as two files about one second of pictures (the user heard and saw a jump at 23:45) and the first block of sound are
+    lost; read as ONE stream (protocol concat, the bytes joined) nothing is lost. The program numbers pictures from the first one that a part DECODES on its own (first_frame), so the
+    run is made from the numbers of the parts and the pictures at the start of the next part that can be decoded now (dvd.effective_segments)."""
+    import dvd
+    import ffmpeg_cmd
+    import mediaprobe
+    import runner
+    from cutlist import Job, Segment
+    end, start = os.path.join(videos, "seam_1_ende.vob"), os.path.join(videos, "seam_2_anfang.vob")
+    if not (os.path.exists(end) and os.path.exists(start)):
+        print("   (seam_1_ende.vob / seam_2_anfang.vob are not in the test folder: the test of the seam is skipped)")
+        return
+    folder = os.path.join(tmp, "seamfx", "VIDEO_TS")
+    os.makedirs(folder, exist_ok=True)
+    a, b = os.path.join(folder, "VTS_02_1.VOB"), os.path.join(folder, "VTS_02_2.VOB")
+    shutil.copy(end, a)
+    shutil.copy(start, b)
+
+    def decoded(path):
+        out = subprocess.run(["ffmpeg", "-hide_banner", "-i", path, "-map", "0:v:0", "-f", "null", "-"], capture_output=True, text=True, stdin=subprocess.DEVNULL).stderr
+        return int(out.split("frame=")[-1].split()[0])
+    alone_a, alone_b, together = decoded(a), decoded(b), decoded("concat:" + a + "|" + b)
+    heads = dvd.undecodable_head(a), dvd.undecodable_head(b)
+    check(together > alone_a + alone_b + 20 and heads[1] > 20, f"on their own the two files give {alone_a} + {alone_b} pictures, as one stream {together}: the first {heads[1]} pictures of the second can be decoded behind the first")
+    first_a, first_b = 3, 27
+    segs = [Segment(1, a, "VTS_02_1.VOB", first_a, first_a + alone_a, first_a + alone_a, Fraction(25), 720, 576, 9000, 448, "a", 0, 0, 10, 13, 48000, "", first_a),
+            Segment(2, b, "VTS_02_2.VOB", first_b, first_b + alone_b, first_b + alone_b, Fraction(25), 720, 576, 9000, 448, "a", 0, 0, 10, 14, 48000, "", first_b)]
+    merged = dvd.effective_segments(segs)
+    check(len(merged) == 1 and merged[0].path == "concat:" + a + "|" + b and merged[0].frames == alone_a + alone_b + heads[1], f"the two segments become one run of {merged[0].frames} pictures")
+    check(len(dvd.effective_segments([segs[0], dataclasses.replace(segs[1], start=first_b + 10)])) == 2 and len(dvd.effective_segments([dataclasses.replace(segs[0], end=segs[0].end - 5), segs[1]])) == 2,
+          "a cut (the second starts later, or the first ends earlier) is no seam: two segments")
+    job = Job(os.path.join(tmp, "seamfx", "out.mkv"), {"scale": "720:576", "sws_flags": "lanczos", "fps": "25.000", "bv": "2000k", "ba": "192k", "acodec_out": "aac", "ar": "48000"},
+              {"audio_tracks": "0x80:", "subtitle_tracks": "", "multitrack": "off"}, segs)
+    expected = runner.expected_frames(job)
+    command = ffmpeg_cmd.build_command(job, track_list=mediaprobe.track_list(a, probe_args=dvd.PROBE_ARGS))
+    r = subprocess.run(command, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    check(r.returncode == 0 and command.count("-i") == 1 and command[command.index("-i") + 1].startswith("concat:"), f"one input, ffmpeg runs: {r.stderr[-200:]}")
+    written = packets_of(job.output)
+    check(abs(written - expected) <= 1 and written >= alone_a + alone_b + 20, f"the file has {written} pictures, expected {expected} (the two files on their own: {alone_a + alone_b})")
+    # --- a cut deep inside a part (Analyze cut point at the seam): no -ss in DVD mode (the times of the stream jump; ffmpeg 9 found nothing behind a jump: a clip without any stream)
+    deep = [dataclasses.replace(segs[0], start=segs[0].end - 75), dataclasses.replace(segs[1], end=segs[1].start + 75)]
+    deep_job = Job(os.path.join(tmp, "seamfx", "deep.mp4"), dict(job.profile), dict(job.options), deep)
+    big = [dataclasses.replace(segs[0], start=2000, end=2075, total_frames=40000)]
+    check("-ss" not in ffmpeg_cmd.build_command(Job(os.path.join(tmp, "seamfx", "big.mkv"), dict(job.profile), dict(job.options), big), track_list=mediaprobe.track_list(a, probe_args=dvd.PROBE_ARGS)),
+          "DVD mode: a start far inside the file is reached by trim, never by -ss")
+    deep_cmd = ffmpeg_cmd.build_command(deep_job, track_list=mediaprobe.track_list(a, probe_args=dvd.PROBE_ARGS))
+    r = subprocess.run(deep_cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    written = packets_of(deep_job.output)
+    check(r.returncode == 0 and "-ss" not in deep_cmd and written >= 150, f"the clip around the seam (last 75 pictures of one part, first 75 of the next): {written} pictures, {r.stderr[-150:]}")
+    print("DVD seam: OK (pictures at the seam, runs, counts)")
+
+
+def make_ifo(path, swapped=True):
+    """A VTS_nn_0.IFO (layout of libdvdread) with two audio tracks (en, de), three subtitle tracks (fr, it, es) and two program chains: a short one (5 s) and the film (1:30:00) whose
+    stream numbers are not the order of the attributes (swapped): audio attribute 0 is stream 0x81, subtitle attributes 0, 1, 2 are the streams 0x22, 0x20, 0x21."""
+    import struct
+    data = bytearray(6144)
+    data[:12] = b"DVDVIDEO-VTS"
+    data[0xCC:0xD0] = struct.pack(">I", 1)                       # the table of program chains: sector 1
+    data[0x200] = 0x0C                                           # 16:9
+    data[0x203] = 2
+    for i, code in enumerate((b"en", b"de")):
+        data[0x204 + 8 * i] = 0x04                               # AC3, language present
+        data[0x204 + 8 * i + 2:0x204 + 8 * i + 4] = code
+    data[0x255] = 3
+    for i, code in enumerate((b"fr", b"it", b"es")):
+        data[0x256 + 6 * i] = 0x01
+        data[0x256 + 6 * i + 2:0x256 + 6 * i + 4] = code
+    table = 2048
+    data[table:table + 2] = struct.pack(">H", 2)
+    for n, (offset, seconds) in enumerate(((0x30, b"\x00\x00\x05\x00"), (0x30 + 0xA0, b"\x01\x30\x00\x00"))):
+        data[table + 8 + 8 * n + 4:table + 8 + 8 * n + 8] = struct.pack(">I", offset)
+        pgc = table + offset
+        data[pgc + 4:pgc + 8] = seconds
+        audio = (1, 0) if (swapped and n == 1) else (0, 1)
+        data[pgc + 0x0C:pgc + 0x10] = b"".join(struct.pack(">H", 0x8000 | (a << 8)) for a in audio)
+        numbers = (2, 0, 1) if (swapped and n == 1) else (0, 1, 2)
+        for i, number in enumerate(numbers):
+            data[pgc + 0x1C + 4 * i:pgc + 0x20 + 4 * i] = struct.pack(">I", 0x80000000 | (number << 24) | (number << 16))
+    with open(path, "wb") as f:
+        f.write(bytes(data))
+
+
+def test_clip_viewer(tmp, videos):
+    """The internal viewer for the clip around a cut (in every mode): pictures by ffmpeg, stepping, playing with a player of its own."""
+    import clipview
+    from player import FakePlayer
+    folder = os.path.join(tmp, "clipview")
+    os.makedirs(folder, exist_ok=True)
+    clip = os.path.join(folder, "clip.mp4")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=25:duration=2", "-f", "lavfi", "-i", "sine=duration=2", "-shortest",
+                    "-pix_fmt", "yuv420p", clip], check=True)
+    files = clipview.extract_frames(clip, os.path.join(folder, "pics") if os.makedirs(os.path.join(folder, "pics")) is None else "")
+    check(len(files) == 50 and files[0].endswith("f00001.jpg") and files[-1].endswith("f00050.jpg"), f"every picture of the clip is written once: {len(files)}")
+    check(clipview.frames_command("a.mp4", "/x")[-3:] == ["-q:v", "2", "/x/f%05d.jpg"] and "0:v:0" in clipview.frames_command("a.mp4", "/x") and "passthrough" in clipview.frames_command("a.mp4", "/x"), "the command: no picture left out or repeated")
+    try:
+        clipview.extract_frames(os.path.join(folder, "none.mp4"), os.path.join(folder, "empty") if os.makedirs(os.path.join(folder, "empty")) is None else "")
+        check(False, "a clip that cannot be read: error")
+    except RuntimeError as e:
+        check(str(e).startswith("No pictures could be read from the clip"), f"a clip that cannot be read: {e}")
+    player = FakePlayer()
+    c = clipview.ClipController(files, 25.0, player)
+    check(c.count == 50 and c.index == 0 and c.ms_of(25) == 1000 and c.index_of(1000) == 25 and c.index_of(10 ** 6) == 49 and c.label() == "Picture 1 of 50   ·   0.00 s", "numbers and times")
+    check(c.step(-1) == 0 and c.step(1) == 1 and c.step(1) == 2 and c.step(-1) == 1 and c.show(999) == 49 and c.step(1) == 49 and c.label() == "Picture 50 of 50   ·   1.96 s", "stepping stays inside the clip")
+    c.show(10)
+    c.play()
+    check(c.playing and player.is_playing and player.time == 400 and "play_at 400" in player.log, "play: from the shown picture, with sound (the player)")
+    player.tick(600)
+    check(c.follow() and c.index == 25, "while playing the picture follows the player")
+    c.step(1)
+    check(not c.playing and not player.is_playing and c.index == 26, "stepping while playing pauses first")
+    c.show(49)
+    c.play()
+    check(c.index == 0 and player.time == 0, "play at the end starts at the beginning")
+    player.set_time(1960)
+    check(not c.follow() and c.index == 49, "the last picture: playing is over")
+    c.ended()
+    check(not c.playing and c.index == 49, "end of the clip")
+    check(c.toggle() and c.playing and not c.toggle() and not c.playing, "toggle: play / pause")
+    check(clipview.ClipController(files, 0).fps == 25.0, "no frame rate: 25")
+    # the dialog can be built
+    c2 = clipview.ClipController(files, 25.0, FakePlayer())
+    viewer = clipview.ClipViewer(c2, "Cut point")
+    viewer.step(1)
+    viewer.toggle()
+    viewer.tick()
+    viewer.toggle()
+    viewer.closeEvent(types.SimpleNamespace(accept=lambda: None))
+    check(c2.index >= 1 and not c2.playing, "the dialog: stepping and playing run")
+    # --- in the window: the viewer
+    win = seek_window(tmp, videos, ("sample2.ts", "sample3.ts"), workdir="clipwin")
+    shown, external = [], []
+    win._clip_viewer_fn = lambda ctl, title: shown.append((ctl.count, ctl.fps, title, type(ctl.player).__name__))
+    win._external_fn = lambda cmd: (external.append(cmd), (0, ""))[1]
+    loaded = []
+    class LoggingPlayer(FakePlayer):
+        def load(self, path, size=None):
+            loaded.append(path)
+            super().load(path, size)
+    win._clip_player_fn = lambda: LoggingPlayer()
+    win.dvd_mode = lambda: False
+    win.cutpoint_ready(clip)
+    check(shown == [(50, 25.0, "Cut point", "LoggingPlayer")] and external == [] and loaded == [clip], f"the viewer, no VLC, no Avidemux: {shown} {external}")
+    check(not [d for d in os.listdir(tempfile.gettempdir()) if d.startswith("mediamaker_clip_")], "the temporary pictures are removed")
+    win._clip_run_fn = lambda *a, **k: types.SimpleNamespace(returncode=1, stderr=b"boom")
+    win.cutpoint_ready(clip)
+    check("boom" in win.messages[-1] and len(shown) == 1, "no pictures: message, no viewer")
+    # --- the display format of the clip: display aspect ratio of the source, changed by the crop (only with cutpoint_filters = on)
+    import mediaprobe
+    original_aspect = mediaprobe.display_aspect
+    sources = {}
+    mediaprobe.display_aspect = lambda path, ffprobe="ffprobe": sources.get(os.path.basename(path), 1.25)
+    try:
+        sources.update({"sample2.ts": 16 / 9, "sample3.ts": 16 / 9, os.path.basename(clip): 1.5})
+        seg = win.segments[win.current]
+        w, h = seg.width, seg.height
+        win.dvd_mode = lambda: False
+        ratio = lambda text: int(text.split(":")[0]) / int(text.split(":")[1])
+        win.settings.set_option("crop", "0")
+        seg.crop_top = seg.crop_bottom = seg.crop_left = seg.crop_right = 0
+        check(abs(ratio(win.clip_aspect(clip, (w, h))) - 16 / 9) < 0.001, f"no crop: the display aspect ratio of the source: {win.clip_aspect(clip, (w, h))}")
+        win.settings.set_option("crop", "72")
+        want = 16 / 9 * h / (h - 144)
+        check(abs(ratio(win.clip_aspect(clip, (w, h))) - want) < 0.001, f"global crop 72 (top and bottom), filters on: {win.clip_aspect(clip, (w, h))} instead of {want:.3f}")
+        win.settings.set_option("cutpoint_filters", "off")
+        check(abs(ratio(win.clip_aspect(clip, (w, h))) - 16 / 9) < 0.001, "filters off: the clip is not cropped, so the crop does not count")
+        win.settings.set_option("cutpoint_filters", "on")
+        win.settings.set_option("crop", "0")
+        seg.crop_top, seg.crop_bottom, seg.crop_left, seg.crop_right = 10, 20, 4, 6
+        want = 16 / 9 * ((w - 10) / (h - 30)) / (w / h)
+        check(abs(ratio(win.clip_aspect(clip, (w, h))) - want) < 0.001, f"margins of the segment: {win.clip_aspect(clip, (w, h))} instead of {want:.3f}")
+        win.settings.update_profile({"pad": "on"})
+        check(abs(ratio(win.clip_aspect(clip, (w, h))) - 1.5) < 0.001, "pad: the clip's own display aspect ratio")
+        win.settings.update_profile({"pad": "off"})
+        seg.crop_top = seg.crop_bottom = seg.crop_left = seg.crop_right = 0
+        sources["sample2.ts"] = sources["sample3.ts"] = None
+        check(abs(ratio(win.clip_aspect(clip, (w, h))) - 1.5) < 0.001, "source unknown: the clip's own display aspect ratio")
+        sources[os.path.basename(clip)] = None
+        check(abs(ratio(win.clip_aspect(clip, (720, 576))) - 1.25) < 0.001 and abs(ratio(win.clip_aspect(clip, None)) - 16 / 9) < 0.001, "nothing known: the pixel proportions, otherwise 16:9")
+    finally:
+        mediaprobe.display_aspect = original_aspect
+    check(clipview.ClipController(files).aspect == "16:9", "the default display format")
+    # --- the display format: 4:3 DVD (the real IFO of the Queen DVD says 4:3) is shown as 4:3, in the viewer and in the preview
+    import ifo
+    dvd_folder = os.path.join(folder, "VIDEO_TS")
+    os.makedirs(dvd_folder, exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "tests", "data", "VTS_02_0_queen.IFO"), os.path.join(dvd_folder, "VTS_02_0.IFO"))
+    check(ifo.video_aspect(os.path.join(dvd_folder, "VTS_02_1.VOB")) == "4:3" and ifo.video_aspect(os.path.join(folder, "clip.mp4")) == "", "the format from the IFO file: 4:3; no IFO file: nothing")
+    wide = bytearray(open(os.path.join(dvd_folder, "VTS_02_0.IFO"), "rb").read())
+    wide[0x200] = (wide[0x200] & ~0x0C) | 0x0C
+    open(os.path.join(dvd_folder, "VTS_02_0.IFO"), "wb").write(wide)
+    check(ifo.video_aspect(os.path.join(dvd_folder, "VTS_02_1.VOB")) == "16:9", "the format from the IFO file: 16:9")
+    narrow = clipview.ClipViewer(clipview.ClipController(files, 25.0, FakePlayer(), "4:3"))
+    check(narrow.stage_size == (720, 540) and narrow.stage.called("setFixedSize")[-1] == (720, 540) and clipview.ClipViewer(clipview.ClipController(files)).stage_size == (720, 405),
+          "the picture area has a fixed size of the display format: 4:3 = 720 x 540, 16:9 = 720 x 405 (so that the dialog does not change its size when the video plays)")
+    played = FakePlayer()
+    clipview.ClipViewer(clipview.ClipController(files, 25.0, played, "4:3"))
+    check(played.aspect == "4:3", "the player is told the display format")
+    print("clip viewer: OK")
+
+
+def test_dvd_languages(tmp, videos):
+    """The languages of a DVD come from VTS_nn_0.IFO (the VOB files have none): the attributes, the stream numbers of the longest program chain, the stream ids; the drop-down list of
+    the language offers the codes of the file and then the usual ones, with their names."""
+    import ifo
+    import tracks
+    folder = os.path.join(tmp, "ifofx", "VIDEO_TS")
+    os.makedirs(folder, exist_ok=True)
+    make_ifo(os.path.join(folder, "vts_02_0.ifo"))
+    vob = os.path.join(folder, "VTS_02_1.VOB")
+    open(vob, "wb").write(b"")
+    check(ifo.ifo_path(vob) == os.path.join(folder, "vts_02_0.ifo") and ifo.ifo_path(os.path.join(folder, "VTS_03_1.VOB")) is None and ifo.ifo_path(os.path.join(folder, "x.ts")) is None,
+          "the IFO file of the title set is found (any case); none for another title set or a file that is not a VOB")
+    known = ifo.read_languages(vob)
+    check({k: v[0] for k, v in known["audio"].items()} == {"0x81": "eng", "0x80": "deu"} and {k: v[0] for k, v in known["subtitle"].items()} == {"0x22": "fra", "0x20": "ita", "0x21": "spa"},
+          f"the stream numbers of the LONGEST program chain decide, not the order of the attributes: {known}")
+    plain_ifo = os.path.join(folder, "VTS_05_0.IFO")
+    make_ifo(plain_ifo, swapped=False)
+    vob5 = os.path.join(folder, "VTS_05_1.VOB")
+    open(vob5, "wb").write(b"")
+    check({k: v[0] for k, v in ifo.read_languages(vob5)["subtitle"].items()} == {"0x20": "fra", "0x21": "ita", "0x22": "spa"}, "(an IFO file without the swap: the order of the attributes)")
+    broken = os.path.join(folder, "VTS_06_0.IFO")
+    open(broken, "wb").write(b"not an ifo file")
+    vob6 = os.path.join(folder, "VTS_06_1.VOB")
+    open(vob6, "wb").write(b"")
+    check(ifo.read_languages(vob6) == {"audio": {}, "subtitle": {}} and ifo.read_languages(os.path.join(folder, "VTS_09_1.VOB")) == {"audio": {}, "subtitle": {}}, "a file that is no IFO, or no file: nothing, no error")
+    # --- the real IFO file of the user (Queen, VTS_02_0.IFO): five subtitle tracks, the sound track has no language; VLC lists them in another order (ita fra spa por deu)
+    real = os.path.join(folder, "VTS_07_0.IFO")
+    shutil.copy(os.path.join(HERE, "data", "VTS_02_0_queen.IFO"), real)
+    vob7 = os.path.join(folder, "VTS_07_1.VOB")
+    open(vob7, "wb").write(b"")
+    queen = ifo.read_languages(vob7)
+    check({k: v[0] for k, v in queen["subtitle"].items()} == {"0x20": "fra", "0x21": "ita", "0x22": "deu", "0x23": "spa", "0x24": "por"} and queen["audio"] == {"0x80": ("", "")},
+          f"the real IFO file: the subtitle tracks 0x20 to 0x24 are fra, ita, deu, spa, por; the sound track has no language: {queen}")
+    # --- the tracks get their languages (not the ones that have one)
+    from mediaprobe import Track, TrackList
+    audio = [Track("audio", 0, 1, "ac3", stream_id="0x80"), Track("audio", 1, 2, "ac3", stream_id="0x81", language="fra")]
+    subs = [Track("subtitle", i, i + 1, "dvd_subtitle", stream_id=f"0x2{i}") for i in range(3)]
+    tl = TrackList(audio, subs)
+    check(ifo.apply(tl, vob) == 4 and [t.language for t in tl.audio] == ["deu", "fra"] and [t.language for t in tl.subtitles] == ["ita", "spa", "fra"], f"languages set from the IFO file: {[t.language for t in tl.subtitles]}")
+    # --- the list of the dialog
+    model = tracks.TracksModel(tl, "x.mkv", None, 0, True)
+    choices = model.language_choices("subtitle")
+    check(choices[:3] == ["ita (Italian)", "spa (Spanish)", "fra (French)"] and "deu (German)" in choices and "eng (English)" in choices and len(choices) == len(set(choices)) and "und (Undetermined)" in choices,
+          f"DVD mode: the codes of the file first, then the usual ones, with names: {choices[:6]}")
+    model.set_language("subtitle", 0, "deu (German)")
+    check(model.rows["subtitle"][0].language == "deu" and not model.errors(), "a language picked from the list is the code")
+    model.set_language("subtitle", 0, "xx")
+    check(model.errors(), "a wrong code is still an error")
+    check(tracks.TracksModel(tl, "x.mkv", None, 0, False).language_choices("subtitle") == ["ita", "spa", "fra"], "without DVD mode the list is as before: the codes of the file")
+    # --- the line in the dialog that tells where the languages come from
+    check(ifo.note(vob, 4) == "Languages retrieved from vts_02_0.ifo" and ifo.note(vob7, 1) == "Languages retrieved from VTS_07_0.IFO", "note: languages retrieved from the IFO file")
+    check(ifo.note(os.path.join(folder, "VTS_09_1.VOB"), 0) == "No valid IFO file found (VTS_09_0.IFO): the language codes have to be chosen by hand", "note: no IFO file")
+    check(ifo.note(vob6, 0).startswith("No valid IFO file found (VTS_06_0.IFO cannot be read)"), "note: a file that is no IFO file is not valid")
+    check(ifo.note(vob7, 0).endswith("gives no language for these tracks (or they have one already)"), "note: a valid IFO file that names nothing for these tracks")
+    import tracks_dialog
+    with_note = tracks_dialog.TracksDialog(tracks.TracksModel(tl, "x.mkv", None, 0, True), "VTS_02_1.VOB", None, "Languages retrieved from VTS_02_0.IFO")
+    without = tracks_dialog.TracksDialog(tracks.TracksModel(tl, "x.mkv", None, 0, True), "VTS_02_1.VOB", None)
+    check(with_note.source_label._args == ("Languages retrieved from VTS_02_0.IFO",) and not hasattr(without, "source_label"), "the dialog shows the line (only if there is one)")
+    print("DVD languages: OK (IFO file, stream numbers, list)")
+
+
+def test_dvd_subtitle_start(tmp, videos):
+    """DVD mode: ffmpeg subtracts the start time of every input from its times (without -copyts); for the list of subtitles that was 0.08 s with ffmpeg 6.1 and 16.8 s (the first subtitle)
+    with ffmpeg 9, and the subtitles came 16.8 s too early. The command gives the time back with -itsoffset: interactive (asked of ffprobe) and in the script (asked when it runs)."""
+    import batch
+    import dvd
+    import ffmpeg_cmd
+    import tracks
+    from mediaprobe import first_frame_number
+    # --- the placeholder, the question, the filling
+    class Fake:
+        def __init__(self, out):
+            self.out = out
+
+        def __call__(self, args, **kw):
+            assert args[:2] == ["ffprobe", "-v"] and "concat" in args and args[-1] == "csv=p=0"
+            return type("R", (), {"stdout": self.out})()
+    cmd = ["ffmpeg", "-itsoffset", ffmpeg_cmd.SUBTITLE_START, "-f", "concat", "-safe", "0", "-i", "/w/subtitles.ffconcat", "-map", "0"]
+    check(ffmpeg_cmd.fill_subtitle_start(cmd, "/w/s", Fake("16.800000\n"))[2] == "16.800" and ffmpeg_cmd.fill_subtitle_start(cmd, "/w/s", Fake("-0.080000\n"))[2] == "-0.080"
+          and ffmpeg_cmd.fill_subtitle_start(cmd, "/w/s", Fake("N/A\n"))[2] == "0.000" and ffmpeg_cmd.fill_subtitle_start(cmd, "/w/s", Fake(""))[2] == "0.000"
+          and ffmpeg_cmd.fill_subtitle_start(["ffmpeg", "-i", "x"], "/w/s", Fake("5\n")) == ["ffmpeg", "-i", "x"], "the start time: filled in, 0 if ffprobe has none, nothing to do without the placeholder")
+    queen = os.path.join(videos, "queen.vob")
+    if not os.path.exists(queen):
+        print("   (queen.vob is not in the test folder: the test of the subtitle start is skipped)")
+        return
+    parts = split_vob(queen, os.path.join(tmp, "subfx", "VIDEO_TS"))
+    work = os.path.join(tmp, "subwin")
+    os.makedirs(work, exist_ok=True)
+    win = make_window(work, thumb_fn=quick_thumbs, fresh=True, first_fn=first_frame_number)
+    win.showEvent(None)
+    watch_actions(win)
+    win.settings.set_profile(dict(win.profile, acodec_in="ac3"))
+    for n in parts:
+        win.OpenVideo(n)
+    win.ask_tracks = lambda tl, o, f, i, m, dvd=False: tracks.Choice([(0, "eng")], [(2, "deu"), (0, "eng")])
+    check(win.pick_tracks(os.path.join(work, "x.mkv")), "(the tracks are chosen)")
+    job = win.make_job(os.path.join(work, "x.mkv"))
+    job.options.update(win.tracks_options())                      # (as save_video does)
+    files = {}
+    command = ffmpeg_cmd.build_command(job, subtitle_list="/w/subtitles.ffconcat", files=files, track_list=win.job_tracks(job))
+    i = command.index("-itsoffset")
+    check(dvd.is_dvd_structure([s.path for s in job.segments]) and command[i + 1] == ffmpeg_cmd.SUBTITLE_START and command[i + 2:i + 8] == ["-f", "concat", "-safe", "0", "-i", "/w/subtitles.ffconcat"],
+          f"DVD mode with subtitles: -itsoffset <start time> in front of the input of the list: {command[i:i + 8]}")
+    absolute = ffmpeg_cmd.build_command(job, stream_times={p: (0, 0) for p in {s.path for s in job.segments}}, subtitle_list="/w/subtitles.ffconcat", files={}, track_list=win.job_tracks(job))
+    check(ffmpeg_cmd.SUBTITLE_START not in absolute and "-itsoffset" not in absolute, "the other way (a TV recording, with -copyts) has no such offset: nothing is subtracted there")
+    # --- the batch file: the commit of every job, the start time asked when the script runs; run it
+    out = os.path.join(work, "batch_out.mkv")
+    win.ask_output = lambda title, suggestion: out
+    win.ask3 = lambda text: "no"
+    win.ask = lambda text: False
+    win.mnuBatch_Click()
+    script = win.batch_path()
+    text = open(script).read()
+    lines = text.splitlines()
+    ffmpeg_line = next(n for n, l in enumerate(lines) if l.startswith("ffmpeg "))
+    probe_line = next((n for n, l in enumerate(lines) if l.startswith("SUBSTART=$(ffprobe")), -1)
+    check(0 < probe_line < ffmpeg_line and 'case "$SUBSTART" in' in lines[probe_line + 1] and '-itsoffset "$SUBSTART"' in lines[ffmpeg_line] and ffmpeg_cmd.SUBTITLE_START not in text
+          and subprocess.run(["bash", "-n", script], capture_output=True).returncode == 0, f"the script asks for the start time before it calls ffmpeg: {lines[probe_line][:90]}")
+    import buildinfo
+    made = [l for l in lines if l.startswith("# Made by MediaMaker ")]
+    check(len(made) == 1 and made[0].startswith(f"# Made by MediaMaker {__import__('mediamaker').VERSION}, commit ") and lines[0] == "#!/bin/bash" and lines[1].startswith("# J=") and lines.index(made[0]) == 2,
+          f"every job of the script says which commit made it (the line after # J=): {made}")
+    jobs = batch.parse_jobs(text)
+    check(len(jobs) == 1 and jobs[0].output == out and "VTS_04_1.VOB" in jobs[0].csv, "the extra comment does not disturb the import of the job")
+    done = subprocess.run(["bash", script], capture_output=True, text=True, cwd=work, timeout=250, stdin=subprocess.DEVNULL)
+    check(os.path.exists(out) and not os.path.exists(out + ".subtitles.tmp"), f"the script runs (the list of subtitles is removed): {done.returncode} {done.stderr[-200:]!r}")
+    j = json.loads(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "packet=stream_index,pts_time", "-of", "json", out], capture_output=True, text=True).stdout)
+    times = [float(x["pts_time"]) for x in j["packets"] if x["stream_index"] == j["packets"][0]["stream_index"]]
+    check(len(times) == 6 and all(abs(a - b) < 0.1 for a, b in zip(times, [2.12, 6.42, 13.76, 18.06, 21.36, 27.64])), f"the subtitles of the script are where the picture is (within 0.1 s): {[round(t, 2) for t in times]}")
+    print("DVD subtitle start: OK (placeholder, script, commit comment)")
+
+
+def win_expected(win) -> int:
+    """The number of frames that the segments of the window are expected to give (as the save counts them)."""
+    from runner import expected_frames
+    return expected_frames(win.make_job(os.path.join(os.path.dirname(win.settings.path), "x.mp4")))
+
+
+def test_progress_from_frames(tmp, videos):
+    """The progress bar follows the NUMBER OF FRAMES written, not out_time (the largest time of all the streams): a stream with times that run ahead (the subtitles of a DVD behind
+    a jump in its time) made the bar jump from 41 to 84 % and stay there."""
+    import runner
+    check(runner.output_fps(["ffmpeg", "-r", "25.000", "o.mp4"]) == 25.0 and abs(runner.output_fps(["ffmpeg", "-r", "30000/1001"]) - 29.97) < 0.01 and runner.output_fps(["ffmpeg", "-c", "copy"]) is None
+          and runner.output_fps(["ffmpeg", "-r"]) is None, "the frame rate of the output from the command (-r), None for stream copy")
+    check(abs(runner.progress_seconds({"frame": "17777", "out_time_us": "1400000000"}, 25.0) - 711.08) < 0.01 and runner.progress_seconds({"out_time_us": "1400000000"}, 25.0) == 1400.0
+          and runner.progress_seconds({"out_time_us": "N/A"}, None) is None and runner.progress_seconds({"frame": "0", "out_time_us": "5000000"}, 25.0) == 0.0 and runner.progress_seconds({"frame": "N/A", "out_time_us": "5000000"}, 25.0) is None,
+          "progress_seconds: frames / rate when both are known, else out_time, nothing at the beginning")
+    folder = os.path.join(tmp, "progressfx")
+    os.makedirs(folder, exist_ok=True)
+    srt = os.path.join(folder, "s.srt")
+    open(srt, "w").write("1\n00:00:01,000 --> 00:00:02,000\nhello\n")
+    def run(with_rate, frames=True):
+        out = os.path.join(folder, "o.mkv")
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-stats_period", "0.02", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25:duration=40", "-itsoffset", "1000", "-i", srt, "-map", "0:v", "-map", "1:s",
+               "-c:v", "libx264", "-preset", "veryslow", "-crf", "20", "-c:s", "srt"] + (["-r", "25"] if with_rate else []) + [out]
+        seen = []
+        runner.run_ffmpeg(cmd, 40.0, lambda p: seen.append(p.percent), frame_progress=frames)
+        return seen
+    after, before, plain = run(True), run(False), run(True, frames=False)
+    check(len(after) >= 4 and min(after[:-1]) < 80 and after == sorted(after), f"with the frame rate the bar follows the frames although the subtitles run 1000 s ahead: {[round(x) for x in after[:8]]} ...")
+    check(before and before[0] >= 99, f"(without it, out_time of the subtitle stream makes it jump to 100 % at once: {[round(x) for x in before[:4]]})")
+    check(plain and plain[0] >= 99, f"without frame_progress (every save that is not in DVD mode) the progress is what it was, from out_time, although the command has -r: {[round(x) for x in plain[:4]]}")
+    print("Progress from frames: OK")
+
+
+def source_of(name: str) -> str:
+    return open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), name), encoding="utf-8").read()
+
+
+def test_cancel_button(tmp, videos):
+    """The button cmdCancelButton (a small red cross, 'Cancel current action') at the right end of the progress bar replaces the menu entry 'Cancel save' and takes over its shortcut."""
+    from PIL import Image
+    from mediaprobe import first_frame_number
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="cancelbtn", first_fn=first_frame_number)
+    bar, button = win.picProgress, win.cmdCancelButton
+    g, b = bar.called("setGeometry")[-1], button.called("setGeometry")[-1]
+    check(g == (0, 416, 1089 - 17, 17) and b == (1089 - 17, 416, 17, 17), f"the bar is narrower by its own height, the button (17 x 17) sits in the room at its right end: {g} {b}")
+    check(button.called("setToolTip")[-1] == ("Cancel current action",) and button.called("setAutoDefault")[-1] == (False,), "tooltip 'Cancel current action'")
+    check(button.called("show") != [] and button.isVisible() and button.parent_ is bar.parent_, "the button is SHOWN (it is made after the window is visible: a child that is added later is invisible until show()), next to the bar")
+    icon = button.called("setIcon")[-1][0]
+    path = icon._args[0]
+    check(path.endswith(os.path.join("icons", "cancel.png")) and os.path.exists(path) and Image.open(path).size == (16, 16) and button.called("setIconSize")[-1][0].width() == 14, f"the icon: {path}")
+    ico = Image.open(os.path.join(os.path.dirname(path), "cancel.ico"))
+    check((16, 16) in ico.info.get("sizes", {(16, 16)}) and os.path.getsize(os.path.join(os.path.dirname(path), "cancel.bmp")) > 0, "the icon is also there as .ico and .bmp for the VB6 form (VB6 cannot read .png)")
+    check(button.called("setShortcut")[-1][0]._args == ("Ctrl+C",), "Ctrl+C belongs to the button")
+    check(win.mnuCancel.called("setVisible")[-1] == (False,) and win.mnuCancel.called("setEnabled")[-1] == (False,) and win.mnuCancel.called("setShortcut")[-1][0]._args == (),
+          "the menu entry is out of the way: hidden, disabled, without its shortcut")
+    check(button.called("setEnabled")[-1] == (False,), "nothing is running: the button cannot be pressed")
+    win.setup_cancel_button()                                              # (a second call does not make a second button or narrow the bar again)
+    check(win.cmdCancelButton is button and bar.called("setGeometry")[-1] == g, "idempotent")
+    # --- what it does: it cancels the running action (whatever it is); the old name of the handler still works
+    stopped = []
+    check(win.begin_action("Test", lambda: stopped.append(1)) and button.called("setEnabled")[-1] == (True,), "enabled while an action runs")
+    win.cmdCancelButton.click()
+    check(stopped == [1] and button.called("setEnabled")[-1] == (False,), "the button cancels and is disabled")
+    win.end_action()
+    win.begin_action("Test", lambda: stopped.append(1))
+    win.mnuCancel_Click()
+    check(stopped == [1, 1], "mnuCancel_Click (the name in the old form) does the same")
+    win.end_action()
+    win.cmdCancelButton.click()                                            # nothing running: the button is disabled, a click does nothing
+    check(stopped == [1, 1], "a click on the disabled button does nothing")
+    # --- the bar is only drawn by the functions of the action (and the progress of the save): everything that shows progress goes through begin_action, so the button reaches it
+    import ast
+    tree = ast.parse(open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mediamaker.py"), encoding="utf-8").read())
+    users = sorted({fn.name for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef) for fn in cls.body if isinstance(fn, ast.FunctionDef) for node in ast.walk(fn)
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "bar" and isinstance(node.func.value, ast.Name) and node.func.value.id == "self"})
+    check(users == ["action_fraction", "action_note", "begin_action", "end_action", "render_progress"], f"bar() is called by the functions of the action only: {users}")
+    check("wait_dialog" not in source_of("mediamaker.py") and "class WaitDialog" not in source_of("dialogs.py"), "the blue wait window is gone")
+    print("Cancel button: OK (place, icon, tooltip, shortcut, menu entry, cancel)")
+
+
+def test_public_version(tmp, videos):
+    """Development version ("-dev") and public version: place of the INI file, the menu Deploy, the key and the warning of the debug package."""
+    import mediamaker
+    import version
+    check(version.is_dev("1.0-dev") and not version.is_dev("1.0") and version.is_dev() == mediamaker.VERSION.endswith("-dev"), "'-dev' marks the development version")
+    saved_env = {k: os.environ.pop(k, None) for k in ("MEDIAMAKER_INI", "XDG_CONFIG_HOME")}
+    saved_version = version.VERSION
+    try:
+        cfg = os.path.join(tmp, "xdg")
+        os.environ["XDG_CONFIG_HOME"] = cfg
+        version.VERSION = "1.0-dev"
+        check(version.ini_path() == os.path.join(version.HERE, "MediaMaker.ini") and not os.path.exists(cfg), "development version: MediaMaker.ini next to the program, no folder made")
+        version.VERSION = "1.0"
+        check(version.ini_path() == os.path.join(cfg, "MediaMaker", "MediaMaker.ini") and os.path.isdir(os.path.join(cfg, "MediaMaker")), "public version: ~/.config/MediaMaker/MediaMaker.ini (made)")
+        check(version.debug_log_path() == os.path.join(cfg, "MediaMaker", "mediamaker_debug.log"), "the debug log is in the same folder")
+        check(mediamaker.find_ini() == version.ini_path(), "the program asks for the same place")
+        os.environ["MEDIAMAKER_INI"] = "/somewhere/else.ini"
+        check(version.ini_path() == "/somewhere/else.ini", "MEDIAMAKER_INI wins in both versions")
+        del os.environ["MEDIAMAKER_INI"]
+        del os.environ["XDG_CONFIG_HOME"]
+    finally:
+        version.VERSION = saved_version
+        for k, v in saved_env.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
+    # --- the window: the key exists in both versions; the menu Deploy only in the development version
+    saved_is_dev = mediamaker.is_dev
+    mediamaker.is_dev = lambda *a: True                       # (the test runs in a public tree as well)
+    try:
+        win = seek_window(tmp, videos, ("sample2.ts",), workdir="public_dev")
+    finally:
+        mediamaker.is_dev = saved_is_dev
+    key = win.actDebugKey
+    check(key.called("setShortcut")[-1][0].toString() == "Ctrl+Shift+F1" and any(a[0] is key for a in win.called("addAction")), "the key Ctrl+Shift+F1 is an action of the window")
+    check(not win.mnuDeploy.menuAction().called("setVisible"), "development version: the menu Deploy stays visible")
+    mediamaker.is_dev = lambda *a: False
+    try:
+        pub = seek_window(tmp, videos, ("sample2.ts",), workdir="public_pub")
+    finally:
+        mediamaker.is_dev = saved_is_dev
+    check(pub.mnuDeploy.menuAction().called("setVisible")[-1] == (False,), "public version: the menu Deploy is hidden")
+    check(pub.actDebugKey.called("setShortcut")[-1][0].toString() == "Ctrl+Shift+F1", "public version: the key is there")
+    # --- the warning comes first; "No" makes nothing
+    asked = []
+    pub.ask = lambda text: (asked.append(text), False)[1]
+    pub.lvwSegments.select_row(0)
+    pub.lvwSegments_Click()
+    pub.mnuDebug_Click()
+    base = os.path.join(os.path.dirname(os.path.abspath(pub.settings.path)), "debug")
+    check(len(asked) == 1 and "private data" in asked[0] and "README.txt" in asked[0] and not os.path.exists(base), f"the warning is asked, 'No' makes no package: {asked}")
+
+
+def test_first_profile(tmp, videos):
+    """A new INI file has the example profiles but no active profile: the user chooses one (at the start, and when a video is opened)."""
+    from cutlist import parse_kv
+    from profiles import DEFAULT_PROFILES
+    example = open(os.path.join(ROOT, "MediaMaker.example.ini"), encoding="utf-8").read().replace("\r\n", "\n").split("[profiles]\n", 1)[1].split("\n[", 1)[0]
+    listed = dict(l.split("=", 1) for l in example.split("\n") if "=" in l and not l.startswith(";"))
+    check(DEFAULT_PROFILES == listed and len(listed) == 11, f"DEFAULT_PROFILES are the profiles of MediaMaker.example.ini: {len(DEFAULT_PROFILES)} / {len(listed)}")
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="firstprofile")
+    win.settings.seed_default_profiles()
+    win.settings.set_profile({})
+    names = list(win.settings.profiles)
+    check(len(names) >= 11 and "TV RIP (SD)" in names and not win.has_profile(), f"the profiles are in the INI file, none is active: {names}")
+    # --- the user picks one
+    seen = []
+    win.ask_choice = lambda title, label, items, current=0: (seen.append((items, current)), names.index("HD"))[1]
+    check(win.ask_first_profile() and win.has_profile() and win.profile["scale"] == "1280:720" and win.lblText[2].called("setText")[-1] == ("1280:720",),
+          "a profile is chosen: it is active and shown")
+    check(seen and seen[0][0][names.index("HD")].startswith("HD: HD 1280x720") and seen[0][1] == names.index("SD"), f"the list shows name and description, SD is preselected: {seen[0][0][:2]} {seen[0][1]}")
+    asked = len(seen)
+    check(win.ask_first_profile() and len(seen) == asked, "with an active profile nothing is asked")
+    # --- cancel: a message, nothing active; opening a video asks again and does not open
+    win.settings.set_profile({})
+    win.ask_choice = lambda title, label, items, current=0: None
+    n = len(win.messages)
+    check(not win.ask_first_profile() and "No target profile is chosen" in win.messages[-1] and len(win.messages) == n + 1 and not win.has_profile(), "cancelled: message, no profile")
+    count = len(win.segments)
+    check(win.OpenVideo(os.path.join(videos, "sample3.ts")) is False and len(win.segments) == count, "no profile: the video is not opened")
+    win.ask_choice = lambda title, label, items, current=0: current
+    check(win.OpenVideo(os.path.join(videos, "sample3.ts")) and win.has_profile() and len(win.segments) == count + 1, "the question comes at the opening and the video is opened afterwards")
+    # --- a new INI file: the example profiles, no active profile
+    from settings import Settings
+    fresh = Settings(os.path.join(tmp, "firstprofile_new", "MediaMaker.ini"))
+    fresh.seed_default_profiles()
+    fresh.save()
+    again = Settings(fresh.path)
+    check(list(again.profiles) == list(DEFAULT_PROFILES) and not again.profile and again.profiles["HD"]["scale"] == "1280:720", "a new INI file: the 11 example profiles are saved, no profile is active")
+    # --- no profile at all in the INI file
+    win.settings.set_profile({})
+    for name in list(win.settings.profiles):
+        win.settings.delete("profiles", name)
+    check(not win.settings.profiles and not win.has_profile(), "the INI file has no profile at all")
+    check(win.ask_first_profile() and win.has_profile() and win.profile["scale"] == "720:404" and len(win.settings.profiles) == 11, "no profiles at all: the 11 examples are put in and the choice starts at SD (the default)")
+    win.settings.set_profile({})
+    win.settings.delete("settings", "profile")                           # (no key profile= at all)
+    check(not win.has_profile() and win.ask_first_profile() and win.has_profile(), "no key profile= at all: the same")
+
+
+def test_ffmpeg_version(tmp, videos):
+    """`-fps_mode` exists since ffmpeg 5.1; older programs (Ubuntu 22.04 has 4.4) get `-vsync 0`."""
+    import subprocess
+    import ffmpeg_cmd
+    class Out:
+        def __init__(self, text):
+            self.stdout = text
+    def answer(text):
+        return lambda *a, **k: Out(text)
+    def fail(*a, **k):
+        raise FileNotFoundError("ffmpeg")
+    cases = [("ffmpeg version 4.4.2-0ubuntu0.22.04.1 Copyright", (4, 4), ["-vsync", "0"]), ("ffmpeg version 5.0.3 Copyright", (5, 0), ["-vsync", "0"]),
+             ("ffmpeg version 5.1.6-0+deb12u1", (5, 1), ["-fps_mode", "passthrough"]), ("ffmpeg version n6.1 Copyright", (6, 1), ["-fps_mode", "passthrough"]),
+             ("ffmpeg version 7.0.1", (7, 0), ["-fps_mode", "passthrough"]), ("ffmpeg version N-117000-gabcdef Copyright", None, ["-fps_mode", "passthrough"]),
+             ("something else", None, ["-fps_mode", "passthrough"])]
+    for i, (text, version, args) in enumerate(cases):
+        name = f"fake{i}"
+        check(ffmpeg_cmd.ffmpeg_version(name, answer(text)) == version and ffmpeg_cmd.passthrough_args(name, answer("never asked again")) == args, f"ffmpeg {text[:28]}: {version} {args}")
+    check(ffmpeg_cmd.passthrough_args("missing", fail) == ["-fps_mode", "passthrough"], "ffmpeg not found: the new option (the real error comes later)")
+    import frames
+    import clipview
+    ffmpeg_cmd._VERSIONS["old"] = (4, 4)
+    cmd = clipview.frames_command("clip.ts", "/tmp/x", "old")
+    check("-vsync" in cmd and "-fps_mode" not in cmd and cmd[cmd.index("-vsync") + 1] == "0", f"the preview of the cut point with an old ffmpeg: {cmd}")
+    del ffmpeg_cmd._VERSIONS["old"]
+
+
+def test_list_dialog_width(tmp, videos):
+    """The dialog for the choice of a profile is 60 % as wide as it would be by itself; its height grows with the wrapped text."""
+    import dialogs
+    check(dialogs.LIST_DIALOG_WIDTH == 0.6, "60 %")
+    check(dialogs.narrowed_size(1000, 200, lambda w: -1) == (600, 200), "no height for width: the height stays")
+    check(dialogs.narrowed_size(1000, 200, lambda w: 300 if w == 600 else 0) == (600, 300), "the wrapped text needs more height: it grows")
+    check(dialogs.narrowed_size(1000, 200, lambda w: 150) == (600, 200), "never smaller than before")
+    check(dialogs.narrowed_size(1000, 200, lambda w: 0, 0.5) == (500, 200) and dialogs.narrowed_size(1, 5, lambda w: -1) == (1, 5), "other factor, tiny dialog")
+
+
+def test_install_hint(tmp, videos):
+    """A missing ffprobe: the message says how to install FFmpeg (per distribution)."""
+    import mediaprobe
+    def hint(text):
+        path = os.path.join(tmp, "os-release")
+        with open(path, "w") as f:
+            f.write(text)
+        return mediaprobe.install_hint("ffprobe", path)
+    check("zypper install ffmpeg" in hint('NAME="openSUSE Leap"\nID="opensuse-leap"\nID_LIKE="suse opensuse"\n') and "Packman" in hint('ID="opensuse-leap"\n'), "openSUSE: zypper and Packman")
+    check("apt-get install ffmpeg" in hint('ID=ubuntu\nID_LIKE=debian\n'), "Ubuntu: apt")
+    check("pacman -S ffmpeg" in hint('ID=arch\n'), "Arch: pacman")
+    check("of your distribution" in mediaprobe.install_hint("ffprobe", os.path.join(tmp, "nothing-here")), "unknown system: general text")
+    try:
+        mediaprobe.probe("x.ts", ffprobe="/nonexistent/ffprobe")
+        text = ""
+    except mediaprobe.ProbeError as e:
+        text = str(e)
+    check("not found" in text and "install it with the package manager" in text, f"ProbeError with hint: {text}")
+
+
+def test_install_ffmpeg_offer(tmp, videos):
+    """ffprobe missing: the program offers to install FFmpeg (pkexec + package manager), after the installation the file is opened."""
+    import mediamaker, mediaprobe
+    check(mediaprobe.install_command(os.path.join(tmp, "nothing-here")) is None, "unknown system: no command")
+    path = os.path.join(tmp, "os-release2")
+    with open(path, "w") as f:
+        f.write('ID="opensuse-leap"\nID_LIKE="suse opensuse"\n')
+    check(mediaprobe.install_command(path) == ["zypper", "--non-interactive", "install", "ffmpeg"], "openSUSE: zypper command")
+    check("\n" in mediaprobe.install_hint("ffprobe", path) and "ffprobe is part of FFmpeg and is not included in MediaMaker.\n" in mediaprobe.install_hint("ffprobe", path), "hint: sentences on lines of their own")
+    real = mediamaker.install_command
+    which = mediamaker.shutil.which
+    try:
+        mediamaker.install_command = lambda: ["zypper", "--non-interactive", "install", "ffmpeg"]
+        mediamaker.shutil.which = lambda name: "/usr/bin/" + name if name in ("zypper", "pkexec") else None
+        win = make_window(tmp)
+        questions, ran = [], []
+        win.ask = lambda text: (questions.append(text), win.answer)[1]
+        win.run_install = lambda command: (ran.append(command), True)[1]
+        win.answer = False
+        check(win.offer_install_ffmpeg("ffprobe not found") is False and not ran and "zypper --non-interactive install ffmpeg" in questions[0], "No: nothing is run, the question shows the command")
+        win.answer = True
+        check(win.offer_install_ffmpeg("ffprobe not found") is True and ran == [["/usr/bin/pkexec", "zypper", "--non-interactive", "install", "ffmpeg"]], f"Yes: run with pkexec: {ran}")
+        mediamaker.shutil.which = lambda name: None
+        check(win.offer_install_ffmpeg("x") is False, "no pkexec / package manager: no offer")
+        mediamaker.shutil.which = lambda name: "/usr/bin/" + name if name in ("zypper", "pkexec") else None
+        # OpenVideo: first the probe fails with ToolMissing, after the installation it works
+        calls = []
+        def probe(fn, *a, **k):
+            calls.append(fn)
+            if len(calls) == 1:
+                raise mediaprobe.ToolMissing("ffprobe not found")
+            return mediaprobe.probe(fn)
+        win2 = make_window(tmp, probe=probe)
+        win2.run_install = lambda command: True
+        win2.profile_ok = True
+        ok = win2.OpenVideo(os.path.join(videos, "sample2.ts"))
+        check(len(calls) == 2, f"after the installation the file is analyzed again: {calls}")
+    finally:
+        mediamaker.install_command = real
+        mediamaker.shutil.which = which
+
+
+def test_fit_window(tmp, videos):
+    """A window that is smaller than its content (size restored by the window manager) is made as large as the content; a larger one stays."""
+    import vbqt
+    class Size:
+        def __init__(self, w, h): self.w, self.h = w, h
+        def width(self): return self.w
+        def height(self): return self.h
+    class Win:
+        def __init__(self, w, h): self.size_ = (w, h); self.minimum = None
+        def sizeHint(self): return Size(1366, 600)
+        def minimumSizeHint(self): return Size(1360, 590)
+        def width(self): return self.size_[0]
+        def height(self): return self.size_[1]
+        def setMinimumSize(self, w, h): self.minimum = (w, h)
+        def resize(self, w, h): self.size_ = (w, h)
+    small, big = Win(1090, 490), Win(1500, 900)
+    vbqt.fit_window(small)
+    vbqt.fit_window(big)
+    check(small.size_ == (1366, 600) and small.minimum == (1366, 600), f"too small: made as large as the content: {small.size_}")
+    check(big.size_ == (1500, 900) and big.minimum == (1366, 600), f"larger: unchanged: {big.size_}")
+
+
+def test_restore_library_path(tmp, videos):
+    """AppImage: the programs we start get the original library path, not the one of the bundle."""
+    import mediamaker
+    env = {"LD_LIBRARY_PATH": "/bundle", "LD_LIBRARY_PATH_ORIG": "/usr/lib/x"}
+    mediamaker.restore_library_path(env, frozen=True)
+    check(env == {"LD_LIBRARY_PATH": "/usr/lib/x"}, f"original path restored: {env}")
+    env = {"LD_LIBRARY_PATH": "/bundle"}
+    mediamaker.restore_library_path(env, frozen=True)
+    check(env == {}, f"no original path: removed: {env}")
+    env = {"LD_LIBRARY_PATH": "/x"}
+    mediamaker.restore_library_path(env, frozen=False)
+    check(env == {"LD_LIBRARY_PATH": "/x"}, f"not frozen: unchanged: {env}")
+
+
+def test_leave(tmp, videos):
+    """The program ends at once (no clean-up of Python and the libraries: free(): invalid pointer, deallocating None); hard=False exits normally."""
+    import mediamaker
+    seen, ran = [], []
+    mediamaker.leave(3, hard=True, hard_exit=seen.append, exit_funcs=lambda: ran.append(1))
+    mediamaker.leave(None, hard=True, hard_exit=seen.append, exit_funcs=lambda: ran.append(1))
+    check(len(ran) == 2, "the exit functions (atexit) run first")
+    check(seen == [3, 0], f"the program stops at once with the code of main: {seen}")
+    try:
+        mediamaker.leave(2, hard=False, hard_exit=seen.append)
+        code = None
+    except SystemExit as e:
+        code = e.code
+    check(code == 2 and seen == [3, 0], "hard=False: sys.exit(code), no hard exit")
+
+
+def test_showinfo_times(tmp, videos):
+    """Time stamps of the thumbnails come from the exact counter, not from pts_time (ffmpeg 4.4 writes it with 6 digits: 14904.5 for 14904.54)."""
+    import frames
+    lines = ["[Parsed_showinfo_1 @ 0x1] config in time_base: 1/90000, frame_rate: 25/1"]
+    for i in range(5):
+        pts = 1341408600 + 3600 * i                    # 14904.54 + i * 0.04 s
+        lines.append(f"[Parsed_showinfo_1 @ 0x1] n:   {i} pts:{pts} pts_time:{pts / 90000:.6g}   pos: 1 fmt:yuv420p")
+    got = frames.showinfo_times("\n".join(lines))
+    check(len(got) == 5 and all(abs(g - (14904.54 + 0.04 * i)) < 1e-6 for i, g in enumerate(got)), f"exact times from pts and time base: {got}")
+    check(len({int((g - 9343.175122) * 25 + 1e-3) for g in got}) == 5, "five frames give five different numbers")
+    old = frames.showinfo_times("[Parsed_showinfo_1 @ 0x1] n:   0 pts:100 pts_time:1.5   pos: 1")
+    check(old == [1.5], f"without a time base pts_time is used: {old}")
+
+
+def test_dialog_scale(tmp, videos):
+    """The dialogs of the profile and the options follow the size of the main window (UI_SCALE): font, fields and tabs 1.25 times as big at 125 %; 100 % as before."""
+    import dialogs
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QDialog, QFormLayout, QLineEdit, QComboBox, QTabWidget
+    from profiles import PRESETS
+    QDialog.exec_result = 1
+    QDialog.on_exec = None
+    pairs = {"description": "MPEG-TS (SD 720x576)", "scale": "720:576", "fps": "25.000", "aflags": ""}
+    shown = []
+    QDialog.on_exec = lambda d: shown.append(d)
+    dialogs.edit_pairs(None, "Profile", pairs, {}, PRESETS)
+    plain = shown[-1]
+    base_font = plain.font().pointSizeF()
+    check(not plain.called("setFont"), "100 %: the font is not touched")
+    rows = dict((l._args[0], e) for l, e in QFormLayout.instances[-1].rows)
+    check(rows["scale"].called("setMinimumWidth")[-1] == (dialogs.FIELD_WIDTH,), "100 %: fields as wide as before")
+    big_parent = SimpleNamespace(UI_SCALE=125)
+    dialogs.edit_pairs(big_parent, "Profile", pairs, {}, PRESETS)
+    big = shown[-1]
+    fonts = big.called("setFont")
+    check(fonts and abs(fonts[0][0].pointSizeF() - 1.25 * base_font) < 0.01, f"125 %, no main window font known: 1.25 times as big: {fonts and fonts[0][0].pointSizeF()} / {base_font}")
+    # with a main window: the dialog has exactly its font (the font of the central widget, which UI_SCALE has scaled)
+    window_font = plain.font()
+    window_font.setPointSizeF(10.0)
+    window = SimpleNamespace(UI_SCALE=125, centralWidget=lambda: SimpleNamespace(font=lambda: window_font))
+    dialogs.edit_pairs(window, "Profile", pairs, {}, PRESETS)
+    taken = shown[-1].called("setFont")
+    check(taken and taken[0][0] is window_font, "125 %: the dialog has the font of the main window")
+    rows = dict((l._args[0], e) for l, e in QFormLayout.instances[-1].rows)
+    wide = round(dialogs.FIELD_WIDTH * 1.25)
+    check(rows["scale"].called("setMinimumWidth")[-1] == (wide,) and rows["fps"].called("setMinimumWidth")[-1] == (wide,) and rows["description"].called("setMinimumWidth")[-1] == (wide,),
+          f"125 %: the fields are {wide} pixels wide")
+    # the options dialog with tabs: the space around the names grows too
+    from mediamaker import OPTION_GROUPS
+    dialogs.edit_pairs(big_parent, "Options", {"crop": "0", "step_end": "40"}, {}, {}, OPTION_GROUPS)
+    need = shown[-1].called("setMinimumWidth")[-1][0]
+    dialogs.edit_pairs(None, "Options", {"crop": "0", "step_end": "40"}, {}, {}, OPTION_GROUPS)
+    check(need > shown[-1].called("setMinimumWidth")[-1][0], f"125 %: the tabs need more room: {need} > {shown[-1].called('setMinimumWidth')[-1][0]}")
+    print("Dialog size: OK (profile and options dialogs follow UI_SCALE: font, fields, tabs)")
+
+
+def test_tick_shape(tmp, videos):
+    """The green tick of the menu entries: three points inside the square, the tip lower than the ends, the long stroke on the right; the style is made when it is asked for."""
+    import tickshape
+    pts = tickshape.tick_points(20)
+    (x0, y0), (x1, y1), (x2, y2) = pts
+    check(len(pts) == 3 and all(0 <= x <= 20 and 0 <= y <= 20 for x, y in pts), f"the points lie inside the square: {pts}")
+    check(y1 > y0 and y1 > y2 and x0 < x1 < x2 and (x2 - x1) > (x1 - x0), "short stroke down to the tip, long stroke up to the right")
+    check(tickshape.tick_points(40) == [(2 * x, 2 * y) for x, y in pts], "the shape scales with the size")
+    g = tickshape.TICK_GREEN
+    check(g[1] > g[0] and g[1] > g[2] and tickshape.TICK_ON_HIGHLIGHT[1] > tickshape.TICK_ON_HIGHLIGHT[0], f"both colours are green: {g} {tickshape.TICK_ON_HIGHLIGHT}")
+    src = open(os.path.join(ROOT, "ui", "vbqt.py"), encoding="utf-8").read()
+    check("menustyle.install(app)" in src and "MEDIAMAKER_PLAIN_MENU" in open(os.path.join(ROOT, "menustyle.py"), encoding="utf-8").read(), "the style is installed with the theme and can be switched off")
+    print("Menu tick: OK (shape, colours, installed with the theme)")
+
+
+def test_known_files(tmp, videos):
+    """[known_files]: a counted file (name + size) is not counted again."""
+    from settings import Settings
+    work = os.path.join(tmp, "known")
+    os.makedirs(work, exist_ok=True)
+    ini = os.path.join(work, "MediaMaker.ini")
+    open(ini, "w", encoding="utf-8", newline="").write("; my comment\r\n[settings]\r\nlast=x\r\n")
+    st = Settings(ini)
+    f1, f2 = os.path.join(videos, "sample2.ts"), os.path.join(videos, "sample3.ts")
+    check(st.known_file(f1) is None and st.known_file("/nowhere/x.ts") is None, "nothing known at first, a file that does not exist is not known")
+    check(st.remember_file(f1, 123, 2, 1.5, 200) and st.known_file(f1) == (123, 2, 1.5), f"remembered: {st.known_file(f1)}")
+    text = open(ini, encoding="utf-8", newline="").read()
+    check(text.startswith("; my comment\r\n[settings]\r\nlast=x\r\n") and f"[known_files]\r\nsample2.ts-{os.path.getsize(f1)}=123,2,1.5" in text, f"comments stay, CRLF stays, one line: {text!r}")
+    check(Settings(ini).known_file(f1) == (123, 2, 1.5), "it is in the file")
+    check("%3D" in Settings.known_key("/a/b=c;[d].ts", 5) and Settings.known_key("C:\\x\\film.ts", 7) == "film.ts-7", "special characters in the name are escaped, folders removed (also Windows)")
+    st.remember_file(f1, 124, 0, 2.0, 200)
+    check(st.known_file(f1) == (124, 0, 2.0) and len(st.items("known_files")) == 1, "counted again: the entry is replaced, not doubled")
+    st.remember_file(f2, 50, 0, 0.0, 1)
+    check(st.known_file(f1) is None and st.known_file(f2) == (50, 0, 0.0) and len(st.items("known_files")) == 1, "limit 1: the oldest entry is dropped")
+    check(not st.remember_file(f1, 1, 0, 0.0, 0) and st.known_file(f1) is None, "limit 0: nothing is written")
+    st.set("known_files", f"sample2.ts-{os.path.getsize(f1)}", "garbage")
+    check(st.known_file(f1) is None, "a damaged entry counts as unknown")
+    st.delete("known_files", f"sample2.ts-{os.path.getsize(f1)}")
+    # --- the window: the first opening counts, the second takes the result
+    calls = []
+
+    def count_fn(path, on_start=None):
+        calls.append(path)
+        return 77, 3, 0.5
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="known", count_fn=count_fn)
+    check(calls == [f1] and win.settings.known_file(f1) == (77, 3, 0.5), f"counted once and written to the INI: {calls}")
+    first = win.segments[0].first_frame
+    check(win.segments[0].total_frames == first + 77, "the counted number is in the segment")
+    calls.clear()
+    win2 = seek_window(tmp, videos, ("sample2.ts",), workdir="known", count_fn=count_fn)
+    check(calls == [] and win2.segments[0].total_frames == first + 77 and not win2._counting, f"second time: not counted, number taken from [known_files]: {calls}")
+    win2.settings.set_option("known_files", "0")
+    win2.settings.save()
+    win3 = seek_window(tmp, videos, ("sample2.ts",), workdir="known", count_fn=count_fn)
+    check(calls == [f1], "option known_files = 0: counted again")
+    print("Known files: OK (key, escaping, limit, replace, option off, lookup when opening)")
+
+
+def test_bitrate_dialog(tmp, videos):
+    """One dialog for the video and the audio rate."""
+    import dialogs
+    W = dialogs.QtWidgets
+    made = {}
+    class Edit(W.QLineEdit):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            made.setdefault("edits", []).append(self)
+    original = W.QLineEdit
+    W.QLineEdit = Edit
+    try:
+        W.QDialog.exec_result, W.QDialog.on_exec = 1, None
+        result = dialogs.ask_bitrates(None, "Estimate bitrate(s)", "prompt", "3000", "160")
+        video, audio = made["edits"]
+        check(video._args == ("3000",) and audio._args == ("160",), f"the two fields hold the calculated values: {video._args} {audio._args}")
+        check(result == (video.text(), audio.text()), f"both values come back: {result}")
+        check(video.called("selectAll") is not None and len(video.called("selectAll")) == 1 and video.called("setFocus") and not audio.called("selectAll"),
+              "the number in the first field is selected and the field has the focus")
+        W.QDialog.exec_result = 0
+        check(dialogs.ask_bitrates(None, "Estimate bitrate(s)", "prompt", "3000", "160") is None, "cancel: None")
+    finally:
+        W.QLineEdit = original
+        W.QDialog.exec_result = 1
+    print("Bit rate dialog: OK")
+
+
+def test_ui_scale(tmp, videos):
+    """The main window is scaled (positions, sizes, font, symbols), 125 % = 1366 pixels wide."""
+    import uiscale
+    check(uiscale.target_width(100) == 1089 and uiscale.target_width(125) == 1366 and uiscale.target_width(117) == 1280 and uiscale.target_width(150) == 1634,
+          f"widths: a usual width within 1 %, otherwise exact: {[uiscale.target_width(p) for p in (100, 125, 117, 150)]}")
+    s = uiscale.Scaler(125)
+    check(s.extra == 5 and s.width == 1366, f"125 %: 1361 + 5 = 1366: {s.extra} {s.width}")
+    check((s.x(0), s.x(505), s.x(512), s.x(537), s.x(544), s.x(1057), s.x(1089)) == (0, 631, 642, 673, 685, 1326, 1366), f"positions: the surplus pixels are in the two gaps next to the buttons: {[s.x(v) for v in (0, 505, 512, 537, 544, 1057, 1089)]}")
+    check(s.x(537) - s.x(512) == 31 and s.x(1089) - s.x(544) == 681, "the column of buttons and the preview keep their proportions")
+    check(uiscale.Scaler(100).x(1089) == 1089 and uiscale.Scaler(100).extra == 0, "100 %: nothing changes")
+    win = seek_window(tmp, videos, ("sample2.ts",), workdir="scale", ui_scale=125)
+    central = win.centralWidget()
+    check(central.called("setFixedSize")[-1] == (1366, 545), f"window size: {central.called('setFixedSize')[-1]}")
+    check(win.lvwSegments.called("setGeometry")[-1] == (0, 0, 631, 361), f"list: {win.lvwSegments.called('setGeometry')[-1]}")
+    check(win.picTimeline.called("setGeometry")[-1] == (0, 450, 1366, 61), f"timeline across the whole width: {win.picTimeline.called('setGeometry')[-1]}")
+    check(win.lblText[0].called("setGeometry")[-1] == (120, 20, 101, 21), f"label in the frame: scaled inside: {win.lblText[0].called('setGeometry')[-1]}")
+    check(win.mnuCalcAudio.called("setVisible")[-1] == (False,) and win.mnuCalcAudio.called("setShortcut")[-1][0].isEmpty() and ("&Estimate bitrate(s)",) in win.mnuCalcVideo.called("setText"),
+          "the menu entry Estimate audio kb/s (Ctrl+I) is hidden, the other one is called Estimate bitrate(s)")
+    check(abs(central.called("setFont")[-1][0]._points - 8.25 * 1.25) < 1e-9, f"font {central.called('setFont')[-1][0]._points}")
+    check(win.cmdCommand[0].called("setIconSize")[-1][0].width() == 28, "symbols of the buttons: 22 -> 28")
+    check(win.VLC.called("setGeometry")[-1] == (685, 0, 641, 361), f"preview area: {win.VLC.called('setGeometry')[-1]}")
+    check(abs(win.lblText[0].called("setFont")[-1][0]._points - 8.25 * 1.25) < 1e-9 and abs(win.lblInfo.called("setFont")[-1][0]._points - 8.25 * 1.25) < 1e-9, "every control gets the larger font explicitly (a style sheet would keep the old one)")
+    check(win.vscVolume.called("setToolTip")[-1] == ("Adjust audio volume",) and win.lblInfo.called("setToolTip")[-1] == ("Click to jump to a frame number",), "tooltips of the volume bar and of the frame label")
+    check(win.player.attached is win.VLC and win.player.fitted == [win.VLC], f"the player is told that the video area has its new size: {win.player.fitted}")
+    # --- 100 %: as in the form
+    win2 = seek_window(tmp, videos, ("sample2.ts",), workdir="scale")
+    check(win2.centralWidget().called("setFixedSize")[-1] == (1089, 436) and win2.lvwSegments.called("setGeometry")[-1] == (0, 0, 505, 289), "100: the form is not touched")
+    print("UI scale: OK (widths, positions, window, font, symbols, video area, 100 %)")
+
+
 def test_counting_note(tmp, videos):
     """The note "counting frames" in the title goes away whenever a counting ends: with a result, cancelled, with an error, or when the file cannot be read."""
     import mediamaker
@@ -6893,7 +8591,38 @@ def test_counting_note(tmp, videos):
     win._counters[:] = [c1, c2, other]
     win.start_count("/x/next.ts")
     check([c.path for c in win._counters] == ["/x/next.ts"], f"ended counters are removed from the list: {[c.path for c in win._counters]}")
-    print("Counting note: OK (result, error, unreadable file, cancelled, the same file twice, list cleaned)")
+    # the title shows how far the counting is (so that one sees that it is not stuck): from the time of the packet read last
+    win = make_window(os.path.join(tmp, "countnote"), count_fn=lambda path, on_start=None: (100, 0, 0.0))
+    win.segments[:] = [types.SimpleNamespace(path="/x/film.ts", fps=Fraction(25), total_frames=250)]       # 10 s
+    win._counting = {"/x/film.ts"}
+    win.count_progress("/x/film.ts", 5.0)
+    check("counting frames 50 %" in title(win), f"the percentage in the title: {title(win)!r}")
+    win.count_progress("/x/film.ts", 99.0)
+    check("counting frames 99 %" in title(win), "(never more than 99 % while it runs)")
+    win.count_progress("/x/other.ts", 1.0)
+    check("99 %" in title(win), "(a file that is not in the list: nothing)")
+    counter = mediamaker.FrameCounter("/x/film.ts", win._count_fn)
+    win._counters[:] = [counter]
+    win.count_finished(counter)
+    check(win._count_percent is None and title(win) == f"MediaMaker {mediamaker.VERSION}", "when the counting ends the percentage goes as well")
+    seen = []
+    with_progress = mediamaker.FrameCounter("/x/film.ts", lambda path, on_start=None, on_progress=None: (on_progress(2.5), (10, 0, 0.0))[1])
+    with_progress.progress.connect(lambda path, seconds: seen.append((path, seconds)))
+    with_progress.run()
+    check(seen == [("/x/film.ts", 2.5)], "a counting function that reports its progress is given the callback (the others are not)")
+    # count_video_packets with a real ffprobe: the same numbers with and without the callback, progress reported
+    import mediaprobe
+    sample = os.path.join(videos, "sample.ts")
+    reported = []
+    old_every = mediaprobe.PROGRESS_EVERY
+    mediaprobe.PROGRESS_EVERY = 25
+    try:
+        plain = mediaprobe.count_video_packets(sample)
+        counted = mediaprobe.count_video_packets(sample, on_progress=reported.append)
+    finally:
+        mediaprobe.PROGRESS_EVERY = old_every
+    check(plain == counted and reported and reported == sorted(reported) and 0 < reported[0] < 3 and reported[-1] < 10, f"count_video_packets: the same result, progress counted from the first packet: {reported[:3]}")
+    print("Counting note: OK (result, error, unreadable file, cancelled, the same file twice, list cleaned, percentage)")
 
 
 def test_play_now(tmp, videos):
@@ -6928,26 +8657,6 @@ def test_play_now(tmp, videos):
     win.render_done(RunResult(1, False, 3.0, "boom"))
     check(calls == [] and "ffmpeg reported an error" in win.messages[-1], "an error or a cancel does not ask to play")
     print("Play now: OK (question after saving, Yes starts the system player, No does not, error told)")
-
-
-def test_wait_dialog(tmp, videos):
-    """The wait window has room for several lines (before, the second line was cut off) and wraps long lines."""
-    import dialogs
-    cancelled = []
-    d = dialogs.WaitDialog(None, "Performing duplicate scene removal search", lambda: cancelled.append(1))
-    label = d.label
-    check(label.called("setWordWrap")[-1][0] is True and label.called("setMinimumWidth")[-1][0] == 420, "long lines are wrapped; the window is wide enough")
-    check(label.called("setMinimumHeight")[-1][0] >= 3 * 16 + 12, f"room for three lines from the start: {label.called('setMinimumHeight')[-1][0]} pixels")
-    d.set_text("Performing duplicate scene removal search, please wait...\nreading the pictures...")
-    check(label.called("setText")[-1][0] == "Performing duplicate scene removal search, please wait...\nreading the pictures...", "the text with its two lines")
-    from PySide6 import QtWidgets as W
-    W.QDialog.reject = lambda self: None                          # the replacement for Qt has no real reject() for super() to find
-    try:
-        d.reject()
-    finally:
-        del W.QDialog.reject
-    check(cancelled == [1], "Cancel calls the cancel function")
-    print("Wait window: OK (room for three lines, word wrap, cancel)")
 
 
 def test_shutdown(tmp, videos):
@@ -7027,9 +8736,34 @@ def main():
     test_search_end_unreadable(tmp, sys.argv[1])
     test_logo_busy_pictures(tmp, sys.argv[1])
     test_advanced_options(tmp, sys.argv[1])
+    test_cancel_button(tmp, sys.argv[1])
+    test_dvd_mode(tmp, sys.argv[1])
+    test_help_menu(tmp, sys.argv[1])
+    test_progress_from_frames(tmp, sys.argv[1])
+    test_dvd_subtitle_start(tmp, sys.argv[1])
+    test_dvd_subtitle_jump(tmp, sys.argv[1])
+    test_dvd_seam(tmp, sys.argv[1])
+    test_dvd_languages(tmp, sys.argv[1])
+    test_clip_viewer(tmp, sys.argv[1])
+    test_cancel_stays_usable(tmp, sys.argv[1])
+    test_actions_in_bar(tmp, sys.argv[1])
+    test_bitrate_dialog(tmp, sys.argv[1])
+    test_ui_scale(tmp, sys.argv[1])
+    test_known_files(tmp, sys.argv[1])
+    test_public_version(tmp, sys.argv[1])
+    test_first_profile(tmp, sys.argv[1])
+    test_ffmpeg_version(tmp, sys.argv[1])
+    test_list_dialog_width(tmp, sys.argv[1])
+    test_install_hint(tmp, sys.argv[1])
+    test_install_ffmpeg_offer(tmp, sys.argv[1])
+    test_fit_window(tmp, sys.argv[1])
+    test_restore_library_path(tmp, sys.argv[1])
+    test_leave(tmp, sys.argv[1])
+    test_showinfo_times(tmp, sys.argv[1])
+    test_dialog_scale(tmp, sys.argv[1])
+    test_tick_shape(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])
-    test_wait_dialog(tmp, sys.argv[1])
     test_timeline(tmp, sys.argv[1])
     test_segments(tmp, sys.argv[1])
     test_thumbnail_errors(tmp, sys.argv[1])

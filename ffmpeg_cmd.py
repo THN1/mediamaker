@@ -15,15 +15,18 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import subprocess
 from fractions import Fraction
 from functools import lru_cache
 from math import floor
 from typing import Callable, Optional, Union
 
+import dvd
 import mediaprobe
 import tracks
 from cutlist import Job, Segment
+from profiles import is_on
 
 
 # ----------------------------------------------------------------------------- Start times
@@ -33,6 +36,30 @@ def _start_fraction(value, default: Fraction) -> Fraction:
         return Fraction(str(value)).limit_denominator(1_000_000)
     except (ValueError, ZeroDivisionError, TypeError):
         return default
+
+
+_VERSIONS: dict = {}
+
+
+def ffmpeg_version(ffmpeg: str = "ffmpeg", run: Callable = subprocess.run) -> Optional[tuple]:
+    """(major, minor) of the ffmpeg program ("ffmpeg version 4.4.2-0ubuntu0.22.04.1", "n6.1", "7.0.1" ...); None if it cannot be found out or is a build from the
+    repository ("N-12345-g...", which is a new one). Asked once per program."""
+    if ffmpeg not in _VERSIONS:
+        version = None
+        try:
+            out = run([ffmpeg, "-version"], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=15).stdout or ""
+            m = re.match(r"\s*ffmpeg version n?(\d+)\.(\d+)", out)
+            version = (int(m.group(1)), int(m.group(2))) if m else None
+        except (OSError, subprocess.SubprocessError):
+            pass
+        _VERSIONS[ffmpeg] = version
+    return _VERSIONS[ffmpeg]
+
+
+def passthrough_args(ffmpeg: str = "ffmpeg", run: Callable = subprocess.run) -> list:
+    """Every frame is passed on as it is (no frame dropped or repeated): `-fps_mode passthrough` since ffmpeg 5.1, before that `-vsync 0` (the same, an older name)."""
+    version = ffmpeg_version(ffmpeg, run)
+    return ["-vsync", "0"] if version is not None and version < (5, 1) else ["-fps_mode", "passthrough"]
 
 
 @lru_cache(maxsize=64)
@@ -131,8 +158,10 @@ def mask_name(pos: int) -> str:
 
 
 def video_filter(seg: Segment, pos: int, profile: dict, opts: dict,
-                 trim: Optional[tuple[Fraction, Fraction]], setsar: bool, extra: str = "") -> str:
+                 trim: Optional[tuple[Fraction, Fraction]], setsar: bool, extra: str = "", regen: bool = False) -> str:
     f = f"[{pos - 1}:v]"
+    if regen:                                    # DVD: the times of the pictures are made from their COUNT (N), see build_command
+        f += f"setpts=N*{seg.fps.denominator}/{seg.fps.numerator}/TB,"
     if trim:
         f += f"trim={fmt_seconds(trim[0])}:{fmt_seconds(trim[1])},"
     w, h = seg.width, seg.height
@@ -144,7 +173,7 @@ def video_filter(seg: Segment, pos: int, profile: dict, opts: dict,
     c, w, h = _crop(seg, w, h, int(opts.get("crop", 0)))
     f += c
     sw_, sh_ = (int(v) for v in profile["scale"].split(":"))
-    if profile.get("pad", opts.get("pad", "False")) == "True":         # pad belongs to the profile (formerly: options)
+    if is_on(profile.get("pad", opts.get("pad", "off"))):         # pad belongs to the profile (formerly: options)
         if w * sh_ > h * sw_:
             f += f"pad={w}:{2 * _vb_idiv2(w / sw_ * sh_)}"
         else:
@@ -157,22 +186,76 @@ def video_filter(seg: Segment, pos: int, profile: dict, opts: dict,
     return f + f"[v{pos - 1}];"
 
 
-def audio_filter(seg: Segment, pos: int, trim: Optional[tuple[Fraction, Fraction]], selector: Optional[str] = None, label: Optional[str] = None) -> str:
-    """The chain of one audio track of a segment. selector: e.g. "a:2" (default: the audio track of the segment); label: name of the result (default a<pos-1>)."""
+def audio_filter(seg: Segment, pos: int, trim: Optional[tuple[Fraction, Fraction]], selector: Optional[str] = None, label: Optional[str] = None, regen: bool = False) -> str:
+    """The chain of one audio track of a segment. selector: e.g. "a:2" (default: the audio track of the segment); label: name of the result (default a<pos-1>).
+    regen (DVD): the times are made from the count of the samples (N / sample rate)."""
     f = f"[{pos - 1}:{selector or seg.audio_sel}]"
+    if regen:
+        f += f"asetpts=N/{seg.sample_rate or 'SR'}/TB,"
     if trim:
         f += f"atrim={fmt_seconds(trim[0])}:{fmt_seconds(trim[1])},"
     return f + f"asetpts=PTS-STARTPTS[{label or f'a{pos - 1}'}];"
+
+
+def source_of(seg: Segment, path_map: Callable[[str], str] = lambda p: p) -> str:
+    """What ffmpeg opens for the segment: its file, or for a run of parts of a DVD (dvd.effective_segments) 'concat:a|b' (the bytes of the parts one after the other)."""
+    files = dvd.files_of(seg.path)
+    return dvd.CONCAT + "|".join(path_map(f) for f in files) if len(files) > 1 else path_map(seg.path)
+
+
+def source_parts(seg: Segment, path_map: Callable[[str], str] = lambda p: p) -> list:
+    """[(file name for ffmpeg, number of its first picture)] of the pieces of a segment between two jumps of the time stamps; the pieces of the parts of a run follow each other, the
+    numbers go on through the parts."""
+    result, base = [], 0
+    for path in dvd.files_of(seg.path):
+        real = path_map(path)
+        scan = dvd.scan_of(real)
+        result += [(piece.url(real), base + piece.first_picture) for piece in scan.pieces]
+        base += len(scan.picture_bytes)
+    return result
 
 
 def _quote(path: str) -> str:
     return "'" + path.replace("'", "'\\''") + "'"
 
 
-def subtitle_list_text(entries: list) -> str:
+SUBTITLE_START = "@SUBTITLE_START@"     # in the command, behind -itsoffset: the start time of the list of subtitles, which is filled in when the command is run (see subtitle_start)
+
+
+def subtitle_start_args(list_path: str) -> list:
+    """The ffprobe command that asks for the start time of the input made of the list of subtitles (what ffmpeg will subtract from its times)."""
+    return ["ffprobe", "-v", "error", "-protocol_whitelist", "file,subfile,crypto,data", "-f", "concat", "-safe", "0", "-i", list_path, "-show_entries", "format=start_time", "-of", "csv=p=0"]
+
+
+def subtitle_start(list_path: str, run=None) -> float:
+    """The start time of the input made of the list of subtitles, as ffprobe (of the same build as ffmpeg) sees it; 0.0 if there is none. ffmpeg subtracts the start time of EVERY input from
+    its times (without -copyts): ffmpeg 6.1 says -0.08 s for such a list, ffmpeg 9 says 16.8 s (the time of the first subtitle, a list has nothing else), and the subtitles came 16.8 s too early.
+    -itsoffset with this time gives it back, so that the times are those of the list: counted from the first picture of the segment."""
+    import subprocess
+    try:
+        out = (run or subprocess.run)(subtitle_start_args(list_path), capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60).stdout.strip().split("\n")[0].strip(",")
+        return float(out)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 0.0
+
+
+def fill_subtitle_start(command: list, list_path: str, run=None) -> list:
+    """The command with the placeholder for the start time of the list of subtitles replaced by the real time (unchanged if there is none in it)."""
+    if SUBTITLE_START not in command:
+        return command
+    value = f"{subtitle_start(list_path, run):.3f}"
+    return [value if a == SUBTITLE_START else a for a in command]
+
+
+def subtitle_list_text(entries: list, stream_ids: Optional[list] = None) -> str:
     """The list for the concat demuxer that cuts the subtitles like the video: [(file, in point, out point or None, length or None)] in seconds (absolute times, as the
-    stream has them: with -copyts the subtitles then meet the picture exactly; measured). The demuxer puts the pieces one after the other with the given lengths."""
+    stream has them: with -copyts the subtitles then meet the picture exactly; measured). The demuxer puts the pieces one after the other with the given lengths.
+
+    stream_ids (DVD mode: the ids of the subtitle streams, "0x21"): the list declares the streams (stream / exact_stream_id), so that every file contributes the stream with THIS id,
+    wherever it stands in that file. Without them the demuxer takes the n-th stream of every file, and the first file decides what that is (see tracks.py)."""
     out = "ffconcat version 1.0\n"
+    for stream_id in stream_ids or []:
+        out += f"stream\nexact_stream_id {stream_id}\n"
     for path, t0, t1, length in entries:
         out += f"file {_quote(path)}\ninpoint {fmt_seconds(t0)}\n"
         if t1 is not None:
@@ -235,20 +318,33 @@ def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str]
     if not segs:
         raise ValueError("Segment list is empty.")
     choice = tracks.Choice.from_options(opts)
+    # DVD: the times of the stream jump (a new cell, a new program chain: the time starts again somewhere in the file). With -copyts ffmpeg does not correct that, and cutting by
+    # absolute times then loses every picture after the jump (measured: a file of two pieces of 8 s each gave 202 of 400 frames). Without -copyts ffmpeg makes the times continuous,
+    # so DVD mode cuts by relative times, as the VB6 program did (-ss, then trim). The subtitles then need the start times of the files for their list.
+    relative = stream_times == "auto" and dvd.is_dvd_structure([s.path for s in segs])
+    if relative:
+        stream_times = None
+        segs = dvd.effective_segments(segs, path_map)        # neighbouring parts that continue each other are read as ONE stream (the seam loses nothing then), see dvd.mergeable
+    # ... and not only the cutting: ffmpeg 8 does NOT make the time continuous in a filter graph any more (measured by the user on a DVD: decoding alone 35133 frames, 23:25; the graph with
+    # trim and -r 25: 17777 frames, 17357 dropped, the time after the jump starts again; ffmpeg 6.1 corrects it in both). So in DVD mode the times of the pictures and of the samples are made
+    # from their count before anything else (setpts=N/(fps*TB), asetpts=N/(rate*TB)): continuous whatever the stream says.
     if choice and choice.subtitles:
-        if not stream_times:
+        if not stream_times and not relative:
             raise NotImplementedError("Subtitles need the absolute times (stream_times).")
         if not subtitle_list or files is None:
             raise ValueError("Subtitles need subtitle_list (the path of the list) and files (where its text is put).")
         if track_list is None:
-            track_list = mediaprobe.track_list(path_map(segs[0].path))
+            track_list = mediaprobe.track_list(path_map(dvd.files_of(segs[0].path)[0]))
     streams = tracks.streams_for(opts, job.output, track_list)
-    selectors = [f"a:{index}" for index, _ in streams.audio] or [None]        # None: the audio track of the segment
+    selectors = [tracks.audio_spec(index) for index, _ in streams.audio] or [None]        # None: the audio track of the segment (a:3 by position, i:0x80 by stream id: DVD)
     n_audio = len(selectors)
     sub_entries = []
 
     if stream_times == "auto":
         stream_times = {p: stream_times_of(path_map(p)) for p in {s.path for s in segs}}
+    file_times = stream_times or ({s.path: stream_times_of(path_map(dvd.files_of(s.path)[0])) for s in segs} if relative and streams.subtitles else {})    # (container start, video start)
+    pieces = {s.path: source_parts(s, path_map) for s in segs} if relative and streams.subtitles else {}      # the pieces between jumps of the time stamps (DVD)
+    piece_times = stream_times_of
     multiple = len({s.path for s in segs}) > 1
     explicit = multiple or unify                  # set codec/bit rate parameters in full
     preroll = int(opts.get("floor", 2))
@@ -261,6 +357,8 @@ def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str]
         # before the first picture, concat would otherwise pad the picture of that segment with frozen frames.
         trimmed = not whole or len(segs) > 1
         trim = None
+        trim_v = None                              # the time span of the PICTURE (only differs from the span of the sound in DVD mode, see below)
+        shift = 0                                  # relative cutting: the times of the list of subtitles are those in the file = start of the file + the jump of -ss
         if trimmed and stream_times:
             fmt0, vid0 = stream_times[seg.path]
             base = origin_base(seg.start, seg.fps, fmt0, vid0, origin, preroll)
@@ -271,18 +369,51 @@ def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str]
                 args += ["-ss", str(seek)]
         elif trimmed:
             seek, rest = split_seek(seg.start, seg.fps, preroll)
+            if relative and seek > 0:
+                # No -ss in DVD mode: the times of a VOB stream jump (see above) and ffmpeg seeks by those times, so it lands in the wrong piece or behind the end (a cut at 23:20 of a title
+                # whose time starts again at picture 17777 gave a clip without any stream). The pictures are counted from the start (setpts=N...), so the start is reached by trim alone.
+                seek, rest = 0, _ms_floor(Fraction(seg.start) / seg.fps)
             trim = (rest, trim_end(rest, seg.frames, seg.fps))
+            if relative and seek == 0:
+                # The counted time of the PICTURE starts with the first picture, which has the number first_frame; the counted time of the SOUND starts with its first sample, at the start of
+                # the container (the sound of a DVD part often begins before the picture: 0.48 s in a part of queen.vob). So the picture needs its own span: from (start - first_frame) frames.
+                rest_v = _ms_floor(Fraction(max(seg.start - seg.first_frame, 0)) / seg.fps)
+                trim_v = (rest_v, trim_end(rest_v, seg.frames, seg.fps))
             if seek > 0:
                 args += ["-ss", str(seek)]
-        args += ["-i", path_map(seg.path)]
-        filtr += video_filter(seg, pos, prof, opts, trim, setsar=multiple, extra=video_extra)
+            if streams.subtitles:
+                shift = file_times[seg.path][0] + seek
+        if relative:
+            # The parts of a DVD differ in the colour space (smpte170m / bt470bg) and in the order of the fields (progressive / bottom first), sometimes within ONE file at a cell; newer
+            # ffmpeg builds the WHOLE filter graph anew when that changes ("Reconfiguring filter graph because video parameters changed", in the log of the user's batch run), and all
+            # counters start again (setpts=N, trim, concat): the sound runs from the start again ("Non-monotonic DTS"), the frames behind it are thrown away. -reinit_filter 0: never.
+            args += ["-reinit_filter", "0"]
+        args += ["-i", source_of(seg, path_map)]
+        filtr += video_filter(seg, pos, prof, opts, trim_v or trim, setsar=multiple, extra=video_extra, regen=relative)
         for k, selector in enumerate(selectors):
-            filtr += audio_filter(seg, pos, trim, selector, f"a{pos - 1}" if n_audio == 1 else f"a{pos - 1}_{k}")
+            filtr += audio_filter(seg, pos, trim, selector, f"a{pos - 1}" if n_audio == 1 else f"a{pos - 1}_{k}", regen=relative)
         if streams.subtitles:                                             # the same times as the picture, so that the subtitles meet it
-            if trim:
-                sub_entries.append((path_map(seg.path), trim[0], trim[1], trim[1] - trim[0]))
+            first = seg.start - seg.first_frame + dvd.undecodable_head(path_map(dvd.files_of(seg.path)[0]))      # its first picture as a place among the PACKETS of the file (the first ones cannot be decoded)
+            parts = pieces.get(seg.path, [])
+            if relative and len(parts) > 1 and first + seg.frames > parts[1][1]:
+                # DVD: the segment reaches behind a jump of the time stamps of its file (or into the next part of a run). The demuxer of the list does not correct jumps (the subtitles
+                # behind it then all get one time, or the time of the wrapped stream): every piece between two jumps goes into the list as a file of its own (protocol subfile), with the
+                # length of its pictures.
+                for k, (url, part_first) in enumerate(parts):
+                    next_first = parts[k + 1][1] if k + 1 < len(parts) else first + seg.frames
+                    lo, hi = max(first, part_first), min(first + seg.frames, next_first)
+                    if hi <= lo:
+                        continue
+                    length = Fraction(hi - lo) / seg.fps
+                    if lo == first and k == 0:
+                        begin = trim[0] + shift if trim else file_times[seg.path][1]
+                    else:
+                        begin = piece_times(url)[1] + Fraction(lo - part_first) / seg.fps
+                    sub_entries.append((url, begin, begin + length, length))
+            elif trim:
+                sub_entries.append((source_of(seg, path_map), trim[0] + shift, trim[1] + shift, trim[1] - trim[0]))
             else:
-                sub_entries.append((path_map(seg.path), stream_times[seg.path][1], None, None))        # a whole file: from its first picture
+                sub_entries.append((source_of(seg, path_map), file_times[seg.path][1], None, None))          # a whole file: from its first picture
 
     if chapters_file:
         # (-map_chapters: the chapters come from THIS file, also if a source file has chapters itself; without it ffmpeg takes the first input that has any)
@@ -304,9 +435,13 @@ def build_command(job: Job, ffmpeg: str = "ffmpeg", chapters_file: Optional[str]
         maps = ["-map", "[v]"] + [x for o in outs for x in ("-map", f"[{o}]")]
     if streams.subtitles:
         sub_input = len(segs) + (1 if chapters_file else 0)                 # (after the segments and the file of the chapters)
-        files[subtitle_list] = subtitle_list_text(sub_entries)
-        args += (["-canvas_size", f"{segs[0].width}x{segs[0].height}"] if streams.canvas else []) + ["-f", "concat", "-safe", "0", "-i", subtitle_list]
-        maps += [x for index, *_ in streams.subtitles for x in ("-map", f"{sub_input}:s:{index}")]
+        by_id = [index for index, *_ in streams.subtitles if isinstance(index, str)]
+        files[subtitle_list] = subtitle_list_text(sub_entries, by_id or None)
+        args += (["-canvas_size", f"{segs[0].width}x{segs[0].height}"] if streams.canvas else []) + (["-protocol_whitelist", "file,subfile,crypto,data"] if any(len(v) > 1 for v in pieces.values()) else []) + (["-itsoffset", SUBTITLE_START] if relative else []) + ["-f", "concat", "-safe", "0", "-i", subtitle_list]
+        if by_id:                                      # the list declares the streams (by id): they are the subtitle streams 0, 1, ... of the input, in the order of the choice
+            maps += [x for k in range(len(by_id)) for x in ("-map", f"{sub_input}:s:{k}")]
+        else:
+            maps += [x for index, *_ in streams.subtitles for x in ("-map", f"{sub_input}:s:{index}")]
 
     args += ["-filter_complex", filtr, *maps, "-sws_flags", prof["sws_flags"]]
     if explicit:

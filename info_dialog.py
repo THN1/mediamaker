@@ -17,11 +17,22 @@ class frmInfo(frmInfoBase):
     def __init__(self, rows: list, summary: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Loaded segments information")
+        # The size of the main window (UI_SCALE, see uiscale.py) counts here too: the font and the size of the dialog follow it.
+        factor = getattr(parent, "UI_SCALE", 100) / 100
+        if factor != 1:
+            font = self.font()
+            if font.pointSizeF() > 0:
+                font.setPointSizeF(font.pointSizeF() * factor)
+                self.setFont(font)
+                for widget in (self.lvwInfo, self.cmdClose):
+                    widget.setFont(font)
         # The VB6 design has a fixed size and nine columns; here there are more columns and the window can be resized.
-        self.setMinimumSize(520, 240)
+        self.setMinimumSize(round(520 * factor), round(240 * factor))
         self.setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX)
         self.setWindowFlag(QtCore.Qt.WindowType.WindowMaximizeButtonHint, True)
-        self.resize(1100, 420)
+        self.resize(round(1100 * factor), round(420 * factor))
+        if factor != 1:
+            self.cmdClose.resize(round(self.cmdClose.width() * factor), round(self.cmdClose.height() * factor))
 
         self.lvwInfo.setHeaderLabels(list(HEADERS))
         self.lvwInfo.set_rows(rows)

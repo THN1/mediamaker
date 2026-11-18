@@ -133,14 +133,14 @@ def clip_command(path: str, start: float, duration: float, out: str, ffmpeg: str
     return [ffmpeg, "-v", "error", "-y", "-ss", f"{start:.3f}", "-i", path, "-t", f"{duration:.3f}", "-map", "0:v", "-map", "0:a?", "-c", "copy", out]
 
 
-def versions_text(version: str, ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe") -> str:
+def versions_text(version: str, ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe", commit: str = "") -> str:
     def first_line(cmd):
         try:
             out = subprocess.run([cmd, "-version"], capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout
             return out.splitlines()[0] if out else "(no answer)"
         except OSError:
             return "(not found)"
-    lines = [f"MediaMaker {version}", f"Python {sys.version.split()[0]} on {platform.platform()}", first_line(ffmpeg), first_line(ffprobe)]
+    lines = [f"MediaMaker {version}"] + ([f"Commit {commit}"] if commit else []) + [f"Python {sys.version.split()[0]} on {platform.platform()}", first_line(ffmpeg), first_line(ffprobe)]
     try:
         import PySide6
         lines.append(f"PySide6 {PySide6.__version__}")
@@ -192,15 +192,47 @@ What is in here
   reference_logo_vlc_preview.png   what the preview showed when L was pressed (if available) - compare with reference_logo_frame.png
   preview_check.json      which frame number the picture of the preview really belongs to (offset between VLC and ffmpeg numbering)
   vlc_preview.png         what the preview shows at the moment the package is made
+  last_save.json          (only after a save in DVD mode) what the last save did: the ffmpeg command, its messages (warnings like "Non-monotonous DTS" are in them), the frames expected and
+                          written, the segments, and the streams of the file that was written (start time and length of the picture and the sound)
   last_search.json        what the last "Seek next commercial" / "Seek end of commercial" did: method (crop or reference logo), start, every frame
                           that was looked at with its value, and the result
   options.txt, versions.txt, list.json   settings, program and tool versions, the whole segment list
   frame_at_slider.png, logo_area_at_slider.png   the picture (ffmpeg) at the position of the slider when the package is made, and the area of the
                           logo in it - NOT the picture of the reference logo (that is reference_logo_frame.png)
   debug_log_tail.txt      the end of mediamaker_debug.log (only with MEDIAMAKER_DEBUG=1)
+  dvd_*.vob, dvd_info.json   (DVD mode only) unchanged pieces of the VOB files, cut by BYTES (a DVD time stamp jumps, a cut by time cannot be trusted): around the slider,
+                          around every jump of the time stamps of the file, and the end of every part together with the beginning of the next one (the seam);
+                          dvd_info.json says which bytes and pictures they are, lists the jumps and the languages read from the IFO file, which is in the package too (VTS_nn_0.IFO; the list of subtitles of the last save is in last_save.json: subtitle_lists)
   clip.*, clip_info.txt   an unchanged piece of the recording (ffmpeg -c copy) from {before:.0f} s before to {after:.0f} s after the slider position
                           (= frame_at_slider.png, where the search stopped); clip_info.txt says where the slider, marker A and B and the place
                           where the reference logo was created are inside the piece
 
 Please upload the zip file and describe what went wrong (for example: the end of the commercial was found too early / too late, at about ...).
 """
+
+
+# ----------------------------------------------------------------------------- DVD: unchanged pieces of the files (bytes, not times: time stamps jump in a VOB file)
+BYTES_AROUND = 3 * 1024 * 1024           # the piece around the slider and around a jump: this many bytes before and behind
+BYTES_AT_SEAM = 6 * 1024 * 1024          # the end of a part and the beginning of the next
+MAX_JUMPS = 3                            # of one file
+
+
+def byte_window(centre: int, size: int, before: int = BYTES_AROUND, after: int = BYTES_AROUND, sector: int = 2048) -> tuple:
+    """(start, length) in bytes of a piece around `centre` in a file of `size` bytes, from a sector border to a sector border (the start is a pack header)."""
+    start = max(0, (centre - before) // sector * sector)
+    end = min(size, -(-(centre + after) // sector) * sector)
+    return start, end - start
+
+
+def copy_bytes(path: str, start: int, length: int, out: str, block: int = 1 << 20) -> int:
+    """Writes `length` bytes of `path` from `start` into `out` (like dd); returns the number written."""
+    done = 0
+    with open(path, "rb") as src, open(out, "wb") as dst:
+        src.seek(start)
+        while done < length:
+            data = src.read(min(block, length - done))
+            if not data:
+                break
+            dst.write(data)
+            done += len(data)
+    return done

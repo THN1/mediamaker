@@ -15,20 +15,41 @@ LONG_TEXT_KEYS = ("description", "path_map")  # keys with long free text: always
 _ENTER_KEYS = (0x01000004, 0x01000005)
 
 
+def ui_factor(parent) -> float:
+    """Size of the main window (UI_SCALE in percent, see uiscale.py) as a factor; 1 without a main window."""
+    return getattr(parent, "UI_SCALE", 100) / 100
+
+
+def scale_font(widget, factor: float, parent=None) -> None:
+    """The dialog gets the font of the main window (its central widget: the font of the form, scaled by UI_SCALE, see uiscale.py), so that the dialogs match it. Without a main
+    window that has such a font the font of `widget` is made `factor` times as big; nothing changes at 1."""
+    if factor == 1:
+        return
+    central = getattr(parent, "centralWidget", None)
+    window_font = central().font() if callable(central) else None
+    if window_font is not None and window_font.pointSizeF() > 0:
+        widget.setFont(window_font)
+        return
+    font = widget.font()
+    if font.pointSizeF() > 0:
+        font.setPointSizeF(font.pointSizeF() * factor)
+        widget.setFont(font)
+
+
 class WrappedEdit(QtWidgets.QPlainTextEdit):
     """Multi-line input field for long values. The line wrapping is only for display: the value stays one line,
         Enter confirms the dialog, Tab jumps to the next field."""
 
-    def __init__(self, text: str, on_enter):
+    def __init__(self, text: str, on_enter, width: int = FIELD_WIDTH):
         super().__init__()
         self._on_enter = on_enter
         self.setPlainText(text)
         self.setTabChangesFocus(True)
         self.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setMinimumWidth(FIELD_WIDTH)
+        self.setMinimumWidth(width)
         fm = self.fontMetrics()
-        lines = wrapped_lines(fm.horizontalAdvance(text), FIELD_WIDTH, min_lines=2, max_lines=4)
+        lines = wrapped_lines(fm.horizontalAdvance(text), width, min_lines=2, max_lines=4)
         self.setFixedHeight(lines * fm.lineSpacing() + 2 * self.frameWidth() + 2 * int(self.document().documentMargin()) + 2)
 
     def keyPressEvent(self, event):
@@ -57,13 +78,13 @@ TAB_PADDING = 40                 # pixels per tab for the space around its text 
 TAB_MARGIN = 40                  # room for the frame of the tab widget and the margins of the dialog
 
 
-def fit_tabs(dialog, tabs, labels) -> None:
+def fit_tabs(dialog, tabs, labels, factor: float = 1) -> None:
     """Makes sure all tabs are completely visible: no elided text, no scroll buttons, and the dialog is at least as wide as all
     the tabs side by side (otherwise Qt would elide the names or hide tabs behind scroll arrows)."""
     tabs.setUsesScrollButtons(False)
     tabs.setElideMode(QtCore.Qt.TextElideMode.ElideNone)
     metrics = tabs.fontMetrics()
-    dialog.setMinimumWidth(sum(metrics.horizontalAdvance(label) + TAB_PADDING for label in labels) + TAB_MARGIN)
+    dialog.setMinimumWidth(sum(metrics.horizontalAdvance(label) + round(TAB_PADDING * factor) for label in labels) + round(TAB_MARGIN * factor))
 
 
 NAV_STYLE = "tabs"               # "tabs": tabs along the top, "list": list of the groups on the left (INI: dialog_style)
@@ -116,13 +137,13 @@ class Sections:
     def current(self) -> int:
         return self.tabs.currentIndex() if self.tabs is not None else self.list.currentRow()
 
-    def fit(self, dialog) -> None:
-        """Makes sure all names are completely visible (tabs: dialog at least as wide as all tabs; list: wide enough for the longest)."""
+    def fit(self, dialog, factor: float = 1) -> None:
+        """Makes sure all names are completely visible (tabs: dialog at least as wide as all tabs; list: wide enough for the longest). `factor`: size of the main window."""
         if self.tabs is not None:
-            fit_tabs(dialog, self.tabs, self.names)
+            fit_tabs(dialog, self.tabs, self.names, factor)
         else:
             metrics = self.list.fontMetrics()
-            self.list.setFixedWidth(max(metrics.horizontalAdvance(n) for n in self.names) + LIST_PADDING)
+            self.list.setFixedWidth(max(metrics.horizontalAdvance(n) for n in self.names) + round(LIST_PADDING * factor))
 
 
 def group_plan(pairs: dict, groups) -> list:
@@ -162,6 +183,37 @@ def tab_of_error(errors: list, pairs: dict, groups) -> int:
     return 0
 
 
+LIST_DIALOG_WIDTH = 0.6          # of the width that the dialog would have by itself (the descriptions of the profiles are long)
+
+
+def narrowed_size(width: int, height: int, height_for_width, factor: float = LIST_DIALOG_WIDTH) -> tuple:
+    """(width, height) of a dialog that is made narrower: `factor` of its own width; the height is what the text needs at that width (the label wraps), but at least
+    the height it had. `height_for_width` is a function width -> height (or returns -1 if the layout does not know)."""
+    new_width = max(1, round(width * factor))
+    needed = height_for_width(new_width)
+    return new_width, max(height, needed if needed and needed > 0 else height)
+
+
+def choose_from_list(parent, title: str, label: str, items: list, current: int = 0, factor: float = LIST_DIALOG_WIDTH) -> Optional[int]:
+    """The user picks one entry of a list (`current` is preselected) in a dialog that is `factor` as wide as it would be by itself; None if it is cancelled."""
+    dialog = QtWidgets.QInputDialog(parent)
+    dialog.setWindowTitle(title)
+    dialog.setLabelText(label)
+    dialog.setComboBoxItems(items)
+    dialog.setComboBoxEditable(False)
+    dialog.setTextValue(items[current] if 0 <= current < len(items) else items[0])
+    for text_label in dialog.findChildren(QtWidgets.QLabel):               # (the text must wrap, otherwise its longest line decides the width)
+        text_label.setWordWrap(True)
+    hint = dialog.sizeHint()
+    layout = dialog.layout()
+    width, height = narrowed_size(hint.width(), hint.height(), (lambda w: layout.totalHeightForWidth(w)) if layout is not None else (lambda w: -1), factor)
+    dialog.resize(width, height)
+    if not dialog.exec():
+        return None
+    text = dialog.textValue()
+    return items.index(text) if text in items else None
+
+
 def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, groups=None, start: int = 0,
                texts=None, advanced=None, show_advanced: bool = False) -> Optional[dict]:
     """Shows one row per key (caption with explanation, input field, a selection list for suggestions).
@@ -180,6 +232,9 @@ def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, g
     """
     dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle(title)
+    factor = ui_factor(parent)                                 # like the main window: font, fields and window are larger when UI_SCALE is (see uiscale.py)
+    scale_font(dialog, factor, parent)                         # the font of the main window (before the widgets exist: they take the font of the dialog)
+    field_width = round(FIELD_WIDTH * factor)
     layout = QtWidgets.QVBoxLayout(dialog)
     getters = {}
 
@@ -194,14 +249,14 @@ def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, g
                 editor.setEditable(True)
                 editor.addItems(presets[key])
                 editor.setCurrentText(value)
-                editor.setMinimumWidth(FIELD_WIDTH)
+                editor.setMinimumWidth(field_width)
                 getters[key] = editor.currentText
-            elif key in LONG_TEXT_KEYS or QtWidgets.QLabel(value).fontMetrics().horizontalAdvance(value) > FIELD_WIDTH - 12:
-                editor = WrappedEdit(value, dialog.accept)
+            elif key in LONG_TEXT_KEYS or QtWidgets.QLabel(value).fontMetrics().horizontalAdvance(value) > field_width - round(12 * factor):
+                editor = WrappedEdit(value, dialog.accept, field_width)
                 getters[key] = editor.value
             else:
                 editor = QtWidgets.QLineEdit(value)
-                editor.setMinimumWidth(FIELD_WIDTH)
+                editor.setMinimumWidth(field_width)
                 getters[key] = editor.text
             label.setToolTip(tip)
             editor.setToolTip(tip)
@@ -235,7 +290,7 @@ def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, g
             outer.addLayout(form)
             outer.addStretch(1)
             sections.add(heading, page)
-        sections.fit(dialog)
+        sections.fit(dialog, factor)
         sections.set_current(start)
         layout.addWidget(sections.widget)
     else:
@@ -250,39 +305,6 @@ def edit_pairs(parent, title: str, pairs: dict, tooltips: dict, presets: dict, g
     if not dialog.exec():                                      # 1 = accepted, 0 = cancelled
         return None
     return {key: getter().strip() for key, getter in getters.items()}
-
-
-class WaitDialog(QtWidgets.QDialog):
-    """Message "..., please wait..." during a longer task (VB6: frmWait). Cancel (button or Esc) calls on_cancel."""
-
-    def __init__(self, parent, message: str, on_cancel):
-        super().__init__(parent)
-        self._on_cancel = on_cancel
-        self.setWindowFlag(QtCore.Qt.WindowType.FramelessWindowHint, True)
-        self.setModal(True)
-        self.setStyleSheet("QDialog { background-color: rgb(0, 64, 192); } "
-                           "QLabel { background-color: white; border: 1px solid gray; padding: 6px; }")
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        label = QtWidgets.QLabel(f"{message}, please wait...")
-        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        label.setWordWrap(True)                                  # a long line is wrapped instead of making the window wider
-        label.setMinimumWidth(420)
-        # Room for three lines from the start: the texts that come later ("..., please wait...", then one or two lines of what is going on) must fit
-        # without the window changing its size all the time (before, the second line was cut off).
-        label.setMinimumHeight(3 * label.fontMetrics().lineSpacing() + 2 * 6 + 2 * 1 + 4)
-        self.label = label
-        cancel = QtWidgets.QPushButton("Cancel")
-        cancel.clicked.connect(lambda *args: self.reject())
-        layout.addWidget(label)
-        layout.addWidget(cancel)
-
-    def set_text(self, text: str) -> None:
-        self.label.setText(text)
-
-    def reject(self) -> None:
-        self._on_cancel()
-        super().reject()
 
 
 # ----------------------------------------------------------------------------- input fields like the InputBox of VB6
@@ -455,6 +477,44 @@ def ask_output_file(parent, title: str, prompt: str, folders: list, folder: str,
     dialog = OutputFileDialog(parent, title, prompt, folders, folder, name)
     try:
         return dialog.path() if dialog.exec() else None
+    finally:
+        dialog.deleteLater()
+
+
+class BitrateDialog(QtWidgets.QDialog):
+    """One dialog for both bit rates (estimate): video and audio, each in its own field."""
+
+    def __init__(self, parent, title: str, prompt: str, video: str, audio: str):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setFixedWidth(INPUT_BOX_WIDTH)
+        layout = QtWidgets.QVBoxLayout(self)
+        label = QtWidgets.QLabel(prompt)
+        label.setWordWrap(True)
+        layout.addWidget(label)
+        form = QtWidgets.QFormLayout()
+        self.video = QtWidgets.QLineEdit(video)
+        self.audio = QtWidgets.QLineEdit(audio)
+        form.addRow("Video kb/s:", self.video)
+        form.addRow("Audio kb/s:", self.audio)
+        self.video.setFocus()
+        self.video.selectAll()                                               # the number of the first field is selected (and the cursor is at its end), as in the old input box
+        layout.addLayout(form)
+        button = QtWidgets.QDialogButtonBox.StandardButton
+        buttons = QtWidgets.QDialogButtonBox(button.Ok | button.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def values(self) -> tuple:
+        return self.video.text(), self.audio.text()
+
+
+def ask_bitrates(parent, title: str, prompt: str, video: str, audio: str) -> Optional[tuple]:
+    """Enter video and audio bit rate in one dialog. Returns (video text, audio text) or None on cancel."""
+    dialog = BitrateDialog(parent, title, prompt, video, audio)
+    try:
+        return dialog.values() if dialog.exec() else None
     finally:
         dialog.deleteLater()
 

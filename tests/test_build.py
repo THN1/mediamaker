@@ -23,7 +23,7 @@ def test_matches_vb6_sample():
     text = open(os.path.join(HERE, "sample_MediaMaker.sh"), encoding="latin-1").read()
     job = parse_batch_header(text)
     assert len(job.segments) == 6 and job.profile["scale"] == "720:576"
-    base = "/run/user/1000/kio-fuse-sFijsz/smb/root@gbue4k/harddisk/movie//"
+    base = "/run/user/1000/kio-fuse-AbC123/smb/root@nas/harddisk/movie//"
     mine = build_command(job, path_map=lambda p: base + p.split("\\")[-1], stream_times=None)   # None = VB6 method
     ref = shlex.split([l for l in text.splitlines() if l.startswith("ffmpeg ")][0])
     assert len(mine) == len(ref), (len(mine), len(ref))

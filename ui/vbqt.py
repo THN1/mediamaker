@@ -197,6 +197,15 @@ def make_font(name: str, size: float, weight: int = 400, italic: int = 0, underl
     return font
 
 
+def fit_window(window) -> None:
+    """Makes the window as large as its content needs (menu bar + central widget with a fixed size) and not smaller: a window that is too small (size restored by the
+    window manager, a size from before the form was scaled) would cut the form off at the right and at the bottom."""
+    hint, least = window.sizeHint(), window.minimumSizeHint()
+    width, height = max(hint.width(), least.width()), max(hint.height(), least.height())
+    window.setMinimumSize(width, height)
+    window.resize(max(window.width(), width), max(window.height(), height))
+
+
 def center_on_screen(widget) -> None:
     geometry = widget.screen().availableGeometry()
     frame = widget.frameGeometry()
@@ -421,6 +430,11 @@ def apply_light_theme(app) -> None:
     if hasattr(hints, "setColorScheme"):                     # ab Qt 6.8
         hints.setColorScheme(QtCore.Qt.ColorScheme.Light)
     app.setStyle("Fusion")
+    try:
+        import menustyle                                     # the check marks of menu entries as small green ticks without a box (a thin layer over Fusion)
+        menustyle.install(app)
+    except Exception:
+        pass
     P = QtGui.QPalette
     R, G, C = P.ColorRole, P.ColorGroup, QtGui.QColor
     palette = P()

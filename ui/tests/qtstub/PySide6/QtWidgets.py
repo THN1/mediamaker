@@ -56,9 +56,16 @@ class QWidget(QObject):
                "setMouseTracking", "setAcceptDrops", "setWindowTitle", "setWindowFlag", "setWindowIcon", "winId", "rect",
                "frameGeometry", "screen", "isActiveWindow", "update", "contentsRect", "width", "height", "setFocusPolicy",
                "close", "isVisible", "windowTitle", "findChildren", "children", "parentWidget", "isHidden", "fontMetrics", "setFocus", "screen",
-               "setFixedHeight", "setMinimumWidth", "setFixedWidth",
-               "showEvent", "changeEvent", "resizeEvent", "closeEvent"}
+               "setFixedHeight", "setMinimumWidth", "setFixedWidth", "geometry", "isEnabled",
+               "showEvent", "changeEvent", "resizeEvent", "closeEvent", "font", "size", "isWidgetType", "addAction"}
     setTabOrder_calls = []
+
+    def sizeHint(self):
+        from PySide6 import QtCore
+        return QtCore.QSize(0, 0)
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
 
     def showEvent(self, event):
         pass
@@ -100,6 +107,10 @@ class QWidget(QObject):
         g = self._ret_geometry()
         return Rect(2, 2, g.width() - 4, g.height() - 4)
 
+    def _ret_isEnabled(self):
+        done = self.called("setEnabled")
+        return bool(done[-1][0]) if done else True
+
     def _ret_width(self):
         return self._ret_geometry().width()
 
@@ -108,6 +119,23 @@ class QWidget(QObject):
 
     def _ret_parentWidget(self):
         return self.parent_
+
+    def _ret_font(self):
+        from PySide6 import QtGui
+        font = QtGui.QFont()
+        for name, args in reversed(self.calls):
+            if name == "setFont" and args and hasattr(args[0], "_points"):
+                font._points = args[0]._points
+                break
+        return font
+
+    def _ret_size(self):
+        from PySide6 import QtCore
+        g = self._ret_geometry()
+        return QtCore.QSize(g.width(), g.height())
+
+    def _ret_isWidgetType(self):
+        return True
 
     def _ret_children(self):
         return list(self.children_)
@@ -153,7 +181,12 @@ class QFrame(QWidget):
 
 
 class QLabel(QFrame):
-    methods = {"setText", "setAlignment", "text", "wordWrap", "alignment", "setWordWrap", "setTextInteractionFlags", "setPixmap"}
+    methods = {"setText", "setAlignment", "text", "wordWrap", "alignment", "setWordWrap", "setTextInteractionFlags", "setPixmap", "setTextFormat", "setOpenExternalLinks"}
+    instances = []
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        QLabel.instances.append(self)
 
     def _ret_text(self):
         args = self.called("setText")
@@ -170,8 +203,14 @@ class QLabel(QFrame):
 
 
 class QAbstractButton(QWidget):
-    methods = {"setText", "setIcon", "setIconSize", "click", "setChecked", "setCheckable", "isChecked", "text"}
+    methods = {"setText", "setIcon", "setIconSize", "setChecked", "setCheckable", "isChecked", "text", "setShortcut"}
     signals = {"clicked", "toggled"}
+
+    def click(self):
+        """As in Qt: a click on a button that is enabled emits clicked; a disabled one does nothing."""
+        self.calls.append(("click", ()))
+        if self._ret_isEnabled():
+            self.clicked.emit()
 
     def _ret_text(self):
         args = self.called("setText")
@@ -184,6 +223,21 @@ class QAbstractButton(QWidget):
 
 class QPushButton(QAbstractButton):
     methods = {"setAutoDefault", "setDefault"}
+    instances = []
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        QPushButton.instances.append(self)
+
+
+class QTextBrowser(QFrame):
+    """The reader of formatted text (the Readme)."""
+    methods = {"setMarkdown", "setOpenExternalLinks", "setSearchPaths", "setHtml", "setReadOnly"}
+    instances = []
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        QTextBrowser.instances.append(self)
 
 
 class QCheckBox(QAbstractButton):
@@ -445,8 +499,14 @@ class QTreeWidget(QWidget):
 
 
 class QMenu(QWidget):
-    methods = {"addMenu", "addAction", "addSeparator", "clear"}
+    methods = {"addMenu", "addAction", "addSeparator", "clear", "menuAction"}
     signals = {"aboutToShow"}
+
+    def _ret_menuAction(self):
+        if "menu_action_" not in self.__dict__:
+            from .QtGui import QAction
+            self.menu_action_ = QAction(getattr(self, "title_", ""), self)
+        return self.menu_action_
 
     def _ret_addMenu(self, title):
         m = QMenu(self)
@@ -601,7 +661,7 @@ class QFormLayout(Base):
 
 
 class QDialogButtonBox(Base):
-    StandardButton = EnumGroup("QDialogButtonBox.StandardButton", {"Ok", "Cancel"})
+    StandardButton = EnumGroup("QDialogButtonBox.StandardButton", {"Ok", "Cancel", "Close"})
     signals = {"accepted", "rejected"}
     methods = {"button"}
 
@@ -669,8 +729,8 @@ class QApplication(Base):
 
 
 class QMessageBox(Base):
-    StandardButton = EnumGroup("QMessageBox.StandardButton", {"Yes", "No", "Ok"})
-    Icon = EnumGroup("QMessageBox.Icon", {"Warning", "Information"})
+    StandardButton = EnumGroup("QMessageBox.StandardButton", {"Yes", "No", "Ok", "Cancel"})
+    Icon = EnumGroup("QMessageBox.Icon", {"Warning", "Information", "Question"})
     methods = {"setIcon", "setWindowTitle", "setText", "setStandardButtons", "setDefaultButton", "setCheckBox", "deleteLater", "exec"}
     shown = []
     answer = "Yes"

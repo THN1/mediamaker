@@ -1,4 +1,4 @@
-"""Helper programs outside of MediaMaker (VLC, Avidemux): started in the background, the main window stays usable."""
+"""Helper programs outside of MediaMaker (VLC, xdg-open, a terminal): started in the background, the main window stays usable."""
 from __future__ import annotations
 
 import shlex

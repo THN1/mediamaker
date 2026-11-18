@@ -13,9 +13,10 @@ class RenderWorker(QtCore.QThread):
     done = QtCore.Signal(object)                    # runner.RunResult
     failed = QtCore.Signal(str)
 
-    def __init__(self, command: list, total: float, cwd: str, run_fn=run_ffmpeg):
+    def __init__(self, command: list, total: float, cwd: str, run_fn=run_ffmpeg, frame_progress: bool = False):
         super().__init__()
         self.command, self.total, self.cwd, self.run_fn = command, total, cwd, run_fn
+        self.frame_progress = frame_progress              # DVD mode only: the progress from the frames written (see runner.progress_seconds)
         self.cancelled = False
 
     def cancel(self) -> None:
@@ -23,7 +24,8 @@ class RenderWorker(QtCore.QThread):
 
     def run(self) -> None:
         try:
-            result = self.run_fn(self.command, self.total, self.progress.emit, cwd=self.cwd, cancel=lambda: self.cancelled)
+            extra = {"frame_progress": True} if self.frame_progress else {}
+            result = self.run_fn(self.command, self.total, self.progress.emit, cwd=self.cwd, cancel=lambda: self.cancelled, **extra)
         except Exception as e:                       # ffmpeg missing, cannot be started ...
             self.failed.emit(f"{type(e).__name__}: {e}")
             return
