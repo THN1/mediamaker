@@ -7892,7 +7892,7 @@ def test_clip_viewer(tmp, videos):
     import ifo
     dvd_folder = os.path.join(folder, "VIDEO_TS")
     os.makedirs(dvd_folder, exist_ok=True)
-    shutil.copy(os.path.join(ROOT, "tests", "data", "VTS_02_0_queen.IFO"), os.path.join(dvd_folder, "VTS_02_0.IFO"))
+    shutil.copy(os.path.join(ROOT, "tests", "data", "VTS_02_0.IFO"), os.path.join(dvd_folder, "VTS_02_0.IFO"))
     check(ifo.video_aspect(os.path.join(dvd_folder, "VTS_02_1.VOB")) == "4:3" and ifo.video_aspect(os.path.join(folder, "clip.mp4")) == "", "the format from the IFO file: 4:3; no IFO file: nothing")
     wide = bytearray(open(os.path.join(dvd_folder, "VTS_02_0.IFO"), "rb").read())
     wide[0x200] = (wide[0x200] & ~0x0C) | 0x0C
@@ -7932,9 +7932,9 @@ def test_dvd_languages(tmp, videos):
     vob6 = os.path.join(folder, "VTS_06_1.VOB")
     open(vob6, "wb").write(b"")
     check(ifo.read_languages(vob6) == {"audio": {}, "subtitle": {}} and ifo.read_languages(os.path.join(folder, "VTS_09_1.VOB")) == {"audio": {}, "subtitle": {}}, "a file that is no IFO, or no file: nothing, no error")
-    # --- the real IFO file of the user (Queen, VTS_02_0.IFO): five subtitle tracks, the sound track has no language; VLC lists them in another order (ita fra spa por deu)
+    # --- the real IFO file of the user (VTS_02_0.IFO): five subtitle tracks, the sound track has no language; VLC lists them in another order (ita fra spa por deu)
     real = os.path.join(folder, "VTS_07_0.IFO")
-    shutil.copy(os.path.join(HERE, "data", "VTS_02_0_queen.IFO"), real)
+    shutil.copy(os.path.join(HERE, "data", "VTS_02_0.IFO"), real)
     vob7 = os.path.join(folder, "VTS_07_1.VOB")
     open(vob7, "wb").write(b"")
     queen = ifo.read_languages(vob7)
