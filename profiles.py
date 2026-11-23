@@ -21,7 +21,7 @@ PRESETS = {
     "acodec_in": ["mp2", "ac3", "aac", "mp3", "eac3", "dts"],
     "acodec_out": ["aac", "ac3", "mp3"],
     "pad": ["off", "on"],
-    "multitrack": ["off", "on"],
+    "multitrack": ["dvd", "on", "off"],
     "player": ["memory", "embed"],
     "dialog_style": ["tabs", "list"],
     "file_dialog": ["qt", "native"],
@@ -162,8 +162,8 @@ def validate_options(o: dict) -> list[str]:
         errors.append('"file_dialog" must be qt or native.')
     if "dialog_style" in o and o["dialog_style"] not in ("tabs", "list"):
         errors.append('"dialog_style" must be tabs or list.')
-    if "multitrack" in o and o["multitrack"] not in ("on", "off"):
-        errors.append('"multitrack" must be on or off.')
+    if "multitrack" in o and o["multitrack"] not in ("on", "off", "dvd"):
+        errors.append('"multitrack" must be on, off or dvd.')
     return errors
 
 

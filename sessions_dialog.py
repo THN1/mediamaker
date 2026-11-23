@@ -6,10 +6,14 @@ from typing import Optional
 
 from PySide6 import QtWidgets
 
+import dialogs
+
 
 class SessionDialog(QtWidgets.QDialog):
     def __init__(self, parent, title: str, prompt: str, infos: list, multi: bool, with_parts: bool, with_backup: bool = False, backup_default: bool = True):
         super().__init__(parent)
+        factor = dialogs.ui_factor(parent)
+        dialogs.scale_font(self, factor, parent)
         self.setWindowTitle(title)
         self.infos = infos
         layout = QtWidgets.QVBoxLayout(self)
@@ -21,8 +25,8 @@ class SessionDialog(QtWidgets.QDialog):
         self.list.setSelectionMode(mode.ExtendedSelection if multi else mode.SingleSelection)
         for info in infos:
             self.list.addItem(info.describe())
-        self.list.setMinimumWidth(560)
-        self.list.setMinimumHeight(220)
+        self.list.setMinimumWidth(round(560 * factor))
+        self.list.setMinimumHeight(round(220 * factor))
         layout.addWidget(self.list, 1)
         if not multi:
             self.list.itemDoubleClicked.connect(lambda item: self.accept())       # a double click on the wanted session is OK (not for deleting)

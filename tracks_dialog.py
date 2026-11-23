@@ -11,6 +11,8 @@ from typing import Optional
 from PySide6 import QtCore, QtWidgets
 
 import containers
+import readspeed
+import dialogs
 import tracks
 
 BANNER_STYLE = "background: #e1effa; color: #17354d; border: 1px solid #9bc9ec; border-radius: 3px; padding: 8px;"
@@ -22,8 +24,10 @@ BUTTON_TEXT = ("OK: use this choice. Defaults: only the main audio track, no sub
 
 
 class TracksDialog(QtWidgets.QDialog):
-    def __init__(self, model: tracks.TracksModel, file_text: str, parent=None, source_note: str = ""):
+    def __init__(self, model: tracks.TracksModel, file_text: str, parent=None, source_note: str = "", subtitle_wait=None):
         super().__init__(parent)
+        factor = dialogs.ui_factor(parent)
+        dialogs.scale_font(self, factor, parent)
         self.model = model
         self.defaults = False                                            # True: the button Defaults closed the dialog
         self.setWindowTitle("Audio and subtitle tracks")
@@ -51,6 +55,11 @@ class TracksDialog(QtWidgets.QDialog):
             if count == 0:
                 continue
             self.tabs.addTab(self.page(kind, intro), f"{title} ({count} track{'s' if count != 1 else ''})")
+        self.subtitle_wait = subtitle_wait                              # (seconds, bytes, speed) for reading the recording once, or None
+        self.wait_label = QtWidgets.QLabel(readspeed.dialog_text(*subtitle_wait) if subtitle_wait else "")
+        self.wait_label.setWordWrap(True)
+        self.wait_label.setStyleSheet(BANNER_STYLE)
+        layout.addWidget(self.wait_label)
         self.error = QtWidgets.QLabel("")                               # under the tabs: an error of the other tab must not be overlooked
         self.error.setWordWrap(True)
         self.error.setStyleSheet(ERROR_STYLE)
@@ -69,7 +78,7 @@ class TracksDialog(QtWidgets.QDialog):
         self.buttons.rejected.connect(self.reject)
         bottom.addWidget(self.buttons)
         layout.addLayout(bottom)
-        self.resize(780, self.sizeHint().height() if hasattr(self, "sizeHint") else 560)
+        self.resize(round(780 * factor), self.sizeHint().height() if hasattr(self, "sizeHint") else 560)
         self.refresh()
 
     # ------------------------------------------------------------------ one tab
@@ -132,6 +141,7 @@ class TracksDialog(QtWidgets.QDialog):
                 used = model.rows[kind][row].track is not None
                 w["language"].setEnabled(used)
                 w["note"].setText(model.result_text(kind, row) if kind == "subtitle" else model.note(kind, row))
+        self.wait_label.setVisible(bool(self.subtitle_wait) and self.subtitle_wait[0] >= readspeed.WARN_SECONDS and any(m.track is not None for m in model.rows["subtitle"]))
         self.error.setText("\n".join(model.errors()))
         ok = self.buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Ok)
         if ok is not None:
@@ -146,10 +156,10 @@ class TracksDialog(QtWidgets.QDialog):
         return self.model.choice()
 
 
-def run_dialog(parent, track_list, output: str, file_text: str, initial: Optional[tracks.Choice] = None, main_audio: int = 0, dvd: bool = False, source_note: str = ""):
+def run_dialog(parent, track_list, output: str, file_text: str, initial: Optional[tracks.Choice] = None, main_audio: int = 0, dvd: bool = False, source_note: str = "", subtitle_wait=None):
     """Shows the dialog. Returns the choice (OK), DEFAULTS (the button Defaults: go on with the defaults) or None (Cancel: stop saving). dvd (DVD mode): the stream id of every track
     is part of its line. source_note: where the languages come from (DVD mode: the IFO file), shown under the file name."""
-    dialog = TracksDialog(tracks.TracksModel(track_list, output, initial, main_audio, dvd), file_text, parent, source_note)
+    dialog = TracksDialog(tracks.TracksModel(track_list, output, initial, main_audio, dvd), file_text, parent, source_note, subtitle_wait)
     try:
         if not dialog.exec():
             return None

@@ -36,6 +36,47 @@ def scale_font(widget, factor: float, parent=None) -> None:
         widget.setFont(font)
 
 
+def scale_vb_form(form, parent) -> float:
+    """A dialog from the VB6 design (fixed positions) gets the size of the main window: font and controls. Returns the factor (1: nothing was changed); the size of the form
+    itself is set by the caller."""
+    factor = ui_factor(parent)
+    if factor == 1:
+        return 1
+    import uiscale
+    scale_font(form, factor, parent)
+    uiscale.scale_form(form, factor, uiscale.window_font(form))
+    return factor
+
+
+def message(parent, kind: str, text: str, buttons=None):
+    """A message box of the main window's size: kind "warning", "information" or "question"; `buttons` = StandardButtons (default OK). Returns the button that was pressed. At 100 %
+    the plain static boxes of Qt are used (as before); at a larger size an instance, because only that can get the font of the main window."""
+    box_class = QtWidgets.QMessageBox
+    button = box_class.StandardButton
+    factor = ui_factor(parent)
+    if factor == 1:
+        if kind == "question":
+            return box_class.question(parent, "MediaMaker", text, buttons or button.Ok)
+        return (box_class.information if kind == "information" else box_class.warning)(parent, "MediaMaker", text)
+    box = box_class(parent)
+    box.setIcon({"warning": box_class.Icon.Warning, "information": box_class.Icon.Information}.get(kind, box_class.Icon.Question))
+    box.setWindowTitle("MediaMaker")
+    box.setText(text)
+    box.setStandardButtons(buttons or button.Ok)
+    scale_font(box, factor, parent)
+    try:
+        return box.exec()
+    finally:
+        box.deleteLater()
+
+
+def scale_html_pt(text: str, factor: float) -> str:
+    """Rich text with absolute sizes ("font-size:22pt"): the sizes are made `factor` times as big (they do not follow the font of the window by themselves)."""
+    if factor == 1:
+        return text
+    return re.sub(r"font-size:(\d+(?:\.\d+)?)pt", lambda m: f"font-size:{round(float(m.group(1)) * factor, 1):g}pt", text)
+
+
 class WrappedEdit(QtWidgets.QPlainTextEdit):
     """Multi-line input field for long values. The line wrapping is only for display: the value stays one line,
         Enter confirms the dialog, Tab jumps to the next field."""
@@ -197,6 +238,7 @@ def narrowed_size(width: int, height: int, height_for_width, factor: float = LIS
 def choose_from_list(parent, title: str, label: str, items: list, current: int = 0, factor: float = LIST_DIALOG_WIDTH) -> Optional[int]:
     """The user picks one entry of a list (`current` is preselected) in a dialog that is `factor` as wide as it would be by itself; None if it is cancelled."""
     dialog = QtWidgets.QInputDialog(parent)
+    scale_font(dialog, ui_factor(parent), parent)
     dialog.setWindowTitle(title)
     dialog.setLabelText(label)
     dialog.setComboBoxItems(items)
@@ -315,17 +357,20 @@ def _input_box(parent, title: str, prompt: str, mode) -> QtWidgets.QInputDialog:
     """Input dialog with a fixed width and wrapped text. Otherwise Qt makes the dialog as wide as the longest line
         of the text, which gets far too wide with the long explanations (e.g. when estimating the bit rate)."""
     box = QtWidgets.QInputDialog(parent)
+    factor = ui_factor(parent)
+    scale_font(box, factor, parent)
+    width = round(INPUT_BOX_WIDTH * factor)
     box.setWindowTitle(title)
     box.setInputMode(mode)
     box.setLabelText(prompt)
     for label in box.findChildren(QtWidgets.QLabel):
         label.setWordWrap(True)
-    box.setFixedWidth(INPUT_BOX_WIDTH)
+    box.setFixedWidth(width)
     layout = box.layout()
     height = box.sizeHint().height()
     if layout is not None and layout.hasHeightForWidth():
-        height = max(height, layout.totalHeightForWidth(INPUT_BOX_WIDTH))
-    box.resize(INPUT_BOX_WIDTH, height)
+        height = max(height, layout.totalHeightForWidth(width))
+    box.resize(width, height)
     return box
 
 
@@ -358,7 +403,10 @@ def reference_logo_box(parent, text: str, rgb, rect: tuple, edges) -> None:
     area = np.array(rgb[max(0, top - 6):bottom + 6, max(0, left - 6):right + 6], dtype=np.uint8)
     width = max(area.shape[1] * 4, 1)
     edge_picture = np.repeat(np.asarray(edges, dtype=np.uint8)[..., None] * 255, 3, axis=2)
+    factor = ui_factor(parent)
+    width = max(round(width * factor), 1)
     dialog = QtWidgets.QDialog(parent)
+    scale_font(dialog, factor, parent)
     dialog.setWindowTitle("Reference logo")
     layout = QtWidgets.QVBoxLayout(dialog)
     label = QtWidgets.QLabel(text)
@@ -368,7 +416,7 @@ def reference_logo_box(parent, text: str, rgb, rect: tuple, edges) -> None:
     left_column = QtWidgets.QVBoxLayout()
     left_column.addWidget(QtWidgets.QLabel("Picture taken (the rectangle is marked):"))
     picture = QtWidgets.QLabel()
-    picture.setPixmap(array_pixmap(marked, 360))
+    picture.setPixmap(array_pixmap(marked, round(360 * factor)))
     left_column.addWidget(picture)
     row.addLayout(left_column)
     right_column = QtWidgets.QVBoxLayout()
@@ -392,6 +440,7 @@ def confirm_with_checkbox(parent, text: str, checkbox_text: str) -> tuple:
     """Yes/No question with a check box that is NOT ticked at first and No as the default button. Returns (answered Yes, box ticked)."""
     box = QtWidgets.QMessageBox(parent)
     button = QtWidgets.QMessageBox.StandardButton
+    scale_font(box, ui_factor(parent), parent)
     box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
     box.setWindowTitle("MediaMaker")
     box.setText(text)
@@ -411,6 +460,7 @@ def notice_with_checkbox(parent, text: str, checkbox_text: str, checked: bool = 
     """A warning with an OK button and a check box under the text (ticked at first). Returns whether the box is ticked when the window is closed."""
     box = QtWidgets.QMessageBox(parent)
     button = QtWidgets.QMessageBox.StandardButton
+    scale_font(box, ui_factor(parent), parent)
     box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
     box.setWindowTitle("MediaMaker")
     box.setText(text)
@@ -431,6 +481,8 @@ class OutputFileDialog(QtWidgets.QDialog):
 
     def __init__(self, parent, title: str, prompt: str, folders: list, folder: str, name: str):
         super().__init__(parent)
+        factor = ui_factor(parent)
+        scale_font(self, factor, parent)
         self.setWindowTitle(title)
         layout = QtWidgets.QVBoxLayout(self)
         label = QtWidgets.QLabel(prompt)
@@ -441,7 +493,7 @@ class OutputFileDialog(QtWidgets.QDialog):
         self.combo.setEditable(True)
         self.combo.addItems([folder] + [f for f in folders if f != folder] if folder else list(folders))
         self.combo.setCurrentText(folder)
-        self.combo.setMinimumWidth(FIELD_WIDTH * 2)
+        self.combo.setMinimumWidth(round(FIELD_WIDTH * 2 * factor))
         self.combo.setToolTip(wrap_tooltip("Folders used recently; a folder can also be typed in"))
         browse = QtWidgets.QPushButton("Browse...")
         browse.clicked.connect(self.choose_folder)
@@ -486,8 +538,10 @@ class BitrateDialog(QtWidgets.QDialog):
 
     def __init__(self, parent, title: str, prompt: str, video: str, audio: str):
         super().__init__(parent)
+        factor = ui_factor(parent)
+        scale_font(self, factor, parent)
         self.setWindowTitle(title)
-        self.setFixedWidth(INPUT_BOX_WIDTH)
+        self.setFixedWidth(round(INPUT_BOX_WIDTH * factor))
         layout = QtWidgets.QVBoxLayout(self)
         label = QtWidgets.QLabel(prompt)
         label.setWordWrap(True)

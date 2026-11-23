@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from tickshape import LINE, POINTS, TICK_GREEN, TICK_ON_HIGHLIGHT, tick_points
+from tickshape import LINE, POINTS, TICK_GREEN, TICK_ON_HIGHLIGHT, tick_menu_wanted, tick_points
 
 
 def tick_pixmap(size: int, ratio: float = 1.0, highlighted: bool = False, ticked: bool = True) -> QtGui.QPixmap:
@@ -95,9 +95,8 @@ _style = None                                 # the style object must stay alive
 
 
 def install(app) -> bool:
-    """Puts the style on the style of the application. False (nothing changed) if that does not work or MEDIAMAKER_PLAIN_MENU=1 is set (the check boxes of Qt's own style)."""
-    import os
-    if os.environ.get("MEDIAMAKER_PLAIN_MENU"):
+    """Puts the style on the style of the application. False (nothing changed) if that is not wanted (tick_menu_wanted) or does not work."""
+    if not tick_menu_wanted():
         return False
     global _style
     try:

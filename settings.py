@@ -185,7 +185,7 @@ class Settings:
     @property
     def copy_mode(self) -> bool:
         """Copy mode as it was when the program ended ([settings] copy_mode=on|off). It is not an option (not in the options dialog): it is the state of the
-        menu entry Edit => Copy mode, which is put back at the next start."""
+        menu entry Config => Copy mode, which is put back at the next start."""
         return (self.get("settings", "copy_mode", "off") or "off").strip().lower() == "on"
 
     def set_copy_mode(self, on: bool) -> bool:
@@ -314,14 +314,14 @@ class Settings:
         return changed
 
 
-OUTDATED_TOOLTIPS = {"pad": ("If True, source videos will be padded with (minimal) black border(s), else they will be stretched to the target scale", "If on, source videos will be padded with (minimal) black border(s), else they will be stretched to the target scale"), "logo_conf": ("Logo detection (advanced): min. share (0 to 1) of the reference edges that must be found for the logo to count as present",), "search_pictures": ("Seeking: on = while the search (end of commercial, next commercial) is still stepping in jumps of at least 10 frames, the preview shows the pictures that the search reads, like a film that runs by (these pictures are read anyway, the search is not slower; player = memory only); off = the preview stays as it is until the search is over; applies at once",), "batch": ("Batch: file the batch script is written to; a leading ~ is your home folder (empty: next to the INI file, with the extension .sh); applies at once",), "multitrack": ("When the box is ticked, a multitrack selection dialog opens after the name of the file has been chosen (only if the source has more than one audio track or any subtitle track), allowing to choose and configure how the audio and/or subtitle track(s) should be processed.",)}      # earlier default texts: replaced by the current one if they are still in the INI file unchanged
+OUTDATED_TOOLTIPS = {"pad": ("If True, source videos will be padded with (minimal) black border(s), else they will be stretched to the target scale", "If on, source videos will be padded with (minimal) black border(s), else they will be stretched to the target scale"), "logo_conf": ("Logo detection (advanced): min. share (0 to 1) of the reference edges that must be found for the logo to count as present",), "search_pictures": ("Seeking: on = while the search (end of commercial, next commercial) is still stepping in jumps of at least 10 frames, the preview shows the pictures that the search reads, like a film that runs by (these pictures are read anyway, the search is not slower; player = memory only); off = the preview stays as it is until the search is over; applies at once",), "batch": ("Batch: file the batch script is written to; a leading ~ is your home folder (empty: next to the INI file, with the extension .sh); applies at once",), "multitrack": ("When the box is ticked, a multitrack selection dialog opens after the name of the file has been chosen (only if the source has more than one audio track or any subtitle track), allowing to choose and configure how the audio and/or subtitle track(s) should be processed.", 'When set to on, a multitrack selection dialog opens after the name of the file has been chosen (only if the source has more than one audio track or any subtitle track), allowing to choose and configure how the audio and/or subtitle track(s) should be processed.')}      # earlier default texts: replaced by the current one if they are still in the INI file unchanged
 
 
 def default_options() -> dict:
     """Defaults in case the INI file contains no options yet (as in VB6). The step widths of the search are given in seconds
         (40 s = 1000 frames and 240 s = 6000 frames at 25 FPS, the values from VB6)."""
     return {"crop": "0", "floor": "2", "blackness": "12", "allowance": "1000", "dedup": "400", "audio": "1",
-            "pause": "160", "detect": "0", "aflags": "", "multitrack": "off",
+            "pause": "160", "detect": "0", "aflags": "", "multitrack": "dvd",
             "step_end": "40", "step_next": "240", "tolerance": "3", "cut_window": "5",
             "logo_edge": "18", "logo_conf": "0.2", "logo_extra": "1.0", "cut_diff": "30", "path_map": "",
             "batch": "", "player": "memory", "dialog_style": "tabs", "vlc_args": "", "hide_messages": "", "overlay_opacity": "35", "file_dialog": "qt", "sessions_dir": "", "vlc": "", "terminal": "", "cutpoint_filters": "on", "restore_backup": "on", "copy_mode_notice": "on", "paused_preview": "vlc", "search_pictures": "on", "known_files": "200", "cutpoint_length": "6"}
@@ -349,8 +349,9 @@ DEFAULT_TOOLTIPS = {
     'pause': 'Min. length (in seconds) of pause caused by commercials in between movie segments (for TV recordings)',
     'detect': 'Detect audio streams after moving n milliseconds into the source file; useful for streamed recordings (.ts)',
     'aflags': 'Flags for ffmpeg when extracting audio (like +igndts+genpts); useful when audio is broken',
-    'multitrack': 'When set to on, a multitrack selection dialog opens after the name of the file has been chosen (only if the source has more than one audio track or any '
-                  'subtitle track), allowing to choose and configure how the audio and/or subtitle track(s) should be processed.',
+    'multitrack': 'Multitrack selection dialog (choose and configure the audio and subtitle tracks of the new file; Defaults = only the main audio track, no subtitles). It opens '
+                  'after the name of the file has been chosen, and only if the source has more than one audio track or any subtitle track. on = always; off = never (a DVD is '
+                  'saved with its first audio track); dvd = only if the segments are the video files of a DVD (DVD mode)',
     # options added in the Python version
     "cutpoint_length": "Analyze cut point: length of the clip in seconds (2 to 120); it is made of the last half of the selected segment and the first half of the next one: 6 = 3 seconds each; applies at once",
     "known_files": "Frame counting: how many files whose frames have been counted are remembered in the INI section [known_files] (name of the file without the folder and its size in bytes = frames, frames before the first keyframe that cannot be shown, time of the first keyframe), so that the long counting of a big file on a network drive is not repeated; the oldest entries are dropped; 0 = remember nothing; applies at once",

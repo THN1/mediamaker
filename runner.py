@@ -1,6 +1,7 @@
 """Run ffmpeg: read progress, cancel, check the result (port of SP_ExecuteAndWait and track)."""
 from __future__ import annotations
 
+import os
 import queue
 import subprocess
 import threading
@@ -59,6 +60,16 @@ def progress_seconds(state: dict, fps: Optional[float]) -> Optional[float]:
         return None
 
 
+def _log(text) -> None:
+    """Debug log (MEDIAMAKER_DEBUG=1); runner.py itself needs no Qt, so the import is only made when the log is on."""
+    if os.environ.get("MEDIAMAKER_DEBUG"):
+        try:
+            from player import debug_log
+            debug_log(text)
+        except Exception:
+            pass
+
+
 def run_ffmpeg(cmd: list[str], total: float, on_progress: Optional[Callable[[Progress], None]] = None,
                cwd: Optional[str] = None, cancel: Optional[Callable[[], bool]] = None,
                tracker: Optional[ProgressTracker] = None, poll: float = 0.2, frame_progress: bool = False) -> RunResult:
@@ -69,25 +80,30 @@ def run_ffmpeg(cmd: list[str], total: float, on_progress: Optional[Callable[[Pro
         ffmpeg is terminated. on_progress is called in the calling thread (also suitable for GUI code,
         as long as this thread serves the user interface and processes events in between).
     """
-    full = [cmd[0], "-progress", "pipe:1", "-nostats", "-loglevel", "error", *cmd[1:]]
+    debug = bool(os.environ.get("MEDIAMAKER_DEBUG"))
+    full = [cmd[0], "-progress", "pipe:1", "-nostats", "-loglevel", "info" if debug else "error", *cmd[1:]]       # (debug mode: what ffmpeg says is in the log, to see where it stands)
     tracker = tracker or ProgressTracker(total)
     proc = subprocess.Popen(full, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd,
                             text=True, encoding="utf-8", errors="replace", bufsize=1)
     lines: queue.Queue = queue.Queue()
     err: list[str] = []
 
-    def pump(stream, put):
+    def pump(stream, put, log=False):
         for line in stream:
             put(line)
+            if log and debug:
+                _log("ffmpeg says: " + line.rstrip())
 
     readers = [threading.Thread(target=pump, args=(proc.stdout, lines.put), daemon=True),
-               threading.Thread(target=pump, args=(proc.stderr, err.append), daemon=True)]
+               threading.Thread(target=pump, args=(proc.stderr, err.append, True), daemon=True)]
     for t in readers:
         t.start()
 
     state: dict[str, str] = {}
+    last_log = [0.0]                                           # (debug log: when the progress was written last)
     cancelled = False
     tracker.start()
+    _log("ffmpeg started: " + " ".join(full))
 
     fps = output_fps(cmd) if frame_progress else None            # (DVD mode only: the progress from the frames written; otherwise from out_time as before)
 
@@ -103,6 +119,9 @@ def run_ffmpeg(cmd: list[str], total: float, on_progress: Optional[Callable[[Pro
         key, _, val = line.strip().partition("=")
         state[key] = val
         if key == "progress":                                  # end of a message block
+            if debug and time.monotonic() - last_log[0] >= 5:                        # (the first block, then every 5 s)
+                last_log[0] = time.monotonic()
+                _log("ffmpeg progress: " + " ".join(f"{k}={state.get(k)}" for k in ("frame", "fps", "out_time", "drop_frames", "speed")))
             emit()
 
     while True:
@@ -111,12 +130,19 @@ def run_ffmpeg(cmd: list[str], total: float, on_progress: Optional[Callable[[Pro
         except queue.Empty:
             pass
         if cancel and cancel():
+            _log("ffmpeg: cancel requested, terminating")
             proc.terminate()
             cancelled = True
             break
         if proc.poll() is not None and lines.empty() and not readers[0].is_alive():
             break
-    proc.wait()
+    try:
+        proc.wait(timeout=10 if cancelled else None)
+    except subprocess.TimeoutExpired:                          # ffmpeg does not react to terminate (e.g. it hangs in reading a file on a network drive): kill it
+        _log("ffmpeg: does not end after terminate, killing it")
+        proc.kill()
+        proc.wait()
+    _log(f"ffmpeg ended: code {proc.returncode}, cancelled {cancelled}")
     for t in readers:
         t.join(timeout=2)
     while not lines.empty():

@@ -76,3 +76,32 @@ def apply(window, central, percent: int) -> Scaler:
                 if scaled_font is not None:
                     sub.setFont(scaled_font)
     return scaler
+
+
+def scale_form(form, factor: float, font=None) -> None:
+    """Scales a fixed VB6 form (dialog) by `factor`: the positions and sizes of its controls (one level of containers below them) and, if `font` is given, the font of all of them.
+    The size of the form itself is the business of the caller. Nothing happens at 1."""
+    if factor == 1:
+        return
+    if font is not None:
+        form.setFont(font)
+    for child in form.children():
+        if not child.isWidgetType():
+            continue
+        g = child.geometry()
+        child.setGeometry(round(g.x() * factor), round(g.y() * factor), round(g.width() * factor), round(g.height() * factor))
+        if font is not None:
+            child.setFont(font)
+        if type(child).__name__ in ("QGroupBox", "QFrame", "GroupFrame"):
+            for sub in child.children():
+                if sub.isWidgetType():
+                    s = sub.geometry()
+                    sub.setGeometry(round(s.x() * factor), round(s.y() * factor), round(s.width() * factor), round(s.height() * factor))
+                    if font is not None:
+                        sub.setFont(font)
+
+
+def window_font(form):
+    """The font of `form` if it has a usable (point) size, else None."""
+    font = form.font()
+    return font if font.pointSizeF() > 0 else None

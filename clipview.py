@@ -114,6 +114,8 @@ class ClipViewer(QtWidgets.QDialog):
 
     def __init__(self, controller: ClipController, title: str = "Cut point", parent=None):
         super().__init__(parent)
+        import dialogs
+        dialogs.scale_font(self, dialogs.ui_factor(parent), parent)            # (the font only: the picture keeps its size)
         self.ctl = controller
         self.setWindowTitle(title)
         layout = QtWidgets.QVBoxLayout(self)

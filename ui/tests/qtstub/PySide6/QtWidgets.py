@@ -499,7 +499,7 @@ class QTreeWidget(QWidget):
 
 
 class QMenu(QWidget):
-    methods = {"addMenu", "addAction", "addSeparator", "clear", "menuAction"}
+    methods = {"addMenu", "addAction", "addSeparator", "clear", "menuAction", "removeAction"}
     signals = {"aboutToShow"}
 
     def _ret_menuAction(self):
@@ -509,6 +509,8 @@ class QMenu(QWidget):
         return self.menu_action_
 
     def _ret_addMenu(self, title):
+        if isinstance(title, QMenu):                   # an existing menu is put in: the action of the menu is returned
+            return title.menuAction()
         m = QMenu(self)
         m.title_ = title
         return m
@@ -731,7 +733,7 @@ class QApplication(Base):
 class QMessageBox(Base):
     StandardButton = EnumGroup("QMessageBox.StandardButton", {"Yes", "No", "Ok", "Cancel"})
     Icon = EnumGroup("QMessageBox.Icon", {"Warning", "Information", "Question"})
-    methods = {"setIcon", "setWindowTitle", "setText", "setStandardButtons", "setDefaultButton", "setCheckBox", "deleteLater", "exec"}
+    methods = {"setFont", "setIcon", "setWindowTitle", "setText", "setStandardButtons", "setDefaultButton", "setCheckBox", "deleteLater", "exec"}
     shown = []
     answer = "Yes"
     on_exec = None                           # in the test: called with the box before it "returns", to tick the check box

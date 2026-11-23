@@ -12,6 +12,7 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 import logo
+import dialogs
 from dialogs import wrap_tooltip
 from ui_frmRemoveLogo import frmRemoveLogoBase
 
@@ -37,6 +38,8 @@ class frmRemoveLogo(frmRemoveLogoBase):
         opacity (percent) is that of the red band; aspect = proportions (width / height) of the picture as a video player shows it
         (display aspect ratio of the stream); None: the proportions of the pixels."""
         super().__init__(parent)
+        self.owner = parent
+        self.factor = dialogs.scale_vb_form(self, parent)               # the size of the main window (UI_SCALE): font and controls
         self.grab_frame, self.first, self.last, self.shown = grab_frame, first, last, shown
         self.frame = max(first, min(frame, last))
         self.result = ""
@@ -49,12 +52,17 @@ class frmRemoveLogo(frmRemoveLogoBase):
         self.fraBlend.hide()
         # Line of explanation below the buttons; the window grows by its height. The picture box and everything below it move
         # when the proportions of the picture are known (fit_to_picture).
-        base_width, base_height = self.width(), self.height()
+        factor = self.factor
+        self._picture_width = round(PICTURE_WIDTH * factor)
+        self._limits = (round(MIN_HEIGHT * factor), round(MAX_HEIGHT * factor))
+        base_width, base_height = round(self.width() * factor), round(self.height() * factor)
         self.lblHint = QtWidgets.QLabel(HINT, self)
-        self.lblHint.setGeometry(8, base_height, PICTURE_WIDTH, 17)
+        if factor != 1:
+            self.lblHint.setFont(self.font())
+        self.lblHint.setGeometry(round(8 * factor), base_height, self._picture_width, round(17 * factor))
         self.hscBlend.setToolTip(wrap_tooltip(HINT))
         self.lblHint.setToolTip(wrap_tooltip(HINT))
-        self._base_size = (base_width, base_height + HINT_HEIGHT)
+        self._base_size = (base_width, base_height + round(HINT_HEIGHT * factor))
         self.setFixedSize(*self._base_size)
         g = self.Picture1.geometry()
         self._picture_base = (g.x(), g.y(), g.width(), g.height())
@@ -70,7 +78,7 @@ class frmRemoveLogo(frmRemoveLogoBase):
         return self.result
 
     def inform(self, text: str) -> None:
-        QtWidgets.QMessageBox.warning(self, "MediaMaker", text)
+        dialogs.message(self.owner, "warning", text)
 
     # ------------------------------------------------------------------ frame
     def load_frame(self) -> bool:
@@ -103,7 +111,7 @@ class frmRemoveLogo(frmRemoveLogoBase):
         looks as it does in a player; the controls below move along and the window gets the height it needs."""
         x, y, w, h = self._picture_base
         proportions = self.aspect if self.aspect else width / height
-        box = max(MIN_HEIGHT, min(MAX_HEIGHT, round(PICTURE_WIDTH / proportions)))
+        box = max(self._limits[0], min(self._limits[1], round(self._picture_width / proportions)))
         shift = box - h
         self.Picture1.setGeometry(x, y, w, box)
         for widget, (wx, wy, ww, wh) in self._lower:

@@ -12,6 +12,7 @@ from fractions import Fraction
 from PySide6 import QtCore, QtWidgets
 
 import cropping
+import dialogs
 from ui_frmCrop import frmCropBase
 
 
@@ -21,9 +22,12 @@ class frmCrop(frmCropBase):
     def __init__(self, parent=None, width: int = 720, height: int = 576, sar=1):
         """width, height: size of the source picture in pixels; sar: sample aspect ratio (for 16:9)."""
         super().__init__(parent)
+        factor = dialogs.scale_vb_form(self, parent)                 # the size of the main window (UI_SCALE): font and controls
+        if factor != 1:
+            self.resize(round(self.width() * factor), round(self.height() * factor))
         self.source = (int(width), int(height), Fraction(sar))
         self.status = 1                                              # running
-        self.notify = lambda text: QtWidgets.QMessageBox.warning(self, "MediaMaker", text)
+        self.notify = lambda text: dialogs.message(parent, "warning", text)
         for i in range(4):
             self.txtCrop[i].editingFinished.connect(lambda i=i: self.typed(i))
 

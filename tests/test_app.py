@@ -6,6 +6,7 @@ The user interface runs against the Qt replacement in ui/tests/qtstub, the playb
 import base64
 import dataclasses
 import json
+import inspect
 import os
 import shutil
 import subprocess
@@ -372,7 +373,7 @@ def test_profiles(tmp, videos):
     check(len(bad(ar="48")) == 1 and bad(ar="44100") == [] and len(bad(acodec_out="")) == 1, "ar, Codec")
     check(validate_options({"crop": "72", "floor": "2", "multitrack": "off"}) == [], "options valid")
     check(len(validate_options({"crop": "-1"})) == 1 and len(bad(pad="yes")) == 1 and bad(pad="on") == [] and bad(pad="off") == [] and len(bad(pad="True")) == 1
-          and len(validate_options({"multitrack": "maybe"})) == 1 and validate_options({"multitrack": "on"}) == []
+          and len(validate_options({"multitrack": "maybe"})) == 1 and validate_options({"multitrack": "on"}) == [] and validate_options({"multitrack": "dvd"}) == []
           and len(validate_options({"audio": "0"})) == 1, "options invalid")
     check(valid_profile_name("My profile [1]") is None and valid_profile_name("a=b") and valid_profile_name("[x") and
           valid_profile_name("  "), "profile names")
@@ -1324,6 +1325,21 @@ def test_marker_start(tmp, videos):
         check(player._awaiting_position is None and player._muted is False and mp.mutes[-1] is False, "play() ends the approach and switches the sound on")
         player.seekable.emit(True)
         check(mp.calls.count(("set_time", 41_000)) == 1, "no further jump after play()")
+        # events come in the VLC thread: only queued there, the Qt thread emits the signals (no Qt call from a thread that Qt does not know)
+        mp.state = 5
+        player.show_at(7000)
+        mp.calls.clear()
+        player._on_seekable(True)
+        check(("set_time", 7000) not in mp.calls and len(player._event_queue) == 1, "event of the VLC thread: queued, no signal yet")
+        player._on_time(55)
+        player._drain_events()
+        check(("set_time", 7000) in mp.calls and len(player._event_queue) == 0, f"the Qt thread emits the queued signals: {mp.calls}")
+        player.play()
+        player._on_seekable(True)
+        player._closed = True
+        player._drain_events()
+        player._closed = False
+        check(len(player._event_queue) == 0, "after the shutdown queued events are dropped")
         mp.state = 5
         QTimer.pending.clear()
         player.show_at(5000)                                        # state stopped: again via start-time
@@ -1759,8 +1775,8 @@ def test_info(tmp, videos):
     big = frmInfo(rows, summary, win)
     fonts = big.called("setFont")
     check(big.called("resize")[-1] == (1375, 525) and big.called("setMinimumSize")[-1] == (650, 300) and fonts
-          and abs(fonts[-1][0].pointSizeF() - 1.25 * dialog.font().pointSizeF()) < 0.01 and big.lvwInfo.called("setFont") and big.cmdClose.called("setFont"),
-          f"125 %: window 1375 x 525, font 1.25 times as big: {big.called('resize')[-1]} {fonts and fonts[-1][0].pointSizeF()}")
+          and abs(fonts[-1][0].pointSizeF() - win.centralWidget().font().pointSizeF()) < 0.01 and big.lvwInfo.called("setFont") and big.cmdClose.called("setFont"),
+          f"125 %: window 1375 x 525, the font of the main window (its central widget is scaled by UI_SCALE in the program): {big.called('resize')[-1]} {fonts and fonts[-1][0].pointSizeF()}")
     del win.UI_SCALE
     print("Information: OK (segment overview, position in the finished film, summary, menu, dialog, size follows the main window)")
 
@@ -2056,7 +2072,7 @@ def test_save_video(tmp, videos):
     check(asked[0][1] == os.path.join(videos, "output.mp4"), f"several source files: suggestion output.mp4 in the folder of the last file: {asked[0][1]}")
     check(os.path.exists(result) and abs(probe(result).video.frames - expected) <= 1, f"result file with the expected {expected} frames: {probe(result).video.frames if os.path.exists(result) else None}")
     check(win.messages[-1].startswith("File was saved in 00:00:") and "differs" not in win.messages[-1], f"message after saving: {win.messages[-1]!r}")
-    check(bars[0] == (1, "Preparing job...") and any(t.startswith("Saving to target output file...  ") and t.endswith("%") or "remaining" in t for _, t in bars[1:-1])
+    check(bars[0][1].startswith("Preparing job...  reading the files") and (1, "Preparing job...") in bars and any(t.startswith("Saving to target output file...  ") and t.endswith("%") or "remaining" in t for _, t in bars[1:-1])
           and bars[-1] == (0, "") and win._bar == (0, ""), f"progress bar: {bars[:3]} ... {bars[-1]}")
     check(max(pct for pct, _ in bars) == 100 and win._render is None and win._render_worker is None, "100 % at the end, nothing is running any more")
     enabled = lambda action: [a[0] for a in action.called("setEnabled")]
@@ -2298,7 +2314,7 @@ def test_example_ini(tmp, videos):
     st.save()
     after = open(ini, "rb").read().split(b"\r\n")
     changed = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
-    check(len(before) == len(after) and len(changed) == 1 and any(l.startswith(b"; Everything that Edit => Options can set") for l in after),
+    check(len(before) == len(after) and len(changed) == 1 and any(l.startswith(b"; Everything that Config => Options can set") for l in after),
           f"changing an option replaces one line, the comments stay: {changed}")
     print("Example INI: OK (settings, comments, still valid)")
 
@@ -2416,7 +2432,7 @@ def test_delogo(tmp, videos):
     seg, seg2 = win.segments
     geo = lambda: (lambda g: (g.x(), g.y(), g.width(), g.height()))(frame.geometry())
     cursors = lambda: [repr(a[0]).split(".")[-1] for a in frame.called("setCursor")]
-    check(win.delogo_area() == (544, 0, 513, 289) and not frame.isVisible(), "preview area 513 x 289, the rectangle is hidden at first")
+    check(win.delogo_area() == (544, 0, 513, 289) and not frame.isVisible(), "the picture (16:9) in the preview area 513 x 289, the rectangle is hidden at first")
     # --- Shift: RemoveLogo instead (tested in test_removelogo); the Shift state is used once
     win.monochrome = lambda frame_number: ""
     win.cmdCommand_MouseDown(6, 1, 1, 5, 5)
@@ -3594,6 +3610,19 @@ def test_player_recovery():
         check(mp2.calls_play == 1 and mp2.media.options == [":start-time=5.000"] and mp2.media.path == "/nas/film.ts", "the last position is requested again from the new one")
         check(wait_for(lambda: mp1.stops == 2 and mp1.released), "the old one is stopped (again) and released in a thread of its own")
         check(player._old_players == [mp1] and player._old_callbacks, "old player and callbacks stay referenced (libvlc may still call them)")
+        # --- after clear() (Close all) a picture that VLC delivers late is not drawn again; the next load shows pictures again
+        late = (bytes(720 * 576 * 4), 720, 576)
+        player.load("/nas/film.ts", (720, 576))
+        player._on_frame(late)
+        check(player.surface.image is not None, "a picture is shown")
+        player._latest_frame = late
+        player.clear()
+        player._poll_frame()
+        player._on_frame(late)
+        check(player.surface.image is None and player._latest_frame is None, "after clear(): the late picture of VLC is not shown (the preview stays empty)")
+        player.load("/nas/film.ts", (720, 576))
+        player._on_frame(late)
+        check(player.surface.image is not None, "after the next load pictures are shown again")
         # --- VLC reports something: no recovery
         QTimer.pending.clear()
         player.show_at(7000) if player.mp.get_state() == 5 else None
@@ -4014,7 +4043,7 @@ def test_debug_package(tmp, videos):
     first = seg.first_frame
     folder_base = os.path.join(tmp, "debugpkg", "debug")
     # --- the menu entry
-    check(hasattr(win, "mnuDebug") and any(a[0] is win.mnuDebug for a in win.mnuDeploy.called("addAction")), "the entry \"Create debug package\" is in the menu Deploy")
+    check((win.mnuDeploy is None and not hasattr(win, "mnuDebug")) or (hasattr(win, "mnuDebug") and any(a[0] is win.mnuDebug for a in win.mnuDeploy.called("addAction"))), "the entry \"Create debug package\" is in the menu Deploy (public version: no menu, no entry; the key Ctrl+Shift+F1 stays)")
     check("debug/" in open(os.path.join(ROOT, ".gitignore")).read().split(), ".gitignore lists debug/")
     # --- without a segment
     win.current = -1
@@ -4783,7 +4812,23 @@ def test_crop_segment(tmp, videos):
     dlg.set_values(60, 30, 40, 20)
     dlg.HScroll_Change(0)                                           # the window tells the main window
     areas = [(win.fraCrop[i].geometry().x(), win.fraCrop[i].geometry().y(), win.fraCrop[i].geometry().width(), win.fraCrop[i].geometry().height()) for i in range(4)]
-    check(areas == [(10, 20, 400, 31), (10, 304, 400, 16), (10, 20, 22, 300), (399, 20, 11, 300)], f"red bands over the preview, in proportion: {areas}")
+    check(areas == [(10, 57, 400, 23), (10, 270, 400, 12), (10, 57, 22, 225), (399, 57, 11, 225)], f"red bands over the PICTURE (16:9 in the area of 400x300, black bands above and below), in proportion: {areas}")
+    win.player.aspect = "4:3"                                       # a 4:3 picture fills this area: the bands are measured against the whole area
+    win.crop_overlay(dlg.values(), win.segment)
+    areas43 = [(win.fraCrop[i].geometry().x(), win.fraCrop[i].geometry().y(), win.fraCrop[i].geometry().width(), win.fraCrop[i].geometry().height()) for i in range(4)]
+    check(areas43 == [(10, 20, 400, 31), (10, 304, 400, 16), (10, 20, 22, 300), (399, 20, 11, 300)], f"4:3 picture: the bands over the whole area: {areas43}")
+    win.player.aspect = "16:9"
+    win.VLC.setGeometry(0, 0, 800, 450)                             # a 4:3 picture in a 16:9 area: the picture is 600x450 in the middle (black bands of 100 pixels left and right)
+    win.player.aspect = "4:3"
+    check(win.delogo_area() == (100, 0, 600, 450), f"the area of a 4:3 picture in a 16:9 window: {win.delogo_area()}")
+    dlg.set_values(0, 0, 14, 14)                                    # 14 of 720 pixels at the left and right edge: 14/720 of the picture, not of the whole area
+    win.crop_overlay(dlg.values(), win.segment)
+    left, right = win.fraCrop[2].geometry(), win.fraCrop[3].geometry()
+    check((left.x(), left.width()) == (100, round(14 * 600 / 720)) and right.x() + right.width() == 700 and right.width() == round(14 * 600 / 720), f"14 pixels = {left.width()} pixels on the screen, inside the picture: left {left.x()}+{left.width()}, right {right.x()}+{right.width()}")
+    win.VLC.setGeometry(10, 20, 400, 300)
+    win.player.aspect = "16:9"
+    dlg.set_values(60, 30, 40, 20)
+    dlg.HScroll_Change(0)
     check(all(win.fraCrop[i].isVisible() for i in range(4)), "the bands are shown while the window is open")
     check((seg.crop_top, seg.crop_left) == (0, 0), "nothing is taken over before OK")
     dlg.cmdOK_Click()
@@ -5351,7 +5396,7 @@ def test_chapters(tmp, videos):
     b.end -= 5
     win._save()
     text_warning = ("Attention: the segments were changed (deleted, moved, loaded again or given other cut points), so the chapters no longer fit them. "
-                    "The chapters were deleted; use Edit => Chapters to make new ones.")
+                    "The chapters were deleted; use File => Chapters to make new ones.")
     check(not os.path.exists(path) and win.messages[-1] == text_warning and len(win.messages) == n + 1, "other cut points: warning, the file is deleted")
     b.end += 5
     win._save()
@@ -6261,6 +6306,42 @@ def test_multitrack(tmp, videos):
     print("Multitrack: OK (codes, tracks, choice, model, dialog, commands with a real ffmpeg)")
 
 
+def test_readspeed(tmp, videos):
+    """The wait before the picture starts when subtitles are saved (ffmpeg reads the whole recording first): measured, estimated, said beforehand, shown in the bar."""
+    import io
+    import readspeed as RS
+    # --- measuring with a fake file and a fake clock: 4 MB in 0.5 s = 8 MB/s; a file that ends early; a drive that is too slow (the time cap); an error
+    class Clock:
+        t = 0.0
+        def __call__(self):
+            return self.t
+    clock = Clock()
+    class Fake(io.BytesIO):
+        def read(self, n=-1):
+            clock.t += 0.5 * n / RS.SAMPLE
+            return super().read(n)
+    speed = RS.measure("x", size=60 * 1024 * 1024, opener=lambda p, m: Fake(bytes(60 * 1024 * 1024)), clock=clock)
+    check(abs(speed - RS.SAMPLE / 0.5) < 1, f"speed: {speed}")
+    clock.t = 0.0
+    class Slow(io.BytesIO):
+        def read(self, n=-1):
+            clock.t += 1.0
+            return super().read(n)
+    got = RS.measure("x", size=60 * 1024 * 1024, opener=lambda p, m: Slow(bytes(60 * 1024 * 1024)), clock=clock)
+    check(got is not None and got <= 2 * RS.CHUNK, f"a slow drive ends the measurement after the time cap: {got}")
+    check(RS.measure("/nonexistent/file.ts") is None and RS.measure("x", size=10, opener=lambda p, m: io.BytesIO(b"")) is None, "no file or no data: None")
+    # --- the estimate
+    sec, total, sp = RS.subtitle_wait(["a", "b", "a"], measure_fn=lambda p, s: 30e6, size_fn=lambda p: {"a": 9e9, "b": 4e9}[p])
+    check((round(sec), total, sp) == (433, 13e9, 30e6), f"estimate: the files once, each counted once: {sec} {total}")
+    check(RS.subtitle_wait([], measure_fn=lambda p, s: 1) is None and RS.subtitle_wait(["a"], measure_fn=lambda p, s: None, size_fn=lambda p: 1) is None, "nothing to read or no speed: None")
+    check([RS.format_wait(s) for s in (5, 40, 100, 433, 7200)] == ["about 10 seconds", "about 40 seconds", "about 2 minutes", "about 7 minutes", "about 2.0 hours"], [RS.format_wait(s) for s in (5, 40, 100, 433, 7200)])
+    text = RS.warning_text(433, 13e9, 30e6)
+    check("13.0 GB" in text and "30 MB/s" in text and "about 7 minutes" in text and "Reading subtitles..." in text and text.endswith("starts at once.)"), text)
+    text = RS.dialog_text(433, 13e9, 30e6)
+    check("13.0 GB" in text and "about 7 minutes" in text and "Reading subtitles..." in text and "starts at once." in text, text)
+    print("Readspeed: OK")
+
+
 def test_multitrack_window(tmp, videos):
     """The multitrack dialog in the main window: when it opens, Cancel, the job, the batch file (run with bash), the import, the sessions, the old options."""
     import tracks as TR
@@ -6273,8 +6354,8 @@ def test_multitrack_window(tmp, videos):
     from settings import DEFAULT_TOOLTIPS, Settings, default_options
     src = make_multitrack_source(tmp)
     # --- the option
-    check(default_options()["multitrack"] == "off" and "multilanguage" not in default_options() and "subtitle" not in default_options() and dict(OPTION_GROUPS)["Audio/Subtitles"] == ("audio", "multitrack", "aflags")
-          and DEFAULT_TOOLTIPS["multitrack"].startswith("When set to on, a multitrack selection dialog opens after the name of the file has been chosen") and "multilanguage" not in DEFAULT_TOOLTIPS
+    check(default_options()["multitrack"] == "dvd" and "multilanguage" not in default_options() and "subtitle" not in default_options() and dict(OPTION_GROUPS)["Audio/Subtitles"] == ("audio", "multitrack", "aflags")
+          and DEFAULT_TOOLTIPS["multitrack"].startswith("Multitrack selection dialog") and "dvd = only if" in DEFAULT_TOOLTIPS["multitrack"] and "multilanguage" not in DEFAULT_TOOLTIPS
           and validate_options({"multitrack": "on"}) == [] and len(validate_options({"multitrack": "yes"})) == 1, "the option multitrack replaces multilanguage and subtitle")
     win = seek_window(tmp, os.path.dirname(src), ("multi.mkv",), workdir="mtwin", first_fn=first_frame_number)
     work = os.path.join(tmp, "mtwin")
@@ -6314,6 +6395,51 @@ def test_multitrack_window(tmp, videos):
     check(win.track_choice == picked["choice"] and win.tracks_options() == picked["choice"].options(), "the choice is kept for the next time")
     save("again.mp4")
     check(asked[-1][4] == picked["choice"], "the next time the dialog starts with the last choice")
+    # --- the wait before the picture starts (ffmpeg reads the whole recording for the subtitles): measured while the tracks are read, shown in the multitrack dialog (no separate question),
+    #     the bars tell what happens
+    import readspeed
+    real_wait, begin_before, tracks_before, questions, starts, waits = readspeed.subtitle_wait, win.begin_action, win.ask_tracks, [], [], []
+    readspeed.subtitle_wait = lambda paths: (433.0, 13e9, 30e6)
+    win.ask = lambda text: (questions.append(text), True)[1]
+    win.ask_tracks = lambda *a, **k: (waits.append(win._subtitle_wait), tracks_before(*a, **k))[1]
+    win.begin_action = lambda *a, **k: (starts.append(k.get("text")), begin_before(*a, **k))[1]
+    n = len(commands)
+    save("slow.mp4")
+    check(waits == [(433.0, 13e9, 30e6)] and questions == [] and len(commands) == n + 1, f"a long wait for the subtitles: the dialog gets it, no separate question: {waits} {questions}")
+    check(starts[0].startswith("Reading the audio and subtitle tracks") and starts[-1] == "Reading subtitles (about 7 minutes)...", f"the bar tells what happens: {starts}")
+    readspeed.subtitle_wait = lambda paths: (20.0, 1e9, 50e6)
+    save("fast.mp4")
+    check(questions == [] and starts[-1] == "Preparing job...", f"a short wait: the usual text: {starts[-1]}")
+    # --- Cancel while the tracks are read: nothing else happens
+    reading, n = win.read_track_info, len(commands)
+
+    def cancelled_read():
+        win._action["cancel"]()
+        return reading()
+    win.read_track_info = cancelled_read
+    n_asked = len(asked)
+    save("read_cancel.mp4")
+    win.read_track_info = reading
+    check(len(commands) == n and len(asked) == n_asked and win._render is None and not win.action_running(), "Cancel while the tracks are read: no dialog, nothing is started, the bar is free")
+    readspeed.subtitle_wait = real_wait
+    win.begin_action, win.ask_tracks = begin_before, tracks_before
+    # --- Cancel while the job is prepared (the command is made in the background, "Preparing job..."): nothing is started, the action is over, no file
+    build_before, n = win.build_save_command, len(commands)
+
+    def cancelled_build(job, work, copy):
+        win._action["cancel"]()
+        return build_before(job, work, copy)
+    win.build_save_command = cancelled_build
+    save("prep_cancel.mp4")
+    win.build_save_command = build_before
+    check(len(commands) == n and win._render is None and not win.action_running() and not os.path.exists(out("prep_cancel.mp4")), "Cancel while the job is prepared: nothing is started, the bar is free again")
+    # --- an error while the job is made is told (and the action ends)
+    def failing_build(job, work, copy):
+        raise NotImplementedError("no way")
+    win.build_save_command = failing_build
+    save("prep_error.mp4")
+    win.build_save_command = build_before
+    check(len(commands) == n and win._render is None and not win.action_running() and win.messages[-1] == "The job cannot be built: no way", f"an error while the job is made: {win.messages[-1]!r}")
     # --- Cancel stops saving (nothing is started, the last choice stays); the button Defaults goes on with the main audio track only
     import tracks_dialog
     kept = win.track_choice
@@ -7330,7 +7456,7 @@ def test_dvd_mode(tmp, videos):
     win.ask_tracks = ask
     out = os.path.join(work, "dvd.mp4")
     win.choose_output = lambda kind=None: out
-    check(win.options.get("multitrack") == "off", "(the option multitrack is off)")
+    check(win.options.get("multitrack") == "dvd", "(the option multitrack has its default dvd)")
     win.save_video()
     saved = win._last_save
     check(saved and saved["dvd_mode"] is True and saved["returncode"] == 0 and saved["frames_expected"] == win_expected(win) and isinstance(saved["frames_written"], int) and saved["command"][0] == "ffmpeg"
@@ -7354,8 +7480,19 @@ def test_dvd_mode(tmp, videos):
           and open(os.path.join(folder, first_end), "rb").read()[-1000:] == open(win.segments[0].path, "rb").read()[-1000:], "the end of part 1 is the last bytes of the file, from a sector border")
     last_saved = json.load(open(os.path.join(folder, "last_save.json")))
     check(isinstance(last_saved.get("subtitle_lists"), list), "last_save.json has the lists of subtitles of the save (empty if none was written)")
-    check(len(seen) == 1 and seen[0][1] is True and [t.stream_id for t in seen[0][0].audio] == ["0x80", "0x81"], f"the dialog opens although multitrack is off, with the ids shown: {[t.stream_id for t in seen[0][0].audio]}")
+    check(len(seen) == 1 and seen[0][1] is True and [t.stream_id for t in seen[0][0].audio] == ["0x80", "0x81"], f"the dialog opens in DVD mode (multitrack = dvd), with the ids shown: {[t.stream_id for t in seen[0][0].audio]}")
     check(win.track_choice.audio == [("0x81", "eng"), ("0x80", "deu")], f"the choice is kept by ids: {win.track_choice}")
+    # --- the option multitrack in DVD mode: on = dialog, dvd = dialog, off = no dialog (the Defaults: the first sound track by its id, no subtitles)
+    import tracks_dialog as TD
+    asked = []
+    win.ask_tracks = lambda *a, **k: (asked.append(k.get("dvd", a[5] if len(a) > 5 else None)), TD.DEFAULTS)[1]
+    for mode, dialog_expected in (("on", 1), ("dvd", 1), ("off", 0)):
+        asked.clear()
+        win.settings.set_option("multitrack", mode)
+        ok = win.pick_tracks(os.path.join(work, "x.mp4"))
+        check(ok and len(asked) == dialog_expected and win.track_choice.audio == [("0x80", "")] and not win.track_choice.subtitles and win.tracks_options() != {},
+              f"DVD mode, multitrack={mode}: dialog {len(asked)}x (expected {dialog_expected}), the Defaults are {win.track_choice}")
+    win.settings.set_option("multitrack", "dvd")
     streams = streams_of(out)[1] if os.path.exists(out) else []
     check(streams[1:3] == [("a", "aac", "eng"), ("a", "aac", "deu")], f"the file has the two sound tracks with their codes: {streams}")
     dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out], capture_output=True, text=True).stdout or 0)
@@ -7512,7 +7649,11 @@ def test_dvd_mode(tmp, videos):
     win2.OpenVideo(other)
     called = []
     win2.ask_tracks = lambda *a, **k: (called.append(1), None)[1]
-    check(not win2.dvd_mode() and win2.pick_tracks(os.path.join(work, "x.mp4")) and called == [], "two title sets: not a DVD structure, no dialog (multitrack is off)")
+    check(not win2.dvd_mode() and win2.pick_tracks(os.path.join(work, "x.mp4")) and called == [], "two title sets: not a DVD structure, no dialog (multitrack = dvd)")
+    win2.settings.set_option("multitrack", "on")
+    win2.pick_tracks(os.path.join(work, "x.mp4"))
+    check(called == [1], "multitrack = on: the dialog also opens when it is not DVD mode")
+    win2.settings.set_option("multitrack", "dvd")
     from runner import RunResult as _RR
     got_cmds, got_kw = [], []
     def _fake_render(command, total, on_progress, cwd=None, cancel=None, **kw):
@@ -7602,7 +7743,24 @@ def test_help_menu(tmp, videos):
     win = make_window(work, thumb_fn=quick_thumbs, fresh=True)
     win.showEvent(None)
     bar_menus = [c[0] for c in win.menuBar().called("addMenu")]
-    check(bar_menus[-3:] == ["&File", "&Edit", "&Deploy", "&Help"][-3:] and bar_menus[-1] == "&Help", f"Help is the last menu: {bar_menus}")
+    expected_bar = ["&File", "&Edit", "&Config"] + (["&Deploy"] if mediamaker.is_dev() else []) + ["&Help"]
+    check(bar_menus[-len(expected_bar):] == expected_bar and bar_menus[-1] == "&Help", f"the menus: File, Edit, Config, (Deploy only in the development version), Help: {bar_menus}")
+    # the entries of the menus (order and separators; the QActions of the form are moved, so shortcuts and handlers stay)
+    def entries(menu):
+        names = {id(getattr(win, a)): a for a in dir(win) if a.startswith("mnu") and not a.startswith(("mnuFile", "mnuEdit", "mnuConfig", "mnuDeploy", "mnuHelp"))
+                 and a not in ("mnuProfileList",)}
+        out = []
+        for name, args in menu.calls:
+            if name == "addSeparator":
+                out.append("-")
+            elif name in ("addAction", "addMenu") and not isinstance(args[0], str):
+                out.append(names.get(id(args[0]), "?") if name == "addAction" else "mnuLoadProfile")
+        return out
+    check(entries(win.mnuFile) == ["mnuOpen", "mnuClose", "mnuDelete", "-", "mnuInfo", "mnuChapters", "-", "mnuSaveMP4", "mnuSaveAVI", "mnuCancel", "-", "mnuBatch", "mnuImport", "-",
+                                    "mnuBackupSession", "mnuRestoreSession", "mnuDeleteSession", "-", "mnuExit"], f"menu File: {entries(win.mnuFile)}")
+    check(entries(win.mnuEdit) == ["mnuReuse", "mnuAutoCrop", "-", "mnuMediaInfo", "mnuCutPoints", "mnuDeDup", "-", "mnuNext", "mnuEnd"], f"menu Edit (only what works on the selected segment): {entries(win.mnuEdit)}")
+    check(entries(win.mnuConfig) == ["mnuProfile", "mnuLoadProfile", "mnuSaveProfile", "-", "mnuCopyMode", "mnuCalcVideo", "mnuCalcAudio", "-", "mnuOptions"], f"menu Config: {entries(win.mnuConfig)}")
+    check(not hasattr(win.mnuDeploy, "calls") or "mnuSetup" not in str(entries(win.mnuDeploy)), "Deploy: no Edit setup values, no Create default ini")
     check([a.text_ for a in win.mnuHelp.actions_] == ["&Readme", "&About MediaMaker"] and win.mnuReadme.called("setShortcut")[-1][0]._args == ("F1",), "Readme (F1) and About")
     # --- Readme: README.md of the program as formatted text
     W.QDialog.exec_result, W.QDialog.on_exec = 1, None
@@ -8131,6 +8289,9 @@ def test_public_version(tmp, videos):
         os.environ["XDG_CONFIG_HOME"] = cfg
         version.VERSION = "1.0-dev"
         check(version.ini_path() == os.path.join(version.HERE, "MediaMaker.ini") and not os.path.exists(cfg), "development version: MediaMaker.ini next to the program, no folder made")
+        check(version.files_dir(frozen=True) == os.path.join(cfg, "MediaMaker") and version.files_dir(writable=False) == os.path.join(cfg, "MediaMaker"),
+              "development version as an AppImage (frozen) or in a folder that cannot be written to: the configuration folder")
+        check(version.files_dir(frozen=False, writable=True) == version.HERE, "development version from the source: next to the program")
         version.VERSION = "1.0"
         check(version.ini_path() == os.path.join(cfg, "MediaMaker", "MediaMaker.ini") and os.path.isdir(os.path.join(cfg, "MediaMaker")), "public version: ~/.config/MediaMaker/MediaMaker.ini (made)")
         check(version.debug_log_path() == os.path.join(cfg, "MediaMaker", "mediamaker_debug.log"), "the debug log is in the same folder")
@@ -8155,13 +8316,13 @@ def test_public_version(tmp, videos):
         mediamaker.is_dev = saved_is_dev
     key = win.actDebugKey
     check(key.called("setShortcut")[-1][0].toString() == "Ctrl+Shift+F1" and any(a[0] is key for a in win.called("addAction")), "the key Ctrl+Shift+F1 is an action of the window")
-    check(not win.mnuDeploy.menuAction().called("setVisible"), "development version: the menu Deploy stays visible")
+    check(win.mnuDeploy is not None and [a[0] for a in win.mnuDeploy.called("addAction")] == [win.mnuDebug], "development version: the menu Deploy has the one entry Create debug package")
     mediamaker.is_dev = lambda *a: False
     try:
         pub = seek_window(tmp, videos, ("sample2.ts",), workdir="public_pub")
     finally:
         mediamaker.is_dev = saved_is_dev
-    check(pub.mnuDeploy.menuAction().called("setVisible")[-1] == (False,), "public version: the menu Deploy is hidden")
+    check(pub.mnuDeploy is None, "public version: there is no menu Deploy")
     check(pub.actDebugKey.called("setShortcut")[-1][0].toString() == "Ctrl+Shift+F1", "public version: the key is there")
     # --- the warning comes first; "No" makes nothing
     asked = []
@@ -8341,6 +8502,80 @@ def test_fit_window(tmp, videos):
     check(big.size_ == (1500, 900) and big.minimum == (1366, 600), f"larger: unchanged: {big.size_}")
 
 
+def test_markdown_no_raw_tags(tmp, videos):
+    """README.md and CHANGELOG.md are shown by Qt (Help => Readme, links in it) and by GitHub: a text like "<name>" outside of code is taken for an HTML tag and swallows the
+    text after it (the lines of the CHANGELOG below it showed only their code parts). So every <...> must stand in code."""
+    import re
+    root = os.path.dirname(HERE)
+    for name in ("README.md", "CHANGELOG.md"):
+        fence, bad = False, []
+        with open(os.path.join(root, name), encoding="utf-8") as f:
+            for number, line in enumerate(f.read().split("\n"), 1):
+                if line.lstrip().startswith("```"):
+                    fence = not fence
+                elif not fence:
+                    bad += [f"{number}: {m}" for m in re.findall(r"<[A-Za-z/!?][^<>]*>", re.sub(r"`[^`]*`", "", line))]
+        check(not bad, f"{name}: text in <...> outside of code (write it in `backticks`): {bad[:5]}")
+        with open(os.path.join(root, name), encoding="utf-8") as f:                 # (a sign like an arrow or "..." as one character comes from another font in Qt: the line gets higher, as seen in the Readme window)
+            odd = [f"{n}: {ch}" for n, line in enumerate(f.read().split("\n"), 1) for ch in sorted(set(line)) if ord(ch) > 127]
+        check(not odd, f"{name}: only ASCII (other signs make the lines of the Readme window uneven): {odd[:5]}")
+
+
+def test_decoder_problem(tmp, videos):
+    """ffmpeg without a decoder of its own for H.264 (openSUSE without Packman: only libopenh264): the program says so when the file is opened, with the way out."""
+    import decoders
+    listing = (b"Decoders:\n V..... = Video\n A..... = Audio\n ------\n V....D mpeg2video           MPEG-2 video\n V....D libopenh264          Cisco OpenH264 H.264 / AVC\n"
+               b" A....D aac                 AAC (Advanced Audio Coding)\n")
+    class Result:
+        stdout = listing
+    decoders._cache.clear()
+    names = decoders.decoder_names("fake-ffmpeg", run=lambda *a, **k: Result)
+    check(names == {"mpeg2video", "libopenh264", "aac"}, f"decoder names read from the list: {names}")
+    suse = os.path.join(tmp, "os-release-suse")
+    with open(suse, "w") as f:
+        f.write('ID="opensuse-leap"\nID_LIKE="suse opensuse"\n')
+    text = decoders.decoder_problem("h264", names, suse)
+    check(text and "libopenh264" in text and "opi codecs" in text and "H.264" in text, f"h264 without decoder: text with the way out: {text}")
+    check(decoders.decoder_problem("mpeg2video", names, suse) is None, "mpeg2video has a decoder: no message")
+    check(decoders.decoder_problem("h264", names | {"h264"}, suse) is None, "h264 decoder there: no message")
+    check(decoders.decoder_problem("h264", None, suse) is None and decoders.decoder_problem("vp9", names, suse) is None, "unknown list / other codec: no message")
+    check("hevc" not in names and "H.265" in decoders.decoder_problem("hevc", names, suse), "hevc is checked as well")
+    import mediamaker
+    real = decoders.decoder_problem
+    try:
+        decoders.decoder_problem = lambda codec: "no decoder" if codec == "h264" else None
+        win = make_window(tmp)
+        win.warn_decoder("h264")
+        win.warn_decoder("h264")
+        win.warn_decoder("mpeg2video")
+        check(win.messages == ["no decoder"], f"said once, and only for the codec with the problem: {win.messages}")
+    finally:
+        decoders.decoder_problem = real
+        decoders._cache.clear()
+
+
+def test_stderr_filter_wanted(tmp, videos):
+    """The filter (pipe on the error output) swallows the message of a fatal Python error: off with NO_FILTER and in the debug mode."""
+    import mediamaker
+    check(mediamaker.stderr_filter_wanted({}) is True, "normal start: filter on")
+    check(mediamaker.stderr_filter_wanted({"MEDIAMAKER_NO_FILTER": "1"}) is False, "NO_FILTER: off")
+    check(mediamaker.stderr_filter_wanted({"MEDIAMAKER_DEBUG": "1"}) is False, "debug mode: off, a crash message is visible")
+
+
+def test_protect_none_refcount(tmp, videos):
+    """The count of None falls with PySide6 (Python < 3.12) until Python aborts: the program raises it; checked on an ordinary object here, None itself is left alone."""
+    import mediamaker
+    obj = object()
+    before = sys.getrefcount(obj)
+    done = mediamaker.protect_none_refcount(obj, bump=1000, version_info=(3, 10))
+    after = sys.getrefcount(obj)
+    check(done is True and after - before == 1000, f"the count was raised by 1000: {before} -> {after}")
+    import ctypes
+    ctypes.c_ssize_t.from_address(id(obj)).value -= 1000                # leave the object as it was
+    check(sys.getrefcount(obj) == before, "(test) count restored")
+    check(mediamaker.protect_none_refcount(obj, bump=1000, version_info=(3, 12)) is False and sys.getrefcount(obj) == before, "from Python 3.12 None is immortal: nothing done")
+
+
 def test_restore_library_path(tmp, videos):
     """AppImage: the programs we start get the original library path, not the one of the bundle."""
     import mediamaker
@@ -8427,6 +8662,58 @@ def test_dialog_scale(tmp, videos):
     print("Dialog size: OK (profile and options dialogs follow UI_SCALE: font, fields, tabs)")
 
 
+def test_dialog_scale_more(tmp, videos):
+    """All other dialogs and message boxes follow the main window too (font, fixed sizes); 100 % as before."""
+    import dialogs
+    from types import SimpleNamespace
+    from PySide6 import QtWidgets as W
+    from PySide6.QtWidgets import QDialog, QInputDialog
+    QDialog.exec_result = 1
+    QDialog.on_exec = None
+    b = W.QMessageBox.StandardButton
+    W.QMessageBox.shown.clear()
+    W.QMessageBox.answer = "Yes"
+    dialogs.message(None, "warning", "plain")
+    check(W.QMessageBox.shown == ["plain"], "100 %: the static message box as before")
+    check(dialogs.message(None, "question", "q", b.Yes | b.No) == b.Yes, "100 %: the answer of the question")
+    probe = QDialog(None)
+    font = probe.font()
+    font.setPointSizeF(10.0)
+    window = SimpleNamespace(UI_SCALE=125, centralWidget=lambda: SimpleNamespace(font=lambda: font))
+    seen = []
+    old_on_exec = W.QMessageBox.on_exec
+    W.QMessageBox.on_exec = lambda box: seen.append(box)
+    try:
+        for kind in ("warning", "information", "question"):
+            dialogs.message(window, kind, f"big {kind}", b.Yes | b.No)
+    finally:
+        W.QMessageBox.on_exec = old_on_exec
+    check(W.QMessageBox.shown[-3:] == ["big warning", "big information", "big question"], f"125 %: all three kinds are shown as a box: {W.QMessageBox.shown[-3:]}")
+    check(all(box.called("setFont") and box.called("setFont")[0][0] is font for box in seen), "125 %: the message boxes have the font of the main window")
+    html = '<span style="font-size:22pt;">a</span><span style="font-size:9pt;">b</span>'
+    check(dialogs.scale_html_pt(html, 1) == html, "rich text sizes: unchanged at 100 %")
+    check(dialogs.scale_html_pt(html, 1.25) == '<span style="font-size:27.5pt;">a</span><span style="font-size:11.2pt;">b</span>', f"rich text sizes at 125 %: {dialogs.scale_html_pt(html, 1.25)}")
+    boxes = []
+    old_exec = QInputDialog.exec_result if hasattr(QInputDialog, "exec_result") else None
+    QDialog.on_exec = lambda d: boxes.append(d)
+    try:
+        dialogs.ask_text_box(None, "t", "p", "x")
+        plain = boxes[-1]
+        dialogs.ask_text_box(window, "t", "p", "x")
+        big = boxes[-1]
+    finally:
+        QDialog.on_exec = None
+    check(plain.called("setFixedWidth")[-1] == (dialogs.INPUT_BOX_WIDTH,) and not plain.called("setFont"), "100 %: the input box as before")
+    check(big.called("setFixedWidth")[-1] == (round(dialogs.INPUT_BOX_WIDTH * 1.25),) and big.called("setFont")[0][0] is font, "125 %: the input box is wider and has the font of the main window")
+    # VB6 forms: crop dialog at 125 % is 1.25 times as big, at 100 % not touched
+    import crop_dialog
+    small = crop_dialog.frmCrop(None, 720, 576, 1)
+    large = crop_dialog.frmCrop(window, 720, 576, 1)
+    check(large.width() == round(small.width() * 1.25) and large.height() == round(small.height() * 1.25), f"crop dialog: {large.width()}x{large.height()} vs {small.width()}x{small.height()}")
+    check(any(c[0] is font for c in large.called("setFont")) and not any(c[0] is font for c in small.called("setFont")), "crop dialog: the font of the main window only at 125 %")
+    print("Dialog size (rest): OK (message boxes, input boxes, VB6 forms follow UI_SCALE)")
+
+
 def test_tick_shape(tmp, videos):
     """The green tick of the menu entries: three points inside the square, the tip lower than the ends, the long stroke on the right; the style is made when it is asked for."""
     import tickshape
@@ -8438,7 +8725,17 @@ def test_tick_shape(tmp, videos):
     g = tickshape.TICK_GREEN
     check(g[1] > g[0] and g[1] > g[2] and tickshape.TICK_ON_HIGHLIGHT[1] > tickshape.TICK_ON_HIGHLIGHT[0], f"both colours are green: {g} {tickshape.TICK_ON_HIGHLIGHT}")
     src = open(os.path.join(ROOT, "ui", "vbqt.py"), encoding="utf-8").read()
-    check("menustyle.install(app)" in src and "MEDIAMAKER_PLAIN_MENU" in open(os.path.join(ROOT, "menustyle.py"), encoding="utf-8").read(), "the style is installed with the theme and can be switched off")
+    check("menustyle.install(app)" in src and "tick_menu_wanted" in open(os.path.join(ROOT, "menustyle.py"), encoding="utf-8").read(), "the style is installed with the theme (when wanted)")
+    check(tickshape.tick_menu_wanted({}) is False and tickshape.tick_menu_wanted({"MEDIAMAKER_TICK_MENU": "1"}) is True
+          and tickshape.tick_menu_wanted({"MEDIAMAKER_TICK_MENU": "1", "MEDIAMAKER_PLAIN_MENU": "1"}) is False, "the style is off unless MEDIAMAKER_TICK_MENU=1")
+    import mediamaker
+    check(callable(mediamaker.watch_none_refcount), "debug mode: the reference count of None is watched")
+    check("status=" in inspect.signature(mediamaker.watch_none_refcount).parameters.__str__() or "status" in inspect.signature(mediamaker.watch_none_refcount).parameters,
+          "debug mode: the counters of the pictures can be logged with it")
+    check("PySide6>=6.5,<6.9" in open(os.path.join(ROOT, "requirements.txt"), encoding="utf-8").read(), "PySide6 6.12 (None leak) is excluded by requirements.txt")
+    import player as _player
+    check(hasattr(_player.MemoryVlcPlayer, "frame_stats"), "the memory player counts its pictures for the debug log")
+    check(mediamaker.versions_text().startswith("Python "), f"debug log: versions: {mediamaker.versions_text()}")
     print("Menu tick: OK (shape, colours, installed with the theme)")
 
 
@@ -8728,6 +9025,7 @@ def main():
     test_command_icons(tmp, sys.argv[1])
     test_multitrack(tmp, sys.argv[1])
     test_multitrack_window(tmp, sys.argv[1])
+    test_readspeed(tmp, sys.argv[1])
     test_batch_run_now(tmp, sys.argv[1])
     test_debug_log_lines(tmp, sys.argv[1])
     test_duplicate_preview(tmp, sys.argv[1])
@@ -8757,10 +9055,15 @@ def main():
     test_install_hint(tmp, sys.argv[1])
     test_install_ffmpeg_offer(tmp, sys.argv[1])
     test_fit_window(tmp, sys.argv[1])
+    test_markdown_no_raw_tags(tmp, sys.argv[1])
+    test_decoder_problem(tmp, sys.argv[1])
+    test_stderr_filter_wanted(tmp, sys.argv[1])
+    test_protect_none_refcount(tmp, sys.argv[1])
     test_restore_library_path(tmp, sys.argv[1])
     test_leave(tmp, sys.argv[1])
     test_showinfo_times(tmp, sys.argv[1])
     test_dialog_scale(tmp, sys.argv[1])
+    test_dialog_scale_more(tmp, sys.argv[1])
     test_tick_shape(tmp, sys.argv[1])
     test_counting_note(tmp, sys.argv[1])
     test_play_now(tmp, sys.argv[1])

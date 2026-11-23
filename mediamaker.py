@@ -48,6 +48,7 @@ import containers                                                     # noqa: E4
 import tracks                                                         # noqa: E402
 import tracks_dialog                                                  # noqa: E402
 import dvd                                                            # noqa: E402
+import readspeed                                                      # noqa: E402
 import ifo                                                            # noqa: E402
 import buildinfo                                                      # noqa: E402
 import helpdialogs                                                    # noqa: E402
@@ -68,9 +69,10 @@ from runner import expected_frames, run_ffmpeg, total_seconds, verify_output   #
 import info                                                          # noqa: E402
 import logo as logo_module                                           # noqa: E402
 import seek                                                          # noqa: E402
-from player import debug_log                                         # noqa: E402
+from player import debug_log, fit_rect                                         # noqa: E402
 from border import border_at                                         # noqa: E402
 from logo import confidence_at                                       # noqa: E402
+import decoders  # noqa: E402
 from mediaprobe import display_aspect, install_command, MediaInfo, ProbeError, ToolMissing, count_video_packets, first_frame_number, probe as full_probe  # noqa: E402
 from profiles import (ADVANCED_OPTIONS, multitrack_from_old, GROUP_TEXTS, HIDDEN_OPTIONS, OPTION_GROUPS, PRESETS, PROFILE_KEYS, REMOVED_OPTIONS, RENAMED_OPTIONS, default_name, normalize_bitrate,  # noqa: E402
                       is_on, onoff, ordered_profile, profile_from_segment, valid_profile_name, validate_options, validate_profile,
@@ -98,6 +100,27 @@ def quick_probe(path: str) -> MediaInfo:
     """Quick analysis: reads only the start and end of the file (important on network drives). The number of frames is
         estimated from duration and frame rate and counted exactly later in the background."""
     return full_probe(path, exact_frames=False)
+
+
+def existing_dirs(dirs, timeout: float = 1.0) -> list:
+    """The folders of the list that exist. A folder on a network drive that does not answer must not keep the file dialog from opening: what has not answered after `timeout` seconds
+    (all together) is left out."""
+    dirs = list(dirs)
+    if not dirs:
+        return []
+    from concurrent.futures import ThreadPoolExecutor
+    pool = ThreadPoolExecutor(max_workers=len(dirs))
+    futures = [pool.submit(os.path.isdir, d) for d in dirs]
+    deadline = time.monotonic() + timeout
+    found = []
+    for d, future in zip(dirs, futures):
+        try:
+            if future.result(timeout=max(0.0, deadline - time.monotonic())):
+                found.append(d)
+        except Exception:
+            pass
+    pool.shutdown(wait=False)
+    return found
 
 
 class FrameCounter(QtCore.QThread):
@@ -176,6 +199,9 @@ class frmMain(frmMainBase):
         self._vlc_stale = False                         # a picture of a search stays on screen: VLC is not where the slider is (seek_done)
         self._slider_sync_off = False                   # the slider is set without VLC following (seek_done)
         self.track_choice = None                        # the last choice of the multitrack dialog (tracks.Choice), None: Cancel or never asked
+        self._first_tracks = None                       # the tracks of the first file, read for the track choice (not read again for the job)
+        self._tracks_worker = None
+        self._subtitle_wait = None                      # (seconds, bytes, speed) for reading the recording once, for the warning in the multitrack dialog
         self._dvd_job = False                           # the job that is being made is in DVD mode (pick_tracks)
         self._last_save = None                          # what the last save did: command, ffmpeg messages, frames expected / written (for the debug package)
         self._dvd_tracks = None                         # DVD mode: the tracks of all the parts that are used, as one list (tracks.merge); the command and the checks need the codecs
@@ -190,6 +216,7 @@ class frmMain(frmMainBase):
         self._bar = (0.0, "")                   # progress bar: (percent, text)
         self._first_fn = first_fn
         self._seek_worker = None
+        self._prepare_worker = None                     # the thread that makes the command of a save (save_video)
         self._logo_refs: dict = {}              # mask -> reference logo (LogoRef)
         self.delogo_refs: dict = {}             # delogo rectangle -> reference logo (set when the rectangle is defined)
         self._thumb_loaders: list = []
@@ -228,11 +255,13 @@ class frmMain(frmMainBase):
 
     # ------------------------------------------------------------------ Messages (replaceable for tests)
     def msg(self, text: str) -> None:
-        QtWidgets.QMessageBox.warning(self, "MediaMaker", text)
+        import dialogs
+        dialogs.message(self, "warning", text)
 
     def ask(self, text: str) -> bool:
+        import dialogs
         button = QtWidgets.QMessageBox.StandardButton
-        return QtWidgets.QMessageBox.question(self, "MediaMaker", text, button.Yes | button.No) == button.Yes
+        return dialogs.message(self, "question", text, button.Yes | button.No) == button.Yes
 
     def edit_pairs(self, title: str, pairs: dict, groups=None, start: int = 0) -> Optional[dict]:
         import dialogs
@@ -241,12 +270,14 @@ class frmMain(frmMainBase):
                                   advanced=ADVANCED_OPTIONS if groups is OPTION_GROUPS else None, show_advanced=self._show_advanced)
 
     def inform(self, text: str) -> None:
-        QtWidgets.QMessageBox.information(self, "MediaMaker", text)
+        import dialogs
+        dialogs.message(self, "information", text)
 
     def ask3(self, text: str) -> str:
         """Yes/No/Cancel question: "yes", "no" or "cancel"."""
+        import dialogs
         button = QtWidgets.QMessageBox.StandardButton
-        answer = QtWidgets.QMessageBox.question(self, "MediaMaker", text, button.Yes | button.No | button.Cancel)
+        answer = dialogs.message(self, "question", text, button.Yes | button.No | button.Cancel)
         return {button.Yes: "yes", button.No: "no"}.get(answer, "cancel")
 
     def ask_save_file(self, title: str, suggestion: str, filters: str) -> str:
@@ -257,11 +288,15 @@ class frmMain(frmMainBase):
             name, self._save_filter = QtWidgets.QFileDialog.getSaveFileName(self, title, suggestion, filters)
             return name
         dialog = QtWidgets.QFileDialog(self, title, os.path.dirname(suggestion), filters)
+        import dialogs
+        dialogs.scale_font(dialog, dialogs.ui_factor(self), self)
         dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptMode.AcceptSave)
         dialog.setFileMode(QtWidgets.QFileDialog.FileMode.AnyFile)
         dialog.setOption(QtWidgets.QFileDialog.Option.DontUseNativeDialog, True)
         dialog.selectFile(os.path.basename(suggestion))
-        recent = [d for d in self.settings.recent_dirs if os.path.isdir(d)]
+        started = time.monotonic()
+        recent = existing_dirs(self.settings.recent_dirs)
+        debug_log(f"save: file dialog opens ({len(recent)} of {len(self.settings.recent_dirs)} recent folders, checked in {time.monotonic() - started:.1f} s)")
         if recent:
             dialog.setHistory(recent)
             dialog.setSidebarUrls([QtCore.QUrl.fromLocalFile(d) for d in recent])
@@ -401,6 +436,7 @@ class frmMain(frmMainBase):
         self.setWindowTitle(f"MediaMaker {VERSION}")
         self.apply_scale()
         self.style_delogo_frame()
+        self.arrange_menus()
         self.add_debug_menu()
         for button in self.cmdCommand:                               # the symbols of the column of buttons: Qt takes about 16 px, VB6 drew them nearly as large as the button (25 px)
             button.setIconSize(QtCore.QSize(self.command_icon_size, self.command_icon_size))
@@ -507,10 +543,12 @@ class frmMain(frmMainBase):
         self.stills.shutdown()
         workers = (self._counters + self._thumb_loaders + ([self._seek_worker] if self._seek_worker else [])
                    + ([self._render_worker] if self._render_worker else []))
+        debug_log(f"closing: {len(workers)} background jobs are cancelled")
         for worker in workers:
             worker.cancel()
         for worker in workers:
-            worker.wait(5000)
+            if not worker.wait(5000):
+                debug_log(f"closing: {type(worker).__name__} does not end within 5 s")
         self.player.shutdown()
 
     def lblText_Upd(self) -> None:
@@ -620,7 +658,7 @@ class frmMain(frmMainBase):
         candidates = [n for n, p in self.settings.profiles.items() if p.get("acodec_in") in found]
         if not candidates:
             self.msg(f'You are loading the file "{os.path.basename(fn)}" with {used}, which expects an audio stream of type "{wanted}". The file has: {", ".join(found) or "(unknown)"}.\n'
-                     f'No saved profile expects one of these types. Please change "acodec_in" in the profile (Edit => Profile...) or save a profile that does.')
+                     f'No saved profile expects one of these types. Please change "acodec_in" in the profile (Config => Profile...) or save a profile that does.')
             return None
         profiles = self.settings.profiles
         items = [f"{n}: {profiles[n].get('description', '')}" for n in candidates]
@@ -652,10 +690,10 @@ class frmMain(frmMainBase):
         names = list(profiles)
         items = [f"{n}: {profiles[n].get('description', '')}" for n in names]
         index = self.ask_choice("MediaMaker", "Please choose the target profile (size, frame rate and bit rates of the new video).\n"
-                                "You can change it later (Edit => Load profile) or edit it (Edit => Profile...).", items,
+                                "You can change it later (Config => Load profile) or edit it (Config => Profile...).", items,
                                 names.index("SD") if "SD" in names else 0)
         if index is None:
-            self.msg("No target profile is chosen. Choose one with Edit => Load profile before you open a video.")
+            self.msg("No target profile is chosen. Choose one with Config => Load profile before you open a video.")
             return False
         self.load_profile(names[index])
         return True
@@ -790,6 +828,16 @@ class frmMain(frmMainBase):
             return False
         return True
 
+    def warn_decoder(self, codec: str) -> None:
+        """The video codec of the file has no decoder of its own in this ffmpeg (openSUSE without Packman): said once per codec and run of the program."""
+        shown = self.__dict__.setdefault("_decoder_warned", set())
+        if codec in shown:
+            return
+        text = decoders.decoder_problem(codec)
+        if text:
+            shown.add(codec)
+            self.msg(text)
+
     def OpenVideo(self, fn: str) -> bool:
         fn = os.path.abspath(os.path.expanduser(fn))             # always store with the full path
         if not self.has_profile() and self.settings.profiles and not self.ask_first_profile():      # (profiles exist, none is chosen yet: the user chooses)
@@ -814,6 +862,7 @@ class frmMain(frmMainBase):
             self.msg(f"File {fn} does not exist or could not be analyzed: {e}")
             return False
         self.busy(False)
+        self.warn_decoder(info.video.codec)
         profile, opts = self.profile, self.options
         audio = info.audio
         if not audio:
@@ -1180,7 +1229,12 @@ class frmMain(frmMainBase):
 
     # ------------------------------------------------------------------ Multitrack (option multitrack; tracks.py, tracks_dialog.py)
     def multitrack_on(self) -> bool:
-        return self.options.get("multitrack", "off") == "on"
+        return self.options.get("multitrack", "dvd") == "on"
+
+    def multitrack_dialog(self) -> bool:
+        """Does the dialog for the tracks open when saving? Option multitrack: on = always, off = never, dvd = only in DVD mode (dvd_mode())."""
+        mode = self.options.get("multitrack", "dvd")
+        return mode == "on" or (mode == "dvd" and self.dvd_mode())
 
     def tracks_of(self, path: str, probe_args: tuple = ()):
         return self._track_fn(path, probe_args=probe_args) if probe_args else self._track_fn(path)
@@ -1200,32 +1254,120 @@ class frmMain(frmMainBase):
 
     def ask_tracks(self, track_list, output: str, file_text: str, initial, main_audio: int, dvd: bool = False):
         """The multitrack dialog: the choice (tracks.Choice), tracks_dialog.DEFAULTS (the button Defaults) or None (Cancel). dvd: DVD mode (the ids are shown)."""
-        return tracks_dialog.run_dialog(self, track_list, output, file_text, initial, main_audio, dvd, getattr(self, "_languages_note", "") if dvd else "")
+        return tracks_dialog.run_dialog(self, track_list, output, file_text, initial, main_audio, dvd, getattr(self, "_languages_note", "") if dvd else "", getattr(self, "_subtitle_wait", None))
 
     def pick_tracks(self, output: str) -> bool:
-        """After the name of the file has been chosen: with the option multitrack, or in DVD mode, the dialog opens (only if the source has more than one audio track or any
-        subtitle track). OK: the choice; Defaults: only the main audio track, no subtitles (in DVD mode the first sound track, by its id); Cancel: saving stops (as in VB6, and in
-        both modes). False: the job cannot be made (said, or cancelled)."""
+        """After the name of the file has been chosen: the dialog opens as the option multitrack says (on: always, off: never, dvd: in DVD mode), and only if the source has more
+        than one audio track or any subtitle track. OK: the choice; Defaults: only the main audio track, no subtitles (in DVD mode the first sound track, by its id); Cancel: saving
+        stops (as in VB6, and in both modes). Without the dialog in DVD mode (multitrack off) the Defaults are used. False: the job cannot be made (said, or cancelled).
+        This is the version that waits for the files (the batch); save_video reads them in the background (pick_tracks_async) and then calls choose_tracks as well."""
+        if not self.begin_tracks():
+            return True
+        if self._dvd_job:
+            self.busy(True)
+        try:
+            info = self.read_track_info()
+        finally:
+            if self._dvd_job:
+                self.busy(False)
+        return self.choose_tracks(output, info)
+
+    def begin_tracks(self) -> bool:
+        """The state of the track choice for a new job; False if there is nothing to ask or read (no DVD mode and no multitrack dialog)."""
         self._dvd_job = self.dvd_mode()
         self._dvd_tracks = None
+        self._first_tracks = None
         self._languages_note = ""
-        if not self._dvd_job and not self.multitrack_on():
-            return True
+        self._subtitle_wait = None
+        return self._dvd_job or self.multitrack_dialog()
+
+    def read_track_info(self) -> dict:
+        """The part of the track choice that has to read the files (ffprobe, on a network drive tens of seconds): no Qt here, it runs in a thread. The tracks of the first file (DVD mode:
+        of all parts, merged: a subtitle track may turn up only in a later part), those of the other files (for the check that they fit; an error is kept and told only if the choice
+        needs it), and the time that reading the recording once takes (if there are subtitles to choose: the dialog warns about it)."""
         first = self.segments[0]
+        info: dict = {"others": {}}
         probe = dvd.PROBE_ARGS if self._dvd_job else ()
+        started = time.monotonic()
         try:
             track_list = self.tracks_of(first.path, probe)
-            if self._dvd_job:                                          # the streams of ALL parts that are used: a subtitle track may turn up only in a later one
-                self.busy(True)
+            for path in sorted({s.path for s in self.segments} - {first.path}):
                 try:
-                    track_list = tracks.merge([track_list] + [self.tracks_of(path, probe) for path in sorted({s.path for s in self.segments} - {first.path})])
-                finally:
-                    self.busy(False)
-                self._dvd_tracks = track_list
-                self._languages_note = ifo.note(first.path, ifo.apply(track_list, first.path))                    # the languages of the tracks come from VTS_nn_0.IFO (the VOB files have none)
+                    info["others"][path] = self.tracks_of(path, probe)
+                except Exception as e:
+                    info["others"][path] = e
+            if self._dvd_job:
+                bad = [e for e in info["others"].values() if isinstance(e, Exception)]
+                if bad:
+                    raise bad[0]
+                track_list = tracks.merge([track_list] + list(info["others"].values()))
+                info["note"] = ifo.note(first.path, ifo.apply(track_list, first.path))        # the languages of the tracks come from VTS_nn_0.IFO (the VOB files have none)
         except Exception as e:
-            self.msg(f"The tracks of {os.path.basename(first.path)} cannot be read: {e}")
+            info["error"] = f"The tracks of {os.path.basename(first.path)} cannot be read: {e}"
+            return info
+        info["track_list"] = track_list
+        debug_log(f"save: tracks read in {time.monotonic() - started:.1f} s")
+        if track_list.subtitles and tracks.needs_dialog(track_list):
+            started = time.monotonic()
+            info["wait"] = readspeed.subtitle_wait([f for s in self.segments for f in dvd.files_of(s.path)])
+            debug_log(f"save: reading speed measured in {time.monotonic() - started:.1f} s: {info['wait']}")
+        return info
+
+    def pick_tracks_async(self, output: str, then) -> None:
+        """pick_tracks for the save: the files are read in the background (the bar says so, the button Cancel works), then the dialog; then(True) goes on, then(False) = stop."""
+        if not self.begin_tracks():
+            then(True)
+            return
+        info: dict = {}
+
+        def read(cancel) -> int:
+            if getattr(cancel, "note", None):
+                cancel.note("reading the files (this can take a while on a network drive)")
+            info.update(self.read_track_info())
+            if cancel():
+                raise seek.SeekCancelled()
+            return 0
+
+        def finish(_result=None) -> None:
+            self.end_action()
+            then(self.choose_tracks(output, info))
+
+        def failed(text: str) -> None:
+            self.end_action()
+            self.msg(f"The tracks cannot be read: {text}")
+            then(False)
+
+        worker = seek.SeekWorker(read)
+        if not self.begin_action("Reading tracks", worker.cancel, block="edit", text="Reading the audio and subtitle tracks...  (this can take a while on a network drive)"):
+            then(False)
+            return
+        worker.progress.connect(self.action_note)
+        worker.done.connect(finish)
+        worker.failed.connect(failed)
+        worker.finished.connect(lambda: self.tracks_read_finished(worker, then))               # (after a cancel nothing else is emitted)
+        self._tracks_worker = worker
+        worker.start()
+
+    def tracks_read_finished(self, worker, then) -> None:
+        if worker.cancelled:
+            self.end_action()
+            debug_log("save: cancelled while the tracks were read")
+            then(False)
+
+    def choose_tracks(self, output: str, info: dict) -> bool:
+        """The rest of pick_tracks, with what read_track_info found: the dialog (or the defaults), the check that the other files have these tracks."""
+        ask = self.multitrack_dialog()
+        first = self.segments[0]
+        if "error" in info:
+            self.msg(info["error"])
             return False
+        track_list = info["track_list"]
+        if self._dvd_job:
+            self._dvd_tracks = track_list
+            self._languages_note = info.get("note", "")
+        else:
+            self._first_tracks = track_list
+        self._subtitle_wait = info.get("wait")
         if not tracks.needs_dialog(track_list):
             self.track_choice = None
             return True
@@ -1233,8 +1375,11 @@ class frmMain(frmMainBase):
             self.msg(f"The files are the video files of a DVD ({dvd.title_set(first.path)}): DVD mode is used, with re-encoding (concat filter). Copy mode is not used.")
         main = int(first.audio_sel.split(":")[1]) if ":" in first.audio_sel and first.audio_sel.split(":")[1].isdigit() else 0
         initial = tracks.to_indexes(self.track_choice, track_list) if self._dvd_job else self.track_choice      # (the choice of the last time names the tracks by their ids in DVD mode)
-        choice = (self.ask_tracks(track_list, output, os.path.basename(first.path), initial, main, dvd=True) if self._dvd_job
-                  else self.ask_tracks(track_list, output, os.path.basename(first.path), initial, main))
+        if not ask:
+            choice = tracks_dialog.DEFAULTS                          # DVD mode with multitrack off: no dialog, the defaults
+        else:
+            choice = (self.ask_tracks(track_list, output, os.path.basename(first.path), initial, main, dvd=True) if self._dvd_job
+                      else self.ask_tracks(track_list, output, os.path.basename(first.path), initial, main))
         if choice is None:
             return False                                              # Cancel stops saving (VB6: streams = "Cancel"); in both modes
         if choice == tracks_dialog.DEFAULTS:                         # the button Defaults: the normal way without the dialog
@@ -1243,11 +1388,9 @@ class frmMain(frmMainBase):
             choice = tracks.to_ids(choice, track_list)                # the ids mean the same in every part of the DVD, the positions do not
         self.track_choice = choice
         if self.track_choice:
-            for path in sorted({s.path for s in self.segments} - {first.path}):
-                try:
-                    other = self.tracks_of(path)
-                except Exception as e:
-                    self.msg(f"The tracks of {os.path.basename(path)} cannot be read: {e}")
+            for path, other in info["others"].items():
+                if isinstance(other, Exception):
+                    self.msg(f"The tracks of {os.path.basename(path)} cannot be read: {other}")
                     return False
                 if not tracks.fits(self.track_choice, other, lenient_subtitles=self._dvd_job):
                     self.msg(f"{os.path.basename(path)} does not have the tracks that were chosen for {os.path.basename(first.path)} (the choice is for the tracks of the first "
@@ -1262,7 +1405,7 @@ class frmMain(frmMainBase):
             return None
         if self._dvd_tracks is not None and dvd.is_dvd_structure([s.path for s in job.segments]):
             return self._dvd_tracks                                    # (made when the tracks were chosen: the subtitles of a later part are in it)
-        return self.tracks_of(job.segments[0].path)
+        return self._first_tracks or self.tracks_of(job.segments[0].path)
 
     def container_ok(self, output: str, copy: bool, job=None) -> bool:
         """Does the file type of the target file allow what is to be saved (containers.check)? An error is told and stops; if only something is left out (chapters
@@ -1272,7 +1415,7 @@ class frmMain(frmMainBase):
         errors = []
         if choice and choice.subtitles and self.segments:
             try:
-                track_list = self._dvd_tracks if self._dvd_job and self._dvd_tracks is not None else self.tracks_of(self.segments[0].path)
+                track_list = self._dvd_tracks if self._dvd_job and self._dvd_tracks is not None else (self._first_tracks or self.tracks_of(self.segments[0].path))
             except Exception:
                 track_list = None
             for index, _ in choice.subtitles:
@@ -1316,50 +1459,102 @@ class frmMain(frmMainBase):
             return
         output = self.choose_output(kind)
         if output is None:
+            debug_log("save: no target file chosen")
             return
-        if not self.pick_tracks(output):
-            return
+        debug_log(f"save: target {output}, multitrack {self.multitrack_on()}, copy mode {self.copy_mode_used()}")
+        # The files are read in the background (the bar says so), then the dialog for the tracks (it warns about the time the subtitles need), then the rest.
+        self.pick_tracks_async(output, lambda ok: self.save_continue(output) if ok else debug_log("save: stopped by the track choice (cancelled or not possible)"))
+
+    def save_continue(self, output: str) -> None:
+        """Save as, after the tracks have been chosen: the job, its checks, then the command is made in the background."""
+        debug_log(f"save: track choice {self.track_choice}")
         job = self.make_job(output)
         job.options.update(self.tracks_options())
         copy = self.copy_mode_used()
         if not self.check_job(job) or not self.container_ok(output, copy, job):
             return
         work = tempfile.mkdtemp(prefix="mediamaker_")
+        # Making the command can take a long time (ffprobe reads the start of the files, on a network drive tens of seconds; DVD mode with subtitles measured 40 s): it is done
+        # in the background, with the bar "Preparing job..." and the button Cancel, and the window does not freeze.
+        made: dict = {}
+
+        def prepare(cancel) -> int:
+            if getattr(cancel, "note", None):
+                cancel.note("reading the files (this can take a while on a network drive)")
+            try:
+                made.update(self.build_save_command(job, work, copy))
+            except copymode.CopyModeError as e:
+                made["error"] = str(e)
+            except Exception as e:                                    # e.g. NotImplementedError for subtitles
+                made["error"] = f"The job cannot be built: {e}"
+            if cancel():
+                raise seek.SeekCancelled()
+            return 0
+
+        worker = seek.SeekWorker(prepare)
+        if not self.begin_action("Preparing job", worker.cancel, block="edit", text="Preparing job...  reading the files (this can take a while on a network drive)"):
+            shutil.rmtree(work, ignore_errors=True)
+            return
+        debug_log("save: preparing the job (command, lists)")
+        worker.progress.connect(self.action_note)
+        worker.done.connect(lambda _result: (self.end_action(), self.save_prepared(job, output, work, made)))
+        worker.failed.connect(lambda text: (self.end_action(), shutil.rmtree(work, ignore_errors=True), self.msg(f"The job cannot be built: {text}")))
+        worker.finished.connect(lambda: self.prepare_finished(worker, work))               # (after a cancel nothing else is emitted)
+        self._prepare_worker = worker
+        worker.start()
+
+    def prepare_finished(self, worker, work: str) -> None:
+        if worker.cancelled:
+            self.end_action()
+            shutil.rmtree(work, ignore_errors=True)
+            debug_log("save: cancelled while the job was prepared")
+
+    def build_save_command(self, job: Job, work: str, copy: bool) -> dict:
+        """The ffmpeg command of the save and what belongs to it (lists, masks, chapters, the estimate for reading the subtitles): no Qt here, it runs in a thread."""
         plan = None
+        started = time.monotonic()
         lists = {}                                                    # the lists written for ffmpeg (subtitles): kept for the debug package
-        try:
-            if copy:                                                  # copy mode: no filter, -c copy (see copymode.py)
-                plan = copymode.make_plan(job.segments, job.options)
-                list_path = os.path.join(work, "files.txt") if plan.kind == "concat" else None
-                if list_path:
-                    copymode.write_list(plan, list_path)
-                chapters_file = None
-                chapter_text = self.copy_chapter_text(plan, job)
-                if chapter_text:
-                    chapters_file = os.path.join(work, "chapters.txt")
-                    with open(chapters_file, "w", encoding="utf-8", newline="\n") as f:
-                        f.write(chapter_text)
-                command = copymode.build_copy_command(plan, job, list_path, chapters_file=chapters_file, track_list=self.job_tracks(job))
-                expected, total = None, plan.seconds
-            else:
-                write_masks(job.segments, work)                       # removelogoNN.png for the filter
-                chapters_file = self.chapters_path() if self.chapters_valid() else None
-                files = {}
-                command = build_command(job, chapters_file=chapters_file, subtitle_list=os.path.join(work, "subtitles.ffconcat"), files=files, track_list=self.job_tracks(job))
-                for path, text in files.items():                      # the list that cuts the subtitles like the picture (the command reads it)
-                    with open(path, "w", encoding="utf-8", newline="\n") as f:
-                        f.write(text)
-                lists = dict(files)
-                command = ffmpeg_cmd.fill_subtitle_start(command, os.path.join(work, "subtitles.ffconcat"))      # (DVD mode: what ffmpeg subtracts from the times of the list)
-                expected, total = expected_frames(job), total_seconds(job)
-        except copymode.CopyModeError as e:
+        if copy:                                                      # copy mode: no filter, -c copy (see copymode.py)
+            plan = copymode.make_plan(job.segments, job.options)
+            list_path = os.path.join(work, "files.txt") if plan.kind == "concat" else None
+            if list_path:
+                copymode.write_list(plan, list_path)
+            chapters_file = None
+            chapter_text = self.copy_chapter_text(plan, job)
+            if chapter_text:
+                chapters_file = os.path.join(work, "chapters.txt")
+                with open(chapters_file, "w", encoding="utf-8", newline="\n") as f:
+                    f.write(chapter_text)
+            command = copymode.build_copy_command(plan, job, list_path, chapters_file=chapters_file, track_list=self.job_tracks(job))
+            expected, total = None, plan.seconds
+        else:
+            write_masks(job.segments, work)                           # removelogoNN.png for the filter
+            chapters_file = self.chapters_path() if self.chapters_valid() else None
+            files = {}
+            command = build_command(job, chapters_file=chapters_file, subtitle_list=os.path.join(work, "subtitles.ffconcat"), files=files, track_list=self.job_tracks(job))
+            for path, text in files.items():                          # the list that cuts the subtitles like the picture (the command reads it)
+                with open(path, "w", encoding="utf-8", newline="\n") as f:
+                    f.write(text)
+            lists = dict(files)
+            command = ffmpeg_cmd.fill_subtitle_start(command, os.path.join(work, "subtitles.ffconcat"))      # (DVD mode: what ffmpeg subtracts from the times of the list)
+            expected, total = expected_frames(job), total_seconds(job)
+        debug_log(f"save: command made in {time.monotonic() - started:.1f} s")
+        wait = None
+        if plan is None and os.path.join(work, "subtitles.ffconcat") in command:                        # the subtitles make ffmpeg read the whole recording first (see readspeed.py)
+            wait = readspeed.subtitle_wait([f for s in job.segments for f in dvd.files_of(s.path)])
+            debug_log(f"save: reading the subtitles {wait}")
+        return {"plan": plan, "lists": lists, "command": command, "expected": expected, "total": total, "wait": wait}
+
+    def save_prepared(self, job: Job, output: str, work: str, made: dict) -> None:
+        """The command is made (Qt thread again): ffmpeg is started."""
+        if "error" in made:
             shutil.rmtree(work, ignore_errors=True)
-            self.msg(str(e))
+            self.msg(made["error"])
             return
-        except Exception as e:                                        # e.g. NotImplementedError for subtitles
-            shutil.rmtree(work, ignore_errors=True)
-            self.msg(f"The job cannot be built: {e}")
-            return
+        plan, lists, command, expected, total, wait = (made[k] for k in ("plan", "lists", "command", "expected", "total", "wait"))
+        start_text = "Preparing job..."
+        if wait is not None and wait[0] >= readspeed.WARN_SECONDS:          # (the multitrack dialog has warned about it: the choice of the subtitles was the question)
+            start_text = f"Reading subtitles ({readspeed.format_wait(wait[0])})..."
         dvd_save = plan is None and dvd.is_dvd_structure([s.path for s in job.segments])        # (everything that is new since 864e58d and not the Help menu only happens in DVD mode)
         if dvd_save:
             command = command[:1] + ["-loglevel", "warning"] + command[1:]      # (the runner says "error"; the last one counts: the warnings of ffmpeg, "Non-monotonous DTS" for one, are kept in last_save.json)
@@ -1372,7 +1567,7 @@ class frmMain(frmMainBase):
         self._render_worker = worker
         for action in (self.mnuSaveMP4, self.mnuSaveAVI, self.mnuBatch):
             action.setEnabled(False)
-        self.begin_action("Saving", worker.cancel, block="edit", text="Preparing job...")
+        self.begin_action("Saving", worker.cancel, block="edit", text=start_text)
         worker.start()
 
     def render_progress(self, p) -> None:
@@ -1521,7 +1716,7 @@ class frmMain(frmMainBase):
         return True
 
     def mnuCopyMode_Click(self):
-        """Edit => Copy mode: saving without re-encoding (see copymode.py). The check mark is switched by Qt before this runs; when it was switched
+        """Config => Copy mode: saving without re-encoding (see copymode.py). The check mark is switched by Qt before this runs; when it was switched
         ON the program warns first (as VB6 did) and switches it off again if the answer is No. The flag is neither saved in the options nor in the
         batch script."""
         if self.mnuCopyMode.isChecked() and not self.ask(
@@ -1693,7 +1888,7 @@ class frmMain(frmMainBase):
             return
         self.start_external(command, lambda rc, err: self.msg(f"The terminal could not be started ({command[0]}): {err or rc}\n\nRun the script yourself:\nbash {script}") if rc == -1 else None)
 
-    # ------------------------------------------------------------------ Chapters (Edit => Chapters; module chapters.py, dialog chapters_dialog.py)
+    # ------------------------------------------------------------------ Chapters (File => Chapters; module chapters.py, dialog chapters_dialog.py)
     def chapters_path(self) -> str:
         """The chapters file lies next to the INI file (MediaMaker.chapters)."""
         return os.path.splitext(self.settings.path)[0] + ".chapters"
@@ -1721,7 +1916,7 @@ class frmMain(frmMainBase):
         self.remove_chapters_file()
         if warn:
             self.msg("Attention: the segments were changed (deleted, moved, loaded again or given other cut points), so the chapters no longer fit them. "
-                     "The chapters were deleted; use Edit => Chapters to make new ones.")
+                     "The chapters were deleted; use File => Chapters to make new ones.")
         return True
 
     def batch_chapter_titles(self) -> Optional[list]:
@@ -1742,7 +1937,7 @@ class frmMain(frmMainBase):
         dialog.exec()
 
     def mnuChapters_Click(self):
-        """Edit => Chapters: one chapter per segment; a style gives them names, the names can be edited (see chapters_dialog.py)."""
+        """File => Chapters: one chapter per segment; a style gives them names, the names can be edited (see chapters_dialog.py)."""
         if not self.segments:
             self.msg("There are no segments in the list.")
             return
@@ -1999,8 +2194,14 @@ class frmMain(frmMainBase):
         self.mouse_shift = bool(shift & 1)                             # VB6: MouseShift = Shift = 1
 
     def delogo_area(self) -> tuple:
-        """(left, top, width, height) of the preview area: the rectangle is placed inside it, its coordinates are fractions of it."""
+        """(left, top, width, height) of the PICTURE in the preview area: the red bands of the cropping and the rectangle of the logo are placed inside it, their coordinates
+        are fractions of it. The picture has the display format of the file (a 4:3 DVD is shown as 4:3 in the 16:9 area, with black bands left and right, see
+        player.fit_rect); these bands are not part of the picture, a margin of 14 source pixels must not be measured against them."""
         v = self.VLC.geometry()
+        num, _, den = str(getattr(self.player, "aspect", "") or "").partition(":")
+        if num.isdigit() and den.isdigit():
+            x, y, w, h = fit_rect(v.width(), v.height(), (int(num), int(den)))
+            return v.x() + x, v.y() + y, w, h
         return v.x(), v.y(), v.width(), v.height()
 
     def delogo_fractions(self) -> str:
@@ -2243,19 +2444,48 @@ class frmMain(frmMainBase):
                      "pictures from the video, the end of the debug log and an unchanged piece of the recording (about a minute of the video, with picture and sound).\n\n"
                      "Look at the contents (README.txt in the package says what is in it) before you send it to anybody, and remove what should stay private.")
 
+    # ------------------------------------------------------------------ The menus (arranged here; the form from the VB6 IDE has File, Edit and Deploy)
+    MENU_LAYOUT = (
+        ("&File", "mnuFile", ("mnuOpen", "mnuClose", "mnuDelete", None, "mnuInfo", "mnuChapters", None, "mnuSaveMP4", "mnuSaveAVI", "mnuCancel", None, "mnuBatch", "mnuImport", None,
+                              "mnuBackupSession", "mnuRestoreSession", "mnuDeleteSession", None, "mnuExit")),
+        ("&Edit", "mnuEdit", ("mnuReuse", "mnuAutoCrop", None, "mnuMediaInfo", "mnuCutPoints", "mnuDeDup", None, "mnuNext", "mnuEnd")),
+        ("&Config", "mnuConfig", ("mnuProfile", "mnuLoadProfile", "mnuSaveProfile", None, "mnuCopyMode", "mnuCalcVideo", "mnuCalcAudio", None, "mnuOptions")),
+        ("&Deploy", "mnuDeploy", ()),                                  # only in the development version: the entry Create debug package is added by add_debug_menu
+    )
+
+    def arrange_menus(self) -> None:
+        """File: files, the list, saving, sessions. Edit: only what works on the selected segment (or on its picture). Config: profile, options. Deploy: development version only.
+        The entries (QActions of the form, with their shortcuts and handlers) are put into new menus; the menus of the form are taken off the bar. Without a development version
+        there is no menu Deploy (self.mnuDeploy is None)."""
+        bar = self.menuBar()
+        self._form_menus = (self.mnuFile, self.mnuEdit, self.mnuDeploy)            # (they stay alive: the submenu Load profile was made by the first of them)
+        for old in self._form_menus:
+            bar.removeAction(old.menuAction())
+        self.mnuDeploy = None
+        for title, attribute, names in self.MENU_LAYOUT:
+            if attribute == "mnuDeploy" and not is_dev():
+                continue
+            menu = bar.addMenu(title)
+            setattr(self, attribute, menu)
+            for name in names:
+                if name is None:
+                    menu.addSeparator()
+                elif hasattr(self, name):
+                    entry = getattr(self, name)
+                    menu.addMenu(entry) if isinstance(entry, QtWidgets.QMenu) else menu.addAction(entry)
+
     def add_debug_menu(self) -> None:
         """The debug package has a key that is not shown in a menu (DEBUG_SHORTCUT). The development version has the menu Deploy with the entry as well (if the form has an
-        item mnuDebug of its own, designed in VB6, that one is used); the public version does not show the menu Deploy at all."""
-        if not hasattr(self, "mnuDebug"):
-            self.mnuDebug = QtGui.QAction("Create debug package", self)
+        item mnuDebug of its own, designed in VB6, that one is used); the public version does not have the menu Deploy at all."""
+        if self.mnuDeploy is not None:
+            if not hasattr(self, "mnuDebug"):
+                self.mnuDebug = QtGui.QAction("Create debug package", self)
+                self.mnuDebug.triggered.connect(lambda *_: self.mnuDebug_Click())
             self.mnuDeploy.addAction(self.mnuDebug)
-            self.mnuDebug.triggered.connect(lambda *_: self.mnuDebug_Click())
         self.actDebugKey = QtGui.QAction("Create debug package", self)           # the key works while the window is active, without a menu
         self.actDebugKey.setShortcut(QtGui.QKeySequence(self.DEBUG_SHORTCUT))
         self.actDebugKey.triggered.connect(lambda *_: self.mnuDebug_Click())
         self.addAction(self.actDebugKey)
-        if not is_dev():
-            self.mnuDeploy.menuAction().setVisible(False)
 
     def mnuDebug_Click(self):
         """Collects what is needed to understand a wrong search or cut of the selected segment in the folder `debug/<time>` next to the INI file
@@ -3441,8 +3671,8 @@ def main(argv=None) -> int:
     choices = startup_choices(settings)
     # Harmless messages from libraries (e.g. "Failed to open VDPAU backend libvdpau_nvidia.so" on computers without an
     # NVIDIA card) are not shown. More texts: the option hide_messages (Text1|Text2) or the environment variable
-    # MEDIAMAKER_HIDE; switch off completely with MEDIAMAKER_NO_FILTER=1.
-    if not os.environ.get("MEDIAMAKER_NO_FILTER"):
+    # MEDIAMAKER_HIDE; switch off completely with MEDIAMAKER_NO_FILTER=1 (also off with MEDIAMAKER_DEBUG=1, see stderr_filter_wanted).
+    if stderr_filter_wanted(os.environ):
         import stderrfilter
         extra = choices["hide_messages"] + os.environ.get("MEDIAMAKER_HIDE", "").split("|")
         stderrfilter.install([p for p in extra if p])
@@ -3454,6 +3684,8 @@ def main(argv=None) -> int:
     if player_kind == "embed" and sys.platform.startswith("linux"):
         os.environ.setdefault("QT_QPA_PLATFORM", "xcb")             # libvlc draws into an X11 window (XWayland)
     app = QtWidgets.QApplication(argv)
+    protect_none_refcount()                                         # (see there: PySide6 takes the count of None down until Python aborts)
+    none_watch = None
     vbqt.apply_light_theme(app)
     from player import debug_log, MemoryVlcPlayer, VlcPlayer
     project = os.path.splitext(ini)[0] + ".json"
@@ -3465,6 +3697,8 @@ def main(argv=None) -> int:
     player = (VlcPlayer if player_kind == "embed" else MemoryVlcPlayer)(choices["vlc_args"])
     app.aboutToQuit.connect(player.shutdown)                        # also when quitting without closing the window
     window = frmMain(settings, player, project, fresh=bool(files))
+    if os.environ.get("MEDIAMAKER_DEBUG"):                          # (kept alive by this variable)
+        none_watch = watch_none_refcount(app, status=getattr(player, "frame_stats", None))
     window.show()
     window.ask_first_profile()                                      # (only asks when no profile is active)
     for f in files:
@@ -3472,6 +3706,70 @@ def main(argv=None) -> int:
     code = app.exec()
     player.shutdown()                                               # (calling it several times is harmless)
     return code
+
+
+def protect_none_refcount(obj=None, bump: int = 1 << 40, version_info=None) -> bool:
+    """Emergency measure against "Fatal Python error: none_dealloc: deallocating None" (seen with the PySide6 of the AppImage on Python 3.10): the reference count of None
+    falls with every call of a Python method that Qt calls (paintEvent, drawControl, ...: -200 per second in the debug log) until it is 0 and Python aborts. The cause is
+    in PySide6, not here. None is never freed, so its count is raised by a number that lasts for years. From Python 3.12 None is immortal (nothing to do). True if done.
+    The write is checked (the count must have risen by `bump`) and undone if it did not work as expected (another build of Python)."""
+    import ctypes
+    if (sys.version_info if version_info is None else version_info) >= (3, 12):
+        return False
+    try:
+        counter = ctypes.c_ssize_t.from_address(id(obj))
+        before = sys.getrefcount(obj)
+        counter.value += bump
+        if sys.getrefcount(obj) - before != bump:
+            counter.value -= bump
+            return False
+        return True
+    except (ValueError, OverflowError, OSError):
+        return False
+
+
+def versions_text() -> str:
+    """Python, PySide6 and Qt in use (for the debug log: crashes depend on them, e.g. the count of None that falls with some PySide6 on Python 3.10)."""
+    try:
+        import PySide6
+        from PySide6 import QtCore
+        return f"Python {sys.version.split()[0]}, PySide6 {getattr(PySide6, '__version__', '?')}, Qt {QtCore.qVersion()}"
+    except Exception as e:                                          # only a line of the log
+        return f"Python {sys.version.split()[0]} (PySide6: {e!r})"
+
+
+def watch_none_refcount(parent, interval_ms: int = 5000, status=None):
+    """Debug mode: writes the reference count of None into the log every few seconds. It is huge (some 10 000); a program that takes a reference too many in a place that
+    runs all the time (a callback of Qt or VLC) lets it fall until Python aborts ("none_dealloc: deallocating None"). The log shows how fast it falls and what
+    the program was doing then."""
+    from PySide6 import QtCore
+    from player import debug_log
+    state = {"last": sys.getrefcount(None), "status": None}
+
+    def tick():
+        if status is not None:                                       # (e.g. the counters of the pictures: only when something changed)
+            text = status()
+            if text and text != state["status"]:
+                debug_log(text)
+                state["status"] = text
+        now = sys.getrefcount(None)
+        if now != state["last"]:
+            debug_log(f"refcount(None) = {now} ({now - state['last']:+d} in {interval_ms / 1000:g} s)")
+            state["last"] = now
+    timer = QtCore.QTimer(parent)
+    timer.setInterval(interval_ms)
+    timer.timeout.connect(tick)
+    timer.start()
+    debug_log(versions_text())
+    debug_log(f"refcount(None) = {state['last']} (start)")
+    return timer
+
+
+def stderr_filter_wanted(environ=None) -> bool:
+    """The filter takes over the error output (a pipe). The message of a fatal Python error ("Fatal Python error: ...", written by Python itself to file number 2) is lost
+    in it when the program aborts right after it. So it is off with MEDIAMAKER_NO_FILTER=1 and also in the debug mode (MEDIAMAKER_DEBUG=1): whoever looks for a crash sees the message."""
+    environ = os.environ if environ is None else environ
+    return not environ.get("MEDIAMAKER_NO_FILTER") and not environ.get("MEDIAMAKER_DEBUG")
 
 
 def restore_library_path(environ=None, frozen: Optional[bool] = None) -> None:

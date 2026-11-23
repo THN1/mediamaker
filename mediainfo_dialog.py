@@ -20,9 +20,11 @@ class frmMediaInfo(frmMediaInfoBase):
         self.file_title = title
         super().__init__(parent)
         self.setWindowTitle(f"Media info for {title}")
+        factor = dialogs.ui_factor(parent)                       # the size of the main window (UI_SCALE): font and window
+        dialogs.scale_font(self, factor, parent)
         # The VB6 window has a fixed size; here it should be resizable.
-        width, height = self.width(), self.height()
-        self.setMinimumSize(360, 240)
+        width, height = round(self.width() * factor), round(self.height() * factor)
+        self.setMinimumSize(round(360 * factor), round(240 * factor))
         self.setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX)
         self.setWindowFlag(QtCore.Qt.WindowType.WindowMaximizeButtonHint, True)
         self.resize(width, height)
@@ -34,6 +36,8 @@ class frmMediaInfo(frmMediaInfoBase):
         self.tabs = self.nav.tabs                                  # None with the list on the left (dialog_style=list)
         self.editors = []
         fixed = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont)
+        if factor != 1 and fixed.pointSizeF() > 0:
+            fixed.setPointSizeF(fixed.pointSizeF() * factor)
         for name, text in sections:
             editor = QtWidgets.QPlainTextEdit()
             editor.setReadOnly(True)

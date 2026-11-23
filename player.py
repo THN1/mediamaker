@@ -7,6 +7,7 @@ by another subclass.
 """
 from __future__ import annotations
 
+import collections
 import ctypes
 import os
 import shlex
@@ -284,6 +285,25 @@ class VlcPlayer(Player):
         self.playing.connect(self._after_playing)
         self.seekable.connect(self._after_seekable)
         self._muted = False
+        # The events of VLC come in a thread of VLC: it only puts them into a queue (plain Python); the signals are emitted by the Qt thread (a timer), like the pictures
+        # (see MemoryVlcPlayer): no Qt call from a thread that Qt does not know.
+        self._event_queue: collections.deque = collections.deque()
+        self._event_timer = QtCore.QTimer(self)
+        self._event_timer.setInterval(self.EVENT_POLL_MS)
+        self._event_timer.timeout.connect(self._drain_events)
+        self._event_timer.start()
+
+    EVENT_POLL_MS = 10                                          # how often the Qt thread looks for events of VLC
+
+    def _drain_events(self) -> None:
+        """In the Qt thread: emits the signals for the events that the VLC thread has queued (in the order in which they came)."""
+        while True:
+            try:
+                signal, args = self._event_queue.popleft()
+            except IndexError:
+                return
+            if not self._closed:
+                signal.emit(*args)
 
     def _new_media_player(self) -> None:
         """Creates the libvlc media player and attaches the events (at the start and after a recovery)."""
@@ -308,23 +328,23 @@ class VlcPlayer(Player):
         self._event_types.append(T.MediaPlayerTimeChanged)
         events.event_attach(T.MediaPlayerTimeChanged, tc)
 
-    # These functions run in the VLC thread; after shutdown they must not trigger Qt signals any more.
+    # These functions run in the VLC thread: they only queue the event (the Qt thread emits the signal, see _drain_events); after shutdown they do nothing.
     def _on_event(self, signal, name: str) -> None:
         if not self._closed:
             self._progress += 1
             debug_log(f"event {name}")
-            signal.emit()
+            self._event_queue.append((signal, ()))
 
     def _on_time(self, ms: int) -> None:
         if not self._closed:
             self._progress += 1
-            self.time_changed.emit(ms)
+            self._event_queue.append((self.time_changed, (ms,)))
 
     def _on_seekable(self, flag: bool) -> None:
         if not self._closed:
             self._progress += 1
             debug_log(f"event seekable={flag}")
-            self.seekable.emit(flag)
+            self._event_queue.append((self.seekable, (flag,)))
 
     def _after_seekable(self, flag: bool) -> None:
         """In the Qt thread: as soon as VLC can seek (this is usually earlier than "Playing"), it jumps to the requested position,
@@ -348,6 +368,7 @@ class VlcPlayer(Player):
         if self._closed:
             return
         self._closed = True
+        self._event_timer.stop()
         debug_log("shutdown")
         self._watch_token += 1
         self._pending_show = None
@@ -556,6 +577,7 @@ class VlcPlayer(Player):
         self.mp.audio_set_volume(int(percent))
 
     def set_aspect(self, ratio: str) -> None:
+        self.aspect = ratio                                      # (the main window needs it: where the picture is inside the video area)
         self.mp.video_set_aspect_ratio(ratio)
 
 
@@ -624,10 +646,18 @@ class MemoryVlcPlayer(VlcPlayer):
         # damaged reference counts - "free(): invalid pointer", "deallocating None" at the end of the program); the Qt thread fetches it with a timer.
         self._frame_lock = threading.Lock()
         self._latest_frame = None
+        self._blank = False                                      # after clear(): pictures that VLC still delivers are not shown (until load / show_image)
+        self._stats = {"vlc": 0, "polled": 0, "shown": 0, "awaiting": 0, "images_only": 0}   # pictures: delivered by VLC / fetched by Qt / drawn / dropped (reason)
         self._frame_timer = QtCore.QTimer(self)
         self._frame_timer.setInterval(self.FRAME_POLL_MS)
         self._frame_timer.timeout.connect(self._poll_frame)
         self._frame_timer.start()
+
+    def frame_stats(self) -> str:
+        """Debug log: where do the pictures get lost? (counts since the start; plus the state of the timer and of VLC)"""
+        s = self._stats
+        return (f"pictures: vlc={s['vlc']} polled={s['polled']} shown={s['shown']} dropped: awaiting={s['awaiting']} images_only={s['images_only']} "
+                f"timer_active={self._frame_timer.isActive()} images_only_flag={self.images_only} ({self.describe()})")
 
     def attach(self, widget) -> None:
         self.surface = VideoSurface(widget)
@@ -660,6 +690,7 @@ class MemoryVlcPlayer(VlcPlayer):
                 frame = (bytes(buf), width, height)
                 with self._frame_lock:
                     self._latest_frame = frame
+                    self._stats["vlc"] += 1
 
         self._video_callbacks.append((lock, display, buf))
         self.mp.video_set_callbacks(lock, None, display, None)
@@ -688,20 +719,26 @@ class MemoryVlcPlayer(VlcPlayer):
         with self._frame_lock:
             frame, self._latest_frame = self._latest_frame, None
         if frame is not None and not self._closed:
+            self._stats["polled"] += 1
             self._on_frame(frame)
 
     def _on_frame(self, frame) -> None:
         data, width, height = frame
         self._progress += 1
+        if self._blank:
+            return
         if self._awaiting_position is not None:
+            self._stats["awaiting"] += 1
             return                                           # VLC still shows the wrong position (e.g. the start of the file)
         if self.images_only:
+            self._stats["images_only"] += 1
             return                                           # a search shows its own pictures: nothing of VLC in between
         self._reloads = 0
         if self.surface is not None and not self._closed:
             image = QtGui.QImage(data, width, height, width * 4, QtGui.QImage.Format.Format_RGB32).copy()
             self.surface.set_image(image)
             self._frames_shown += 1
+            self._stats["shown"] += 1
 
     SEEK_CHECK_MS = 600                                          # how long to wait for the picture after a jump
     MAX_RELOADS = 2                                              # reloads of the medium in a row before the media player is replaced
@@ -732,6 +769,9 @@ class MemoryVlcPlayer(VlcPlayer):
     def clear(self) -> None:
         """Stops and removes the last picture from the drawing area."""
         self.stop()
+        self._blank = True
+        with self._frame_lock:
+            self._latest_frame = None                            # (a picture that VLC delivered before or while it stopped must not appear after the clearing)
         if self.surface is not None:
             self.surface.clear()
 
@@ -742,6 +782,7 @@ class MemoryVlcPlayer(VlcPlayer):
     supports_images = True
 
     def show_image(self, image) -> None:
+        self._blank = False
         if self.surface is not None and not self._closed:
             self.surface.set_image(image)
 
@@ -752,6 +793,7 @@ class MemoryVlcPlayer(VlcPlayer):
 
     def load(self, path: str, size: Optional[tuple] = None) -> None:
         self.stop()                                              # change the memory only without running playback
+        self._blank = False
         self._install(*(size or (720, 576)))
         if self.surface is not None:
             self.surface.clear()
@@ -759,6 +801,7 @@ class MemoryVlcPlayer(VlcPlayer):
 
     def set_aspect(self, ratio: str) -> None:
         """Display format in the video area, e.g. "16:9" (the pictures are stretched accordingly)."""
+        self.aspect = ratio
         if self.surface is not None:
             num, _, den = ratio.partition(":")
             self.surface.set_aspect(int(num), int(den))

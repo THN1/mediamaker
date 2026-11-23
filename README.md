@@ -1,4 +1,4 @@
-# MediaMaker 1.0
+# MediaMaker 1.1-rc1 (release candidate)
 
 Cuts, unifies and joins videos: films, parts of films, clips and TV recordings, in many formats and sizes. The pieces (segments) can
 come from one or several files; they are brought to one size, frame rate and sound (the *profile*) and written as one file, as MP4, MKV, AVI
@@ -20,8 +20,8 @@ The history and the details of every change are in [CHANGELOG.md](CHANGELOG.md).
   (Without re-encoding, in *Copy mode*, the pieces must have the same characteristics.)
 - **DVD mode:** if all segments are VOB files of one title set (`VTS_02_1.VOB`, `VTS_02_2.VOB` ... of a `VIDEO_TS` folder; the menu files `VTS_nn_0.VOB` and `VIDEO_TS.VOB` do not count),
   the program works as the VB6 program did for a DVD. It starts by itself, no option is needed:
-  - *Tracks.* Saving (also to a batch file) opens the dialog for the sound tracks and subtitles, always (whether the option `multitrack` is on or not). It has three buttons:
-    **OK** (go on with this choice), **Defaults** (the first sound track, no subtitles: the normal way without the dialog) and **Cancel** (stop saving, no file is written). The tracks are
+  - *Tracks.* Saving (also to a batch file) opens the dialog for the sound tracks and subtitles, unless the option `multitrack` is `off` (default `dvd`: only in DVD mode; `on`: always). It has three buttons:
+    **OK** (go on with this choice), **Defaults** (the first sound track, no subtitles: what is saved when the option is `off`) and **Cancel** (stop saving, no file is written). The tracks are
     named by their stream id (`0x80` ... for sound, `0x20` ... for subtitles, shown in the dialog) and not by their position: every part of a DVD is analysed on its own and the order of
     its streams differs. To find tracks that turn up late (subtitles), the first 100 MB of every part that is used are looked at; this can take some seconds on a network drive.
   - *Languages.* The VOB files carry no language, the file `VTS_nn_0.IFO` in the same folder does: its codes are read and put into the dialog (a code of a track that has none is
@@ -51,7 +51,7 @@ The history and the details of every change are in [CHANGELOG.md](CHANGELOG.md).
   the shown picture on; stepping or Space pauses. The pictures are written by ffmpeg into a temporary folder that is removed when the viewer is closed. The picture area has the display format
   of the source, so that the pictures are not distorted: for a DVD (DVD mode) the one the IFO file gives (4:3 or 16:9), otherwise the display aspect ratio of the file (DAR and SAR), changed by
   the crop that the clip has got (the global crop or the margins of the selected segment; only with the option `cutpoint_filters` = on, see the options dialog).
-- *Copy mode* (Edit menu): saves without re-encoding. One video is cut at the next keyframe, several files are joined in full
+- *Copy mode* (Config menu): saves without re-encoding. One video is cut at the next keyframe, several files are joined in full
   length (chapters work). Cropping, logo filters, scaling and the profile are ignored in this mode.
 
 **Picture**
@@ -60,10 +60,10 @@ The history and the details of every change are in [CHANGELOG.md](CHANGELOG.md).
   *Estimate bitrate(s)* (one dialog for both rates) and *Reuse source A/V* take values from the source.
 
 **Tracks and chapters**
-- *Multitrack* (option `multitrack`): a dialog with two tabs chooses which audio tracks and subtitles go into the new file, in which
+- *Multitrack* (option `multitrack` = `on`, `off` or `dvd`; `dvd` = the dialog opens only in DVD mode, see there): a dialog with two tabs chooses which audio tracks and subtitles go into the new file, in which
   order, with language codes (checked against ISO 639-2). Subtitles are cut like the picture; DVB subtitles (small pictures) are
   converted to `dvd_subtitle` for MP4; Teletext is ignored. The dialog has three buttons: OK (this choice), Defaults (only the main audio track, no subtitles) and Cancel (stop saving).
-- *Chapters* (Edit menu): names for the parts of the joined film, written into MP4 and MKV files.
+- *Chapters* (File menu): names for the parts of the joined film, written into MP4 and MKV files.
 
 **Saving and automation**
 - *Save as*: one dialog for all file types; before anything starts it is checked what the chosen type can hold (see below).
@@ -99,6 +99,7 @@ The shortcuts of the menu entries (they are shown in the menus too). The other f
 | Ctrl+L | File | Close all |
 | Ctrl+J | File | Delete... (the source files of the list, for good) |
 | Ctrl+N | File | Information... |
+| Ctrl+H | File | Chapters... |
 | Ctrl+S | File | Save as... |
 | Ctrl+C | File | Cancel the running save or job (the red button beside the progress bar) |
 | Ctrl+B | File | Batch... |
@@ -107,19 +108,18 @@ The shortcuts of the menu entries (they are shown in the menus too). The other f
 | Ctrl+Z | File | Restore session... |
 | Ctrl+P | File | Delete session(s)... |
 | Ctrl+X | File | Exit |
-| Ctrl+F | Edit | Profile... |
-| Ctrl+A | Edit | Save profile |
-| Ctrl+D | Edit | Copy mode (switch) |
-| Ctrl+E | Edit | Estimate bitrate(s) |
 | Ctrl+G | Edit | Reuse source A/V |
 | Ctrl+R | Edit | Auto crop |
 | Ctrl+K | Edit | Media info |
 | Ctrl+Y | Edit | Analyze cut point |
 | Ctrl+V | Edit | Dedup scene |
-| Ctrl+H | Edit | Chapters... |
 | Ctrl+W | Edit | Seek next commercial |
 | Ctrl+U | Edit | Seek end of commercial |
-| Ctrl+T | Edit | Options... |
+| Ctrl+F | Config | Profile... |
+| Ctrl+A | Config | Save profile |
+| Ctrl+D | Config | Copy mode (switch) |
+| Ctrl+E | Config | Estimate bitrate(s) |
+| Ctrl+T | Config | Options... |
 | F1 | Help | Readme |
 
 In the dialog *Analyze cut point*: left / right arrow = one picture back / forward, space = play / pause.
@@ -175,15 +175,15 @@ Without installing: `python3 mediamaker.py [movie.ts ...]` in the folder of the 
 
 ### Where your files are
 
-The settings (`MediaMaker.ini`), the segment list (`MediaMaker.json`), the sessions and the debug packages are in the folder `~/.config/MediaMaker` (or `$XDG_CONFIG_HOME/MediaMaker`). The environment variable `MEDIAMAKER_INI` names another INI file; the other files are then next to it. At the first start the program makes the INI file with the example profiles in it and asks you to choose the target profile (size, frame rate and bit rates of the new video; you can change it later with Edit -> Load profile). `MediaMaker.example.ini` in the program folder shows every setting with its help text. The batch script is `~/MediaMaker.sh` (the option `batch`).
+The settings (`MediaMaker.ini`), the segment list (`MediaMaker.json`), the sessions and the debug packages are in the folder `~/.config/MediaMaker` (or `$XDG_CONFIG_HOME/MediaMaker`). The environment variable `MEDIAMAKER_INI` names another INI file; the other files are then next to it. At the first start the program makes the INI file with the example profiles in it and asks you to choose the target profile (size, frame rate and bit rates of the new video; you can change it later with Config -> Load profile). `MediaMaker.example.ini` in the program folder shows every setting with its help text. The batch script is `~/MediaMaker.sh` (the option `batch`).
 
-Development versions (the version number ends in `-dev`, for example when you run the program from a clone) keep these files next to the program instead and have the extra menu *Deploy*.
+Development versions (the version number ends in `-dev`, for example when you run the program from a clone) keep these files next to the program instead and have the extra menu *Deploy* (with *Create debug package*).
 
 ### Settings
 
-Settings are made in the options dialog (Edit -> Options) and stored in the INI file; every option has a help text there (and in the
+Settings are made in the options dialog (Config -> Options) and stored in the INI file; every option has a help text there (and in the
 section `[ToolTipText]` of the INI file). Some options of interest: `player=memory|embed` and `paused_preview=vlc|ffmpeg` (the
-preview; with `ffmpeg` the pictures of a stopped film come from ffmpeg and are frame exact), `multitrack=on|off`, `batch=` (the
+preview; with `ffmpeg` the pictures of a stopped film come from ffmpeg and are frame exact), `multitrack=on|off|dvd`, `batch=` (the
 file of the batch script; empty: `~/MediaMaker.sh`), `path_map=` (replaces the beginning of source paths in scripts, e.g. for a network
 drive), `copy_mode_notice=on|off`. `MEDIAMAKER_DEBUG=1` writes a log with times in milliseconds (`mediamaker_debug.log` next to the INI file), `MEDIAMAKER_NO_FILTER=1` shows the unfiltered error output of ffmpeg.
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from PySide6 import QtCore, QtWidgets
 
+import dialogs
 from info import HEADERS, RIGHT_ALIGNED
 from ui_frmInfo import frmInfoBase
 
@@ -20,12 +21,9 @@ class frmInfo(frmInfoBase):
         # The size of the main window (UI_SCALE, see uiscale.py) counts here too: the font and the size of the dialog follow it.
         factor = getattr(parent, "UI_SCALE", 100) / 100
         if factor != 1:
-            font = self.font()
-            if font.pointSizeF() > 0:
-                font.setPointSizeF(font.pointSizeF() * factor)
-                self.setFont(font)
-                for widget in (self.lvwInfo, self.cmdClose):
-                    widget.setFont(font)
+            dialogs.scale_font(self, factor, parent)                      # the font of the main window (explicitly also for the controls of the design)
+            for widget in (self.lvwInfo, self.cmdClose):
+                widget.setFont(self.font())
         # The VB6 design has a fixed size and nine columns; here there are more columns and the window can be resized.
         self.setMinimumSize(round(520 * factor), round(240 * factor))
         self.setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX)

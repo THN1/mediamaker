@@ -1,5 +1,5 @@
 # Python packages (on Arch/EndeavourOS they are also available as system packages: python-pyside6, python-vlc, python-numpy, python-pillow)
-PySide6
+PySide6>=6.5,<6.9
 python-vlc
 numpy
 Pillow

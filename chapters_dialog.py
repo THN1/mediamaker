@@ -7,6 +7,7 @@ from typing import Optional
 from PySide6 import QtCore, QtWidgets
 
 import chapters
+import dialogs
 from ui_frmChapters import frmChaptersBase
 
 F2 = 113
@@ -18,6 +19,9 @@ class frmChapters(frmChaptersBase):
         """parent: the main window (segments, place of the chapters file, messages)."""
         super().__init__(parent)
         self.main = parent
+        self.factor = dialogs.scale_vb_form(self, parent)                 # the size of the main window (UI_SCALE): font and controls
+        if self.factor != 1:
+            self.resize(round(self.width() * self.factor), round(self.height() * self.factor))
         self.Label2.hide()                    # "input files MUST NOT HAVE CHAPTERS": no longer true, the command takes the chapters from this file
         self.arrange()
         # Editing a name: a single click opens the editor IN the row (VB6: label edit), a double click or F2 opens a separate window. Qt would start the
@@ -40,10 +44,11 @@ class frmChapters(frmChaptersBase):
         """In the VB6 form the check box sits ON the upper edge of the frame (over its caption "Frame1"); here the frame would show through it. So the frame
         (with everything in it) and the Close button move down, the frame gets a caption, and the check box stands alone above it."""
         self.Frame1.setTitle("Chapter names")
+        shift = round(SHIFT * self.factor)
         for widget in (self.Frame1, self.cmdOK):
             g = widget.geometry()
-            widget.setGeometry(g.x(), g.y() + SHIFT, g.width(), g.height())
-        self.resize(self.width(), self.height() + SHIFT)
+            widget.setGeometry(g.x(), g.y() + shift, g.width(), g.height())
+        self.resize(self.width(), self.height() + shift)
 
     # ------------------------------------------------------------------ the list
     def titles(self) -> list:

@@ -2,6 +2,7 @@
 # build.sh - builds MediaMaker-<version>-x86_64.AppImage (Linux, x86_64).
 #
 # Usage:  bash packaging/appimage/build.sh [--keep]
+#   PYSIDE6_VERSION=6.8.3 bash build.sh   builds with that version of PySide6 (without it requirements.txt decides: PySide6 below 6.9).
 #   The AppImage is written to packaging/appimage/out/. It contains Python, PySide6 and the Python packages (PyInstaller) and needs on the computer where it
 #   runs: ffmpeg + ffprobe and VLC (libvlc with its plug-ins, e.g. the package vlc) from the system - they are NOT included (libvlc with its plug-ins and a ffmpeg cannot be moved without trouble;
 #   and a ffmpeg with x264 is under the GPL, which would bring duties of its own).
@@ -28,7 +29,12 @@ cd "$WORK"
 echo "== Python environment"
 python3 -m venv venv
 ./venv/bin/pip install --quiet --upgrade pip
+if [ -n "${PYSIDE6_VERSION:-}" ]; then                 # a fixed version of PySide6 (requirements.txt decides otherwise), e.g.  PYSIDE6_VERSION=6.8.3 bash build.sh
+    echo "   PySide6 $PYSIDE6_VERSION (fixed by PYSIDE6_VERSION)"
+    ./venv/bin/pip install --quiet "PySide6==$PYSIDE6_VERSION" "shiboken6==$PYSIDE6_VERSION" pyinstaller
+fi
 ./venv/bin/pip install --quiet -r "$SRC/requirements.txt" pyinstaller
+./venv/bin/pip list 2>/dev/null | grep -i -E "^(pyside6|shiboken6|pyinstaller|numpy|pillow|python-vlc) " | sed 's/^/   /'     # the versions that go into the AppImage
 
 echo "== PyInstaller"
 HIDDEN=()
